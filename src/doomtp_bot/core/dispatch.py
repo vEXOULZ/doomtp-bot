@@ -134,15 +134,19 @@ class Dispatcher:
                 report = await self.runtime.run(msg.text, ctx, reply_parent_login=msg.reply_mentions)
                 if report is None:
                     return
-                await self._log_run(msg, report)
+                await self._log_run(msg, report, ctx.run_id)
                 if report.send:
                     await self.outbox.send(
-                        msg.channel_id, report.send, reply_to=msg.message_id, is_invalidated=invalidated
+                        msg.channel_id,
+                        report.send,
+                        reply_to=msg.message_id,
+                        is_invalidated=invalidated,
+                        run_ref=ctx.run_id,
                     )
             except Exception:
                 log.exception("dispatch.run_failed", message_id=msg.message_id)
 
-    async def _log_run(self, msg: ChatMessage, report: RunReport) -> None:
+    async def _log_run(self, msg: ChatMessage, report: RunReport, run_ref: str) -> None:
         level = LogLevel.INVOCATIONS
         resolved: list[dict[str, object]] = []
         if report.ast is not None:
@@ -165,4 +169,5 @@ class Dispatcher:
             message=report.result.message,
             duration_ms=report.duration_ms,
             cancelled_reason="moderated" if report.cancelled else None,
+            run_ref=run_ref,
         )

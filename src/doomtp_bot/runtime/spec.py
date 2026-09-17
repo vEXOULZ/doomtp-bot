@@ -86,6 +86,8 @@ class CommandSpec:
     reads: tuple[str, ...] = ()  # declared variable reads, e.g. "chatter.location"
     writes: tuple[str, ...] = ()  # declared variable writes
     requires: tuple[str, ...] = ()  # channel capabilities (ADR-0007)
+    toggleable: bool = True  # False: can never be disabled (core, core_admin)
+    fixed_policy: bool = False  # sentinels (spec §8): role everyone, no cooldowns, not configurable
     raw_tail_from: int | None = None  # spec §3.3
 
     def __post_init__(self) -> None:

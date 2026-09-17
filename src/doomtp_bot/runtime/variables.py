@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from doomtp_bot.runtime.namespaces import VAR_NAMESPACES, is_reserved_var_name
-from doomtp_bot.runtime.result import Code, CommandError, json_size
+from doomtp_bot.runtime.result import Code, CommandError, Result, error_result, json_size
 from doomtp_bot.runtime.values import MISSING
 
 if TYPE_CHECKING:
@@ -26,8 +26,14 @@ VAR_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
 class VariableError(CommandError):
-    def __init__(self, code: int, message: str) -> None:
+    def __init__(self, code: int, message: str, error: str | None = None) -> None:
         super().__init__(message, code)
+        self.error = error
+
+    def result(self) -> Result:
+        if self.error is None:
+            return Result.failure(self.code, self.message)
+        return error_result(self.error, self.message, self.code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,9 +68,11 @@ def key_for(ctx: ExecContext, namespace: str, name: str) -> VarKey:
     channel = ctx.channel.id
     owner = ctx.publisher.id if ctx.publisher else None
     if "chatter" in namespace.split(".") and chatter is None:
-        raise VariableError(Code.USAGE, f"{namespace}.{name} needs a chatter")
+        raise VariableError(Code.USAGE, f"{namespace}.{name} needs a chatter", "E_BAD_REFERENCE")
     if namespace.startswith("publisher") and owner is None:
-        raise VariableError(Code.USAGE, f"{namespace}.{name} is only available inside custom commands")
+        raise VariableError(
+            Code.USAGE, f"{namespace}.{name} is only available inside custom commands", "E_BAD_REFERENCE"
+        )
     match namespace:
         case "chatter":
             return VarKey(namespace, chatter or "", name=name)

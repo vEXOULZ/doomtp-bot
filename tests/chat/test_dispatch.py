@@ -233,3 +233,11 @@ async def test_join_reports_twitch_refusal(h: Harness) -> None:
     await h.say("owner", "!join other", channel=BOT_ID)
     await h.settle()
     assert "Twitch refused" in h.twitch.sent[-1][1]
+
+
+async def test_sent_reply_links_to_its_command_run(h: Harness) -> None:
+    await h.say("alice", "!ping")
+    await h.settle()
+    runs = await h.rows("SELECT run_ref FROM command_runs")
+    sent = await h.rows("SELECT run_ref FROM outbound_msgs")
+    assert runs == sent and runs[0][0]

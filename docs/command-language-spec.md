@@ -179,7 +179,7 @@ Built-in raw-tail commands in v1:
 |---------|---------------|
 | `explain` | 1 |
 | `cc add`, `cc edit` | 3 (after the subcommand and name) |
-| `callback set` | 3 |
+| `callback set` | 4 (after the subcommand, kind and scope) |
 | `trigger set` | 3 |
 
 Example: `!cc add roll !random 1-{arg.1:int ?? 20} | echo {chatter.name} rolled {1}` stores the body exactly as typed.
@@ -272,6 +272,8 @@ For each resolved invocation, in this order:
 
 If any check fails, **no invocation executes.** The expression's result is the first failure in source order. Output rules for these codes are in §6.6.
 
+**Error identifiers.** The `E_…` names above are carried in the Result's `data.error`, with the human-readable text in `message` — for example `Result(2, "{2} refers to a command that runs later", {"error": "E_BAD_REFERENCE", "reference": "{2}"})`. Parse errors (§3.4) also put their code in `data.error` alongside `data.column`. This keeps chat replies readable while `!explain`, `/parse` and the editor get stable identifiers.
+
 **Cooldowns** are *checked* for every invocation during preflight, but *committed* only for invocations that actually execute (§6.3).
 
 > **Planned (v1.x, a minor version):** cooldown check 3 moves out of preflight. An invocation on cooldown then fails at runtime with code 128, and `||` can handle that like any other failure: `!a || !b` runs `b` when `a` is on cooldown. If the final Result is 128, output stays silent and the callback still runs (§6.6).
@@ -304,6 +306,7 @@ Value  := null | bool | int (64-bit) | float (IEEE-754 double) | str | list[Valu
 
 - `code = 0` means success. Any other value means failure.
 - The serialized size of `data` MUST NOT exceed `MAX_DATA_BYTES (4096)`. Larger data yields code 2 (`E_DATA_TOO_LARGE`).
+- On a runtime or preflight failure with a named error, `data` is a map carrying that name: `{"error": "E_…", …}` (§5.2).
 - `message` MUST NOT exceed `MAX_MESSAGE_CHARS (2000)` and is truncated with `…`.
 
 ### 6.2 Exit codes
@@ -321,7 +324,7 @@ Value  := null | bool | int (64-bit) | float (IEEE-754 double) | str | list[Valu
 | 128 | COOLDOWN | cooldown active |
 | 130 | CANCELLED | moderation cancellation (§6.7) |
 
-Commands MUST use 1–3 or 5–99 for their own failures. Codes 100–255 are reserved for the runtime.
+Commands MUST use 1–3 or 5–99 for their own failures. Codes 100–255 are reserved for the runtime, and a command that *returns* one is corrected to code 1. A built-in MAY *raise* a runtime failure that carries a reserved code when the runtime owns that meaning: `!var` raises 126 when a write is denied, so the denial behaves like any other (silent, with the `on_denied` callback).
 
 ### 6.3 Evaluation
 
@@ -386,15 +389,17 @@ The expression's final Result `F` determines what the bot sends:
 
 ### 6.7 Moderation cancellation
 
-For Line and Listener contexts, the implementation MUST check the ModerationIndex (architecture §8):
+For Line and Listener contexts, the implementation MUST check the ModerationIndex (architecture §8) at these **checkpoints**:
 
 - before each invocation
-- before each side-effecting action inside a command
-- in the Outbox before sending
+- inside a command, before each side-effecting action: handlers call `ctx.ensure_not_cancelled()` before acting
+- in the Outbox, immediately before sending
+
+Cancellation is **cooperative**: a handler that is already running is not interrupted between checkpoints, so a slow call (an external API) may still complete. Nothing it produced is sent, because the Outbox rechecks.
 
 If the triggering message was deleted, or its author was cleared (timed out or banned), or the channel was cleared at or after the message time:
 
-- The running invocation is cancelled.
+- The run stops at the next checkpoint.
 - The expression result becomes code 130.
 - The write buffer is discarded, and nothing is sent.
 

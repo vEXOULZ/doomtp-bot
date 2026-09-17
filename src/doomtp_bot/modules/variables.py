@@ -156,7 +156,8 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
 
     if action in ("set", "incr"):
         if not access.can_write(ctx.exec, ns, name):
-            return Result.failure(Code.FAIL, f"you can't change {ns}.{name}")
+            # Raised, not returned: a write denial is the runtime's 126, not a command's own failure code.
+            raise CommandError(f"you can't change {ns}.{name}", Code.DENIED)
         key = key_for(ctx.exec, ns, name)
         if action == "set":
             if len(v) < 3:
@@ -185,7 +186,7 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
             allowed = access.can_write(ctx.exec, ns, name)
             label = f"{ns}.{name}"
         if not allowed:
-            return Result.failure(Code.FAIL, f"you can't delete {label}")
+            raise CommandError(f"you can't delete {label}", Code.DENIED)
         if await ctx.variables.get(key) is MISSING:
             return Result.failure(Code.NOT_FOUND, f"{label} is not set")
         await ctx.variables.buffer(WriteOp("delete", key))

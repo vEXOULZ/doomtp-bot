@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Pipe, Placeholder, Store, Text, invocations
 from doomtp_bot.runtime.namespaces import VarPath, classify, is_reserved_var_name, root_available
 from doomtp_bot.runtime.policy import Decision
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, Result, error_result
 from doomtp_bot.runtime.spec import InputMode
 from doomtp_bot.runtime.variables import VAR_NAME_RE, VariableError, key_for
 
@@ -67,7 +67,10 @@ def placeholders_in(invocation: Invocation) -> Iterator[Placeholder]:
 
 
 def check_placeholder(ph: Placeholder, index: int, ctx: ExecContext) -> str | None:
-    """Return an error message, or None if the reference is valid here (spec §5.2 check 5, §7.2)."""
+    """Return an error message, or None if the reference is valid here (spec §5.2 check 5, §7.2).
+
+    Every message here is reported as E_BAD_REFERENCE.
+    """
     root, path = ph.root, ph.path
     if not root_available(root, ctx.context):
         return f"{{{root}}} is not available here"
@@ -122,12 +125,19 @@ def preflight(
             return fail(inv.index, inv.name, Result.failure(decision.code, message), decision)
         if spec.input is InputMode.NONE and inv.index in receives_stdin:
             return fail(
-                inv.index, inv.name, Result.failure(Code.USAGE, f"{inv.name} does not accept piped input")
+                inv.index,
+                inv.name,
+                error_result(
+                    "E_INPUT_NOT_ACCEPTED", f"{inv.name} does not accept piped input", command=inv.name
+                ),
             )
         for ph in placeholders_in(inv):
             problem = check_placeholder(ph, inv.index, ctx)
             if problem is not None:
-                return fail(inv.index, inv.name, Result.failure(Code.USAGE, problem))
+                reference = "{" + ".".join((ph.root, *ph.path)) + "}"
+                return fail(
+                    inv.index, inv.name, error_result("E_BAD_REFERENCE", problem, reference=reference)
+                )
         return None
 
     def check_store(store: Store) -> Preflight | None:
@@ -166,5 +176,9 @@ def preflight(
     if failure is not None:
         return failure
     if len(invocations(node)) > max_invocations:
-        return fail(None, None, Result.failure(Code.USAGE, f"too many commands (max {max_invocations})"))
+        return fail(
+            None,
+            None,
+            error_result("E_TOO_MANY", f"too many commands (max {max_invocations})", max=max_invocations),
+        )
     return outcome

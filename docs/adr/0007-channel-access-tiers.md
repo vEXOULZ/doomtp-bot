@@ -1,6 +1,6 @@
 # ADR-0007: Channel access tiers — basic (no broadcaster action), moderator, full
 
-**Status:** Proposed
+**Status:** Accepted (implemented; see Action Items) — 2026-09-17
 **Date:** 2026-09-16
 **Deciders:** Project owner
 

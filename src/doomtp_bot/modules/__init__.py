@@ -1,10 +1,8 @@
-"""Toggleable command groups. core (sentinels: true, false, default, fail, echo) and core_admin are not toggleable."""
+"""Built-in command groups. Whether a group can be turned off is declared by its specs (CommandSpec.toggleable)."""
 
 from __future__ import annotations
 
 from doomtp_bot.runtime.registry import CommandRegistry
-
-NON_TOGGLEABLE_MODULES = frozenset({"core", "core_admin"})
 
 
 def builtin_registry() -> CommandRegistry:

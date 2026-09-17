@@ -37,6 +37,12 @@ class Code(enum.IntEnum):
     CANCELLED = 130
 
 
+def error_result(error: str, message: str, code: int = Code.USAGE, **fields: Value) -> Result:
+    """A failure carrying the spec's error identifier in `data.error`, e.g. E_BAD_REFERENCE (spec §5.2)."""
+    data: dict[str, Value] = {"error": error, **fields}
+    return Result(code, message, data)
+
+
 @dataclass(frozen=True, slots=True)
 class Result:
     code: int = Code.OK

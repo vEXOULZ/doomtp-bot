@@ -42,6 +42,7 @@ class OutboundLog(Protocol):
         twitch_message_id: str | None,
         dropped_reason: str | None,
         filter_hits: tuple[str, ...] | list[str] = (),
+        run_ref: str | None = None,
     ) -> None: ...
 
 
@@ -144,6 +145,7 @@ class Outbox:
         *,
         reply_to: str | None = None,
         is_invalidated: Callable[[], bool] = lambda: False,
+        run_ref: str | None = None,
     ) -> list[SendResult]:
         created = self.clock()
         hold = self.hold_ms_for(channel_id)
@@ -152,7 +154,7 @@ class Outbox:
 
         filtered, hits = self.content_filter(channel_id, text)
         if filtered is None:
-            await self._drop(channel_id, text, "filter_block", hits)
+            await self._drop(channel_id, text, "filter_block", hits, run_ref)
             return [SendResult(None, "filter_block")]
 
         results: list[SendResult] = []
@@ -162,12 +164,12 @@ class Outbox:
                 bucket = self._bucket(channel_id)
                 while (wait := bucket.wait_time()) > 0:
                     if self.clock() + wait - created > self.ttl_s:
-                        await self._drop(channel_id, text, "ttl", hits)
+                        await self._drop(channel_id, text, "ttl", hits, run_ref)
                         results.append(SendResult(None, "ttl"))
                         return results
                     await self.sleep(wait)
                 if is_invalidated():  # recheck immediately before the Helix call (spec §6.7)
-                    await self._drop(channel_id, text, "moderated", hits)
+                    await self._drop(channel_id, text, "moderated", hits, run_ref)
                     results.append(SendResult(None, "moderated"))
                     return results
                 if self._last_text.get(channel_id) == part:
@@ -190,12 +192,15 @@ class Outbox:
                         twitch_message_id=result.message_id,
                         dropped_reason=result.dropped_reason,
                         filter_hits=hits,
+                        run_ref=run_ref,
                     )
                 results.append(result)
                 reply_to = None  # only the first chunk is threaded as a reply
         return results
 
-    async def _drop(self, channel_id: str, text: str, reason: str, hits: list[str]) -> None:
+    async def _drop(
+        self, channel_id: str, text: str, reason: str, hits: list[str], run_ref: str | None = None
+    ) -> None:
         self.dropped[reason] = self.dropped.get(reason, 0) + 1
         log.info("outbox.dropped", channel=channel_id, reason=reason)
         if self.outbound_log is not None:

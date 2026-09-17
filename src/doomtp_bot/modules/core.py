@@ -11,7 +11,11 @@ MODULE = "core"
 
 
 def _spec(**kwargs: object) -> CommandSpec:
-    return CommandSpec(module=MODULE, log_level=LogLevel.OFF, input=InputMode.OPTIONAL, **kwargs)  # type: ignore[arg-type]
+    """Sentinels (spec §8): never disabled, role everyone, no cooldowns, logged at level off."""
+    return CommandSpec(
+        module=MODULE, log_level=LogLevel.OFF, input=InputMode.OPTIONAL,
+        toggleable=False, fixed_policy=True, **kwargs,  # type: ignore[arg-type]
+    )  # fmt: skip
 
 
 @command(

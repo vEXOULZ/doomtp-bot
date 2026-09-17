@@ -237,7 +237,9 @@ async def test_var_set_get_incr_and_typed_values(h: Harness) -> None:
 
 
 async def test_var_writes_respect_matrix(h: Harness) -> None:
-    assert await h.reply("alice", "!var set channel.goal 5") == "you can't change channel.goal"
+    denied = await h.run("alice", "!var set channel.goal 5")  # denials are silent (spec §6.6)
+    assert (denied.result.code, denied.send) == (Code.DENIED, None)
+    assert denied.result.message == "you can't change channel.goal"
     assert await h.reply("alice", "!var incr channel.chatter.points") == "channel.chatter.points = 1"
     assert await h.reply("alice", "!var set chatter.name x") is not None  # reserved name → usage error
     report = await h.run("alice", "!var set chatter.name x")
@@ -259,9 +261,9 @@ async def test_var_top_leaderboard(h: Harness) -> None:
 
 async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
     await h.reply("alice", "!var incr channel.chatter.points 5")
-    assert await h.reply("bob", "!var del channel.chatter.points @alice") == (
-        "you can't delete channel.chatter.points for Alice"
-    )
+    refused = await h.run("bob", "!var del channel.chatter.points @alice")
+    assert (refused.result.code, refused.send) == (Code.DENIED, None)  # silent denial (spec §6.6)
+    assert refused.result.message == "you can't delete channel.chatter.points for Alice"
     assert (
         await h.reply("mod", "!var del channel.chatter.points @alice")
         == "deleted channel.chatter.points for Alice"

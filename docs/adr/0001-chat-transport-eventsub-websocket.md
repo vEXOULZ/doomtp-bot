@@ -1,6 +1,6 @@
 # ADR-0001: Chat transport — EventSub WebSocket to receive, Helix to send
 
-**Status:** Proposed
+**Status:** Accepted (implemented; see Action Items) — 2026-09-17
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -67,7 +67,8 @@ B beats A because every bot of this kind eventually wants sub, raid and online e
 
 ## Action Items
 
-1. [ ] Register the Twitch app. Set redirect URI `http://localhost:8080/auth/callback`.
-2. [ ] Authorize the bot account (`user:read:chat user:write:chat user:bot`) and the broadcaster (`channel:bot`).
-3. [ ] Build a reconnect test against the Twitch CLI mock EventSub server.
-4. [ ] Add `message_id` dedupe (LRU) in the adapter.
+1. [x] Register the Twitch app. Set redirect URI `http://localhost:8080/auth/callback`. *(done 2026-09-17)*
+2. [x] Authorize the bot account (`user:read:chat user:write:chat user:bot`). *(done 2026-09-17; the token is rejected if it belongs to another account)*
+3. [ ] Broadcaster authorization (`channel:bot` and the full-tier scopes) — the `/auth/connect` flow isn't built (ADR-0007 item 5).
+4. [ ] Build a reconnect test against the Twitch CLI mock EventSub server. The client is also not restarted yet when it stops.
+5. [x] Add `message_id` dedupe (LRU) in the adapter. *(`TwitchService.emit`, 2000 ids)*

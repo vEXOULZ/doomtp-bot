@@ -1,6 +1,6 @@
 # ADR-0006: Ranked roles, dual cooldowns with callbacks, layered toggles
 
-**Status:** Proposed (revision 2)
+**Status:** Accepted, revision 2 (implemented; see Action Items) — 2026-09-17
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -101,7 +101,8 @@
 
 ## Action Items
 
-1. [ ] Add migrations: `roles`, `role_members` (with expiry), `command_rules`, `cooldown_rules`, `module_toggles`, `command_toggles`, `callbacks`, `ignore`, `audit_log`. Global rows use `channel_id='*'`.
-2. [ ] Build `policy/`: `effective_rank`, `resolve_cooldown` (dual buckets), `is_enabled` (layers + capabilities), and `can_grant`. Cover them with table-driven tests.
-3. [ ] Add the callback runner with rate limiting.
-4. [ ] Add `core_admin` commands: `!role`, `!perm`, `!cooldown`, `!module`, `!cmd` (enable/disable/log), `!ignore`, `!prefix`, `!callback`.
+1. [x] Add migrations: `roles`, `role_members` (with expiry), `command_rules`, `cooldown_rules`, `module_toggles`, `command_toggles`, `callbacks`, `ignore_list`, `audit_log`. Global rows use `channel_id='*'`.
+2. [x] Build `policy/`: `effective_rank`, cooldown resolution (dual buckets), `is_enabled` (layers + capabilities) and role management, with table-driven tests.
+3. [x] Add the callback runner with rate limiting. *(30 s per channel/user/command/kind)*
+4. [x] Add `core_admin` commands: `!role`, `!perm`, `!cooldown`, `!module`, `!cmd` (enable/disable/log), `!ignore`, `!prefix`, `!callback`, `!admin`.
+5. [ ] Move the cooldown check out of preflight so `||` can handle a cooldown failure (spec §5.2, planned v1.x).

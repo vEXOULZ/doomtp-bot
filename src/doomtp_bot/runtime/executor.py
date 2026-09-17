@@ -14,7 +14,7 @@ from doomtp_bot import __version__
 from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Part, Pipe, Placeholder, Store, Text
 from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, RunCancelled
 from doomtp_bot.runtime.namespaces import FieldPath, VarPath, classify
-from doomtp_bot.runtime.result import MAX_DATA_BYTES, Code, CommandError, Result
+from doomtp_bot.runtime.result import MAX_DATA_BYTES, Code, CommandError, Result, error_result
 from doomtp_bot.runtime.values import (
     MISSING,
     ConversionError,
@@ -131,7 +131,9 @@ class Executor:
             values = tuple([await self.expand(arg, ctx, scope, prev) for arg in inv.args])
             params = await self.bind(spec, values, ctx)
         except MissingValue as exc:
-            result = Result.failure(Code.USAGE, f"missing value: {exc.reference}")
+            result = error_result(
+                "E_MISSING_VALUE", f"missing value: {exc.reference}", reference=exc.reference
+            )
         except _UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
@@ -141,7 +143,8 @@ class Executor:
             try:
                 async with asyncio.timeout(self.stage_timeout):
                     result = await command.handler(cmd_ctx, args, stdin)
-                # 100–255 are runtime-reserved (spec §6.2); commands must not return them.
+                # 100–255 are runtime-reserved (spec §6.2); commands must not *return* them. A handler can
+                # still raise CommandError(code=126/128) for a denial the runtime owns.
                 if result.code >= 100:
                     log.warning("command.reserved_code", command=spec.name, code=result.code)
                     result = Result(Code.FAIL, result.message, result.data)
@@ -155,7 +158,7 @@ class Executor:
                 log.exception("command.crashed", command=spec.name, run_id=ctx.run_id)
                 result = Result.failure(Code.FAIL, f"{inv.name} failed")
             if result.data_size() > MAX_DATA_BYTES:
-                result = Result.failure(Code.USAGE, f"{inv.name} produced too much data")
+                result = error_result("E_DATA_TOO_LARGE", f"{inv.name} produced too much data")
             scope.executed.append(inv.index)
         scope.results[inv.index] = result
         return result

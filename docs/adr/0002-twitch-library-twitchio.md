@@ -1,6 +1,6 @@
 # ADR-0002: Twitch client library — TwitchIO 3.x behind an adapter
 
-**Status:** Proposed
+**Status:** Accepted (implemented; see Action Items) — 2026-09-17
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -67,7 +67,7 @@ A and B are close. A wins on chat-bot fit, since its bot ergonomics come from it
 
 ## Action Items
 
-1. [ ] Pin `twitchio>=3,<4` in `pyproject.toml` (uv lockfile).
-2. [ ] Define the `TwitchApi` protocol and domain events in `core/`.
-3. [ ] Implement token persistence hooks backed by `oauth_tokens` in SQLite.
-4. [ ] Record EventSub payload fixtures for adapter contract tests.
+1. [x] Pin `twitchio>=3,<4` in `pyproject.toml`. *(no `uv.lock` yet; the image and CI resolve with uv at build time)*
+2. [x] Define the protocols the rest of the code depends on, and the domain events in `core/events.py`. *(they became narrow per-need protocols — `ChatSender`, `Subscriber`, `SessionLog` — instead of one `TwitchApi`, so fakes stay small)*
+3. [x] Implement token persistence hooks backed by `oauth_tokens` in SQLite. *(`twitch/tokens.py`; refreshes are saved through `event_token_refreshed`)*
+4. [ ] Record real EventSub payload fixtures for adapter contract tests. *(mapping is covered today with hand-built payload objects)*

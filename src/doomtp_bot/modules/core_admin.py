@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, parse
-from doomtp_bot.modules import NON_TOGGLEABLE_MODULES
 from doomtp_bot.modules._common import actor, command_spec, rank, user_arg
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
@@ -67,6 +66,7 @@ def _spec(name: str, summary: str, usage: str, required_role: str = "moderator",
     return CommandSpec(
         name=name,
         module=MODULE,
+        toggleable=False,
         summary=summary,
         description=usage,
         params=(Param("1+", "arguments", description=usage),),
@@ -192,6 +192,8 @@ async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
             f", or exactly: {', '.join(allowed)}" if allowed else ""
         )
         return Result.success(text, {"required_role": required, "allowed_roles": list(allowed or [])})
+    if spec.fixed_policy:
+        return Result.failure(Code.FAIL, f"{spec.name} is always allowed for everyone")
     if spec.module == MODULE and rank(ctx) < BOT_ADMIN_RANK:
         return Result.failure(Code.FAIL, "only bot admins can change admin command permissions")
     if action == "set":
@@ -235,6 +237,8 @@ async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
         return Result.success(
             f"{spec.name} (shared/personal): {text}", {r: [c.tier_s, c.user_s] for r, c in rules.items()}
         )
+    if spec.fixed_policy:
+        return Result.failure(Code.FAIL, f"{spec.name} never has cooldowns")
     _need(v, 3, COOLDOWN_USAGE)
     role = v[2].lower()
     if policy.rank_of(channel_id, role) is None:
@@ -271,19 +275,18 @@ def _scope(ctx: CommandContext, v: list[str], position: int) -> str:
 async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy, registry = _policy(ctx), _registry(ctx)
     _need(v, 1, MODULE_USAGE)
-    modules = sorted({c.spec.module for c in registry.all()})
+    specs = {c.spec.module: c.spec for c in registry.all()}
+    modules = sorted(specs)
     action = v[0].lower()
     if action == "list":
         # A module is "on" when its toggle layers allow it; individual command overrides aren't shown here.
-        states = {
-            m: policy.is_enabled(ctx.channel.id, CommandSpec(name="", module=m, summary="")) for m in modules
-        }
+        states = {m: policy.is_enabled(ctx.channel.id, specs[m]) for m in modules}
         return Result.success(", ".join(f"{m} {'on' if on else 'off'}" for m, on in states.items()), states)
     _need(v, 2, MODULE_USAGE)
     module = v[1].lower()
     if module not in modules:
         raise CommandError(f"unknown module {module}")
-    if module in NON_TOGGLEABLE_MODULES:
+    if not specs[module].toggleable:
         return Result.failure(Code.FAIL, f"{module} can't be turned off")
     scope = _scope(ctx, v, 2)
     if action not in ("enable", "disable", "reset"):
@@ -313,7 +316,7 @@ async def _cmd(ctx: CommandContext, v: list[str], args: Args) -> Result:
             ),
         )
         return Result.success(f"{spec.name} log level: {level.value}")
-    if spec.module in NON_TOGGLEABLE_MODULES:
+    if not spec.toggleable:
         return Result.failure(Code.FAIL, f"{spec.name} can't be turned off")
     scope = _scope(ctx, v, 2)
     if action == "reset":

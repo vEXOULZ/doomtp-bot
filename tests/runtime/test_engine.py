@@ -307,6 +307,22 @@ async def test_moderation_cancellation_discards_writes() -> None:
     assert (r2.result.code, r2.send, r2.cancelled, store.data) == (130, None, True, {})
 
 
+async def test_failures_carry_the_specs_error_identifier() -> None:
+    rt = make_runtime()
+    bad_ref = await run(rt, "!echo {2}")
+    assert bad_ref.result.code == Code.USAGE
+    assert bad_ref.result.data == {
+        "error": "E_BAD_REFERENCE",
+        "reference": "{2}",
+    }
+    missing = await run(rt, "!echo {chatter.unset}")  # no ?? fallback (spec §7.5)
+    assert missing.result.data == {"error": "E_MISSING_VALUE", "reference": "{chatter.unset}"}
+    too_many = await run(rt, " && ".join(["!echo x"] * 9))
+    assert too_many.result.data == {"error": "E_TOO_MANY", "max": 8}
+    parse = await run(rt, "!echo a ; b")
+    assert isinstance(parse.result.data, dict) and parse.result.data["error"] == "E_RESERVED_OPERATOR"
+
+
 # ── parse errors and raw tails ─────────────────────────────────────────────
 async def test_parse_error_visible_only_when_first_command_runnable() -> None:
     rt = make_runtime(policy=DenyAdd())

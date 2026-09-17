@@ -4,17 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from doomtp_bot.lang.parser import VAR_NAMESPACES as _GRAMMAR_NAMESPACES
 from doomtp_bot.lang.parser import Context
 
-VAR_NAMESPACES = (
-    "chatter",
-    "channel",
-    "channel.chatter",
-    "publisher",
-    "publisher.chatter",
-    "publisher.channel",
-    "publisher.channel.chatter",
-)
+# The grammar lists them longest-first for matching (spec §C.6); shortest-first reads better in help text.
+VAR_NAMESPACES = tuple(reversed(_GRAMMAR_NAMESPACES))
 
 # Which VarKey column holds the chatter's user id, for namespaces that have one.
 CHATTER_KEY: dict[str, str] = {

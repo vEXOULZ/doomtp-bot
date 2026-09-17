@@ -22,7 +22,7 @@ from doomtp_bot.runtime.policy import AllowAllPolicy, Decision, Policy
 from doomtp_bot.runtime.preflight import MAX_INVOCATIONS, preflight
 from doomtp_bot.runtime.registry import CommandRegistry
 from doomtp_bot.runtime.resolver import BuiltinResolver, Resolver
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, Result, error_result
 from doomtp_bot.runtime.values import UserResolver
 from doomtp_bot.runtime.variables import (
     AllowAllAccess,
@@ -142,7 +142,8 @@ class Runtime:
             return None
         except ParseError as exc:
             visible = self._first_command_permitted(text, ctx)
-            report = RunReport(text, Result.failure(Code.USAGE, str(exc)), "parse")
+            failure = error_result(str(exc.code), str(exc), column=exc.column)
+            report = RunReport(text, failure, "parse")
             report.send = decide_output(
                 report.result,
                 origin="parse",

@@ -293,3 +293,19 @@ async def test_every_change_is_audited(h: Harness) -> None:
     actions = await h.audit_actions()
     assert actions == ["channel.join", "role.create", "command.cooldown", "command.toggle", "ignore.add"]
     assert h.policy.is_ignored(CHANNEL_ID, "401")
+
+
+async def test_sentinels_cannot_be_restricted_or_cooled_down(h: Harness) -> None:
+    """Spec §8: sentinels are always allowed for everyone, with no cooldowns."""
+    assert await h.reply("mod", "!perm set true moderator") == "true is always allowed for everyone"
+    h.clock.now += 100
+    assert await h.reply("mod", "!cooldown set true everyone 60 60") == "true never has cooldowns"
+    h.clock.now += 100
+    assert await h.reply("mod", "!module disable core") == "core can't be turned off"
+    h.clock.now += 100
+    # Even a rule written straight to the database doesn't apply to a sentinel.
+    await h.policy.mutate(
+        lambda repo: repo.set_cooldown(CHANNEL_ID, "true", "everyone", 600, 600, Actor("2", "chat"))
+    )
+    for _ in range(2):
+        assert await h.reply("viewer", "!false || true") is None  # allowed, silent, never on cooldown

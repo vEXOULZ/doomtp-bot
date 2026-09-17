@@ -1,4 +1,4 @@
-"""Domain events published on the EventBus. Only twitch/ and history/ construct these from external payloads."""
+"""Domain events handled by the Dispatcher. Only twitch/ and history/ construct these from external payloads."""
 
 from __future__ import annotations
 

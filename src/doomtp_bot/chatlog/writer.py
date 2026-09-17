@@ -142,11 +142,12 @@ class ChatLogWriter:
         message: str | None,
         duration_ms: int,
         cancelled_reason: str | None,
+        run_ref: str | None = None,
     ) -> None:
         await self._put(
             "command_run",
             (channel_id, user_id, trigger_type, trigger_id, expr, json.dumps(list(resolved)), code, message,
-             duration_ms, cancelled_reason, now_ms()),
+             duration_ms, cancelled_reason, run_ref, now_ms()),
         )  # fmt: skip
 
     async def outbound(
@@ -158,6 +159,7 @@ class ChatLogWriter:
         twitch_message_id: str | None,
         dropped_reason: str | None,
         filter_hits: Sequence[str] = (),
+        run_ref: str | None = None,
     ) -> None:
         await self._put(
             "outbound",
@@ -168,6 +170,7 @@ class ChatLogWriter:
                 json.dumps(list(filter_hits)),
                 twitch_message_id,
                 dropped_reason,
+                run_ref,
                 now_ms(),
             ),
         )
@@ -310,10 +313,10 @@ _SQL: dict[str, str] = {
     "flag_chat_cleared": "UPDATE messages SET cleared_at = ? WHERE channel_id = ? AND sent_at <= ? AND cleared_at IS NULL",
     "command_run": (
         "INSERT INTO command_runs (channel_id, user_id, trigger_type, trigger_id, expr, resolved, code, message,"
-        " duration_ms, cancelled_reason, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " duration_ms, cancelled_reason, run_ref, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ),
     "outbound": (
         "INSERT INTO outbound_msgs (channel_id, text_sent, text_prefilter, filter_hits, twitch_message_id,"
-        " dropped_reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " dropped_reason, run_ref, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     ),
 }

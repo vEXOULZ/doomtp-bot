@@ -1,1 +1,1 @@
-"""Core: domain events, event bus, outbox, module base, health, single-instance lock."""
+"""Core: domain events, dispatch, channels, outbox, health, single-instance lock."""

@@ -1,6 +1,6 @@
 # ADR-0010: Variables — explicit namespaces, no hidden sandboxing
 
-**Status:** Proposed (revision 2)
+**Status:** Accepted, revision 2 (implemented; see Action Items) — 2026-09-17
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -117,7 +117,7 @@ publication_write_grants(channel_id TEXT, publication_name TEXT, variable TEXT,
 
 ## Action Items
 
-1. [ ] Add the `variables` and `publication_write_grants` migrations, plus `variables/store.py` with buffered writes, atomic `incr`/`append` and `top`.
-2. [ ] Build an access matrix implementation with a table-driven test covering every namespace × own/built-in/foreign × grant case.
-3. [ ] Add `!var get|set|incr|del|list|top` and the `>`/`>>` executor support.
-4. [ ] Add the publish-time write-grant warning, `!cc grant … revoke`, and `!explain` output for denied writes.
+1. [x] Add the `variables` and `publication_write_grants` migrations, plus `variables/store.py` with buffered writes, atomic `incr`/`append` and `top`.
+2. [x] Build an access matrix implementation with a table-driven test covering every namespace × own/built-in/foreign × grant case.
+3. [x] Add `!var get|set|incr|del|list|top` and the `>`/`>>` executor support.
+4. [ ] Add the publish-time write-grant warning, `!cc grant … revoke`, and `!explain` output for denied writes. *(waits on ADR-0009)*

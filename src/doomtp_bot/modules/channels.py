@@ -16,6 +16,7 @@ MODULE = "core_admin"
     CommandSpec(
         name="join",
         module=MODULE,
+        toggleable=False,
         summary="Invite the bot to your channel",
         description="Type !join in the bot's own chat to add the bot to your channel. Bot admins can name any channel.",
         params=(Param("1", "channel", description="Channel to join (bot admins only)"),),
@@ -53,6 +54,7 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     CommandSpec(
         name="part",
         module=MODULE,
+        toggleable=False,
         aliases=("leave",),
         summary="Remove the bot from a channel",
         description="The broadcaster can type !part in their chat. Bot admins can name any channel.",

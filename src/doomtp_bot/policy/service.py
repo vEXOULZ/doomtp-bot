@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import structlog
 
-from doomtp_bot.modules import NON_TOGGLEABLE_MODULES
 from doomtp_bot.policy.cooldowns import CooldownState, CooldownTracker
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
@@ -131,7 +130,7 @@ class PolicyService:
     # ── toggles (ADR-0006 §4) ───────────────────────────────────────────────
     def is_enabled(self, channel_id: str, spec: CommandSpec) -> bool:
         module, command = spec.module, spec.name
-        if module in NON_TOGGLEABLE_MODULES:
+        if not spec.toggleable:
             return True
         toggles, commands = self.snapshot.module_toggles, self.snapshot.command_toggles
         if toggles.get((GLOBAL, module)) is False:
@@ -165,6 +164,8 @@ class PolicyService:
         return required, allowed
 
     def permission(self, ctx: ExecContext, spec: CommandSpec) -> Decision | None:
+        if spec.fixed_policy:  # sentinels are always allowed (spec §8)
+            return None
         channel_id = ctx.channel.id
         rank = self.effective_rank(ctx)
         required, allowed = self.required_role(channel_id, spec)
@@ -192,6 +193,8 @@ class PolicyService:
 
     def cooldown_rule(self, ctx: ExecContext, spec: CommandSpec) -> tuple[str, Cooldown] | None:
         """The rule of the highest-ranked role that has a rule and that the caller's rank reaches."""
+        if spec.fixed_policy:  # sentinels never have cooldowns (spec §8)
+            return None
         channel_id = ctx.channel.id
         merged = self.cooldown_rules(channel_id, spec)
         merged.setdefault("moderator", Cooldown(0, 0))

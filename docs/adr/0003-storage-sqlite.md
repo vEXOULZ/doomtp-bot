@@ -1,6 +1,6 @@
 # ADR-0003: Storage — SQLite (WAL) on a volume
 
-**Status:** Proposed
+**Status:** Accepted (implemented; see Action Items) — 2026-09-17
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -79,7 +79,8 @@ SQLite gives transactional safety that plain files lack, without the operational
 
 ## Action Items
 
-1. [ ] On connect, set `PRAGMA journal_mode=WAL`, `busy_timeout=5000` and `foreign_keys=ON`.
-2. [ ] Write the migrations runner, plus `0001_init.sql` matching the data model in architecture.md.
-3. [ ] Set file permissions to 600, because the file stores refresh tokens.
+1. [x] On connect, set `PRAGMA journal_mode=WAL`, `busy_timeout=5000` and `foreign_keys=ON`. *(also `synchronous=NORMAL`)*
+2. [x] Write the migrations runner, plus `0001_init.sql` matching the data model in architecture.md.
+3. [x] Set file permissions to 600, because the file stores refresh tokens. *(POSIX only; Windows dev hosts keep the default ACL)*
 4. [ ] Add a nightly `.backup` job (host cron or sidecar) with rotation.
+5. [x] Serialize write transactions per connection (`storage.db.transaction`), because one connection is shared by every writer in the process.

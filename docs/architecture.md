@@ -79,7 +79,8 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
    │ dedupe, map      │        └───────▲────────┘          └─────────┬────────┘
    └────────┬─────────┘                │                             │ historical events
             ▼                          │                             ▼
-   ┌─────────────────────────────── EventBus ─────────────────────────────────────┐
+   ┌────────────────────────── Dispatcher (core/dispatch.py) ─────────────────────┐
+   │  calls each step in order for every event; one failing step is logged, not fatal │
    └──┬───────────────┬────────────────────┬───────────────────┬───────────────┬──┘
       ▼               ▼                    ▼                   ▼               ▼
 ┌───────────┐ ┌───────────────┐ ┌───────────────────┐ ┌──────────────┐ ┌─────────────┐
@@ -118,7 +119,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 ### Main flow: a chat command
 
 1. The adapter receives `channel.chat.message`, maps it to a `ChatMessage` and dedupes it.
-2. The EventBus delivers it in order:
+2. The Dispatcher handles it in order:
    - **ChatLogger** queues it for storage. This always happens, including for ignored users.
    - The **Ignore gate** stops processing here if the sender is ignored, is the bot itself, or carries the Twitch chat-bot badge (configurable).
    - **Dispatch** checks whether the message starts with the channel prefix, which makes it a command expression, and runs any regex **listeners** enabled for the channel.
@@ -184,10 +185,11 @@ backfill_runs(id INTEGER PRIMARY KEY, channel_id TEXT, gap_from INTEGER, gap_to 
 
 command_runs(id INTEGER PRIMARY KEY, channel_id TEXT, user_id TEXT, trigger_type TEXT,
              trigger_id TEXT, expr TEXT, resolved TEXT, code INTEGER, message TEXT,
-             duration_ms INTEGER, cancelled_reason TEXT, at INTEGER)
-outbound_msgs(id INTEGER PRIMARY KEY, channel_id TEXT, run_id INTEGER, text_sent TEXT,
+             duration_ms INTEGER, cancelled_reason TEXT, run_ref TEXT, at INTEGER)
+outbound_msgs(id INTEGER PRIMARY KEY, channel_id TEXT, run_ref TEXT, text_sent TEXT,
               text_prefilter TEXT, filter_hits TEXT, twitch_message_id TEXT,
               dropped_reason TEXT, at INTEGER)
+-- run_ref is the runtime's run id: it links every sent or dropped message to the run that produced it
 ```
 
 All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
@@ -255,6 +257,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 ```
 
 - **Usage strings, `!help`, the `/api/v1/commands` JSON and the public docs page are all generated** from these specs.
+- `reads`, `writes` and `side_effects` are **declarations used for documentation and `!explain`**. They are not enforced yet: today only `!var` writes variables, and it is the documented exception (variable-access-matrix.md §2). Enforcement arrives with the first other built-in that writes.
 - Custom commands carry the same metadata (summary, params, examples), written by their owner.
 - `!help` filters by the **effective policy** for the caller in that channel. `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
 
@@ -511,26 +514,32 @@ A **race window** remains: a mod can act after the message has already been sent
 
 ## 12. Package layout
 
+Built (✔) and planned (·):
+
 ```
 src/doomtp_bot/
-├─ __main__.py  config.py
-├─ core/        events.py bus.py outbox.py module.py capabilities.py
-├─ twitch/      adapter.py helix.py auth.py probe.py          # only place importing twitchio
-├─ history/     provider.py recent_messages.py irc_parse.py
-├─ chatlog/     writer.py queries.py
-├─ moderation/  index.py
-├─ lang/        parser.py (PEG, spec App. C) ast.py tokens.py errors.py   # syntax (versioned)
-├─ runtime/     resolver.py preflight.py executor.py result.py explain.py spec.py
-├─ policy/      roles.py cooldowns.py toggles.py ignore.py callbacks.py cache.py
-├─ customcmds/  service.py resolution.py versions.py
-├─ variables/   store.py scopes.py
-├─ triggers/    service.py timers.py listeners.py
-├─ filters/     normalize.py matcher.py service.py
-├─ audit/       log.py
-├─ storage/     db.py repos/ migrations/bot/ migrations/chatlog/
-├─ modules/     core_admin.py text.py random.py weather.py counters.py quotes.py
-│               logsearch.py customcmds_cmds.py vars_cmds.py automod.py help.py
-└─ api/         app.py routes/ (health auth commands parse explain language v1/…) web/ (templates, htmx)
+├─ __main__.py  config.py  clock.py                                        ✔ wiring, settings, now_ms
+├─ core/        events.py dispatch.py channels.py outbox.py health.py      ✔ dispatch calls each step directly
+│               instance_lock.py                                           ·  capabilities.py (ADR-0007 probe)
+├─ twitch/      client.py mapping.py auth.py tokens.py    # only place importing twitchio  ✔
+│                                                                          ·  probe.py, streams poller
+├─ history/     provider.py recent_messages.py irc_parse.py                ·  ADR-0008
+├─ chatlog/     writer.py                                                  ✔  ·  queries.py
+├─ moderation/  index.py                                                   ✔
+├─ lang/        parser.py (PEG, spec App. C) ast.py errors.py              ✔ syntax (versioned)
+├─ runtime/     engine.py resolver.py preflight.py executor.py result.py   ✔
+│               context.py values.py variables.py namespaces.py output.py policy.py spec.py registry.py
+│                                                                          ·  explain.py
+├─ policy/      service.py repository.py snapshot.py roles.py cooldowns.py ✔ one service, not a file per concern
+├─ customcmds/  service.py resolution.py versions.py                       ·  ADR-0009
+├─ variables/   store.py access.py                                         ✔
+├─ triggers/    service.py timers.py listeners.py                          ·  architecture §7
+├─ filters/     normalize.py matcher.py service.py                         ·  architecture §9
+├─ audit/       log.py                                                     ✔
+├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔  ·  repos/
+├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
+│               variables.py _common.py                                    ·  weather, quotes, logsearch, automod…
+└─ api/         app.py routes/ (health auth)                               ✔  ·  commands parse explain language v1 web
 
 web-editor/                  # the only Node-tooled part: CodeMirror 6 + Lezer highlight grammar → static bundle
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)
