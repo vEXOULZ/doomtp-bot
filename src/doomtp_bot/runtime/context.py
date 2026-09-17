@@ -67,6 +67,7 @@ class Publisher:
     command_name: str = ""
     alias: str = ""
     version: int = 0
+    publication: str | None = None  # set when running through a channel publication (vs. a personal link)
 
 
 class RunCancelled(Exception):
