@@ -1,8 +1,9 @@
-"""Entry point: config → lock → databases → health → API (→ Twitch, once implemented)."""
+"""Entry point: wires storage, policy, runtime, chat log, Twitch and the API into one process (ADR-0004)."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 
 import structlog
@@ -10,18 +11,119 @@ import uvicorn
 
 from doomtp_bot import __version__
 from doomtp_bot.api.app import create_app
+from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
+from doomtp_bot.core.channels import ChannelManager
+from doomtp_bot.core.dispatch import Dispatcher
+from doomtp_bot.core.events import Event
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.core.instance_lock import InstanceLock, InstanceLockError
+from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.log import configure_logging
+from doomtp_bot.moderation.index import ModerationIndex
+from doomtp_bot.modules import builtin_registry
+from doomtp_bot.policy.roles import MODERATOR_RANK
+from doomtp_bot.policy.service import PolicyService
+from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases, current_version
+from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHttp
+from doomtp_bot.twitch.client import TwitchService
+from doomtp_bot.twitch.tokens import TokenStore
+from doomtp_bot.variables.access import VariableAccessPolicy
+from doomtp_bot.variables.store import SqliteVariableStore
 
 log = structlog.get_logger("doomtp_bot")
+
+
+class _NoSender:
+    async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
+        return SendResult(None, "not_connected")
 
 
 async def run(settings: Settings) -> None:
     dbs = await Databases.open(settings.bot_db_path, settings.chatlog_db_path)
     health = HealthRegistry()
+
+    policy = PolicyService(dbs.bot, bot_owner_ids=settings.bot_owner_ids)
+    await policy.reload()
+    store = SqliteVariableStore(dbs.bot)
+    access = VariableAccessPolicy(policy, dbs.bot)
+    await access.reload()
+    writer = ChatLogWriter(dbs.chatlog)
+    writer.start()
+    moderation = ModerationIndex()
+
+    dispatcher: Dispatcher | None = None
+
+    async def sink(event: Event) -> None:
+        if dispatcher is not None:
+            await dispatcher.handle(event)
+
+    twitch: TwitchService | None = None
+    auth: TwitchAuth | None = None
+    secret = settings.client_secret()
+    if settings.twitch_client_id and secret:
+        tokens = TokenStore(dbs.bot)
+        twitch = TwitchService(
+            client_id=settings.twitch_client_id, client_secret=secret, tokens=tokens, sink=sink
+        )
+
+    runtime = Runtime(
+        builtin_registry(),
+        policy=policy,
+        callbacks=policy,
+        store=store,
+        access=access,
+        resolve_user=twitch.resolve_user if twitch else None,
+        services={"policy": policy, "variable_store": store},
+    )
+    channels = ChannelManager(policy, twitch, writer)
+    runtime.services["channels"] = channels
+    if twitch is not None:
+        runtime.services["twitch"] = twitch
+        runtime.services["login_for"] = twitch.login_for
+
+    def rate_for(channel_id: str) -> tuple[int, float]:
+        settings_ = policy.channel_settings(channel_id)
+        if settings_ is not None and settings_.tier in ("moderator", "full"):
+            return 90, 30.0
+        if twitch is not None and twitch.bot_id is not None:
+            bot = policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "")
+            if bot.rank >= MODERATOR_RANK:
+                return 90, 30.0
+        return 20, 30.0
+
+    def hold_ms_for(channel_id: str) -> int:
+        settings_ = policy.channel_settings(channel_id)
+        return settings_.reply_hold_ms if settings_ else 0
+
+    outbox = Outbox(twitch or _NoSender(), writer, rate_for=rate_for, hold_ms_for=hold_ms_for)
+    dispatcher = Dispatcher(
+        runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation, channels=channels
+    )
+
+    async def start_twitch() -> None:
+        if twitch is None:
+            return
+        try:
+            if await twitch.start() and twitch.bot_id and twitch.bot_login:
+                await channels.ensure_home(twitch.bot_id, twitch.bot_login)
+                await channels.subscribe_all()
+        except Exception:
+            log.exception("twitch.start_failed")
+
+    async def on_bot_authorized(account: AuthorizedAccount) -> None:
+        log.info("twitch.authorized", bot=account.login, scopes=list(account.scopes))
+        asyncio.create_task(start_twitch())  # noqa: RUF006 - fire and forget; errors are logged inside
+
+    if twitch is not None and settings.twitch_client_id and secret:
+        auth = TwitchAuth(
+            client_id=settings.twitch_client_id,
+            redirect_uri=settings.public_base_url.rstrip("/") + "/auth/callback",
+            tokens=TokenStore(dbs.bot),
+            http=TwitchOAuthHttp(settings.twitch_client_id, secret),
+            on_bot_authorized=on_bot_authorized,
+        )
 
     async def db_check() -> ComponentHealth:
         return ComponentHealth(
@@ -32,24 +134,38 @@ async def run(settings: Settings) -> None:
             },
         )
 
+    async def chatlog_check() -> ComponentHealth:
+        status = Status.OK if writer.queue_depth < 5_000 else Status.DEGRADED
+        return ComponentHealth(
+            status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms}
+        )
+
     async def twitch_check() -> ComponentHealth:
-        if not settings.twitch_configured:
+        if twitch is None:
             return ComponentHealth(Status.DISABLED, {"reason": "TWITCH_CLIENT_ID / secret not set"})
-        return ComponentHealth(Status.DEGRADED, {"reason": "twitch adapter not implemented yet"})
+        return await twitch.health()
 
     health.register("databases", db_check)
+    health.register("chatlog", chatlog_check)
     health.register("twitch", twitch_check)
 
-    app = create_app(health)
+    app = create_app(health, auth)
     server = uvicorn.Server(
         uvicorn.Config(app, host=settings.web_host, port=settings.web_port, log_config=None, lifespan="on")
     )
-
     log.info("bot.start", version=__version__, api=f"http://{settings.web_host}:{settings.web_port}")
+    twitch_start = asyncio.create_task(start_twitch())
     try:
-        # uvicorn owns SIGINT/SIGTERM handling and returns after a graceful shutdown.
-        await server.serve()
+        await server.serve()  # uvicorn owns SIGINT/SIGTERM and returns after a graceful shutdown
     finally:
+        twitch_start.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await twitch_start
+        await dispatcher.drain()
+        await writer.end_all_sessions("shutdown")
+        if twitch is not None:
+            await twitch.stop()
+        await writer.stop()
         await dbs.close()
         log.info("bot.stop")
 

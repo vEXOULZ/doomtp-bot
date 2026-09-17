@@ -168,6 +168,11 @@ def preprocess_line(text: str, reply_parent_login: str | None = None) -> str:
     return text[start:end]
 
 
+def looks_like_command(text: str, prefix: str, reply_parent_login: str | None = None) -> bool:
+    """Cheap Line-context check (spec §2.1 step 4): would this chat message be parsed as a command?"""
+    return _Parser(preprocess_line(text, reply_parent_login), ParserParams(prefix=prefix)).line_start()
+
+
 def parse(text: str, context: Context, params: ParserParams) -> Node:
     """Parse `text` into an AST. Raises ParseError, or NotACommand for Line context.
 

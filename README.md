@@ -4,8 +4,23 @@ A self-hosted, multi-channel Twitch chat bot with a composable command language
 (`!random 1-100 | echo you rolled {1}`), user-published custom commands, a complete chat log, and a REST API
 with a web UI.
 
-**Status:** early scaffold. The app starts, migrates its databases, and serves `/healthz` and `/readyz`.
-The command language parser is implemented (spec Appendix C). The runtime and the Twitch connection are next.
+**Status:** working core. Implemented so far:
+- Parser and runtime for the command language
+- Permissions, cooldowns and toggles
+- Variables
+- The chat log
+- The Twitch connection (EventSub chat events, Helix sending, OAuth)
+
+Custom commands, triggers, filters, history backfill and the web UI are next.
+
+## Connecting to Twitch
+
+1. Create an application at https://dev.twitch.tv/console/apps.
+   - **OAuth Redirect URL:** `http://localhost:8080/auth/callback`. It must match `PUBLIC_BASE_URL` + `/auth/callback`.
+   - **Category:** Chat Bot. **Client type:** Confidential.
+2. Put the Client ID in `.env` as `TWITCH_CLIENT_ID`, and the client secret in `secrets/twitch_client_secret`. For local development you can use `TWITCH_CLIENT_SECRET` instead.
+3. Start the bot, then open `http://localhost:8080/auth/login` in a browser on the same machine. Sign in as the **bot account**, not your personal account.
+4. The bot joins its own channel. A streamer adds it to their channel by typing `!join` in the bot's chat. A bot owner can add any channel with `!join <channel>` there. Set owners with `BOT_OWNER_IDS`.
 
 ## Docs
 
