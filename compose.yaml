@@ -1,0 +1,36 @@
+services:
+  doomtp-bot:
+    build: .
+    image: doomtp-bot:dev
+    restart: unless-stopped
+    env_file: .env
+    secrets: [twitch_client_secret]
+    volumes:
+      - ./data:/data
+    ports:
+      # LAN/localhost only. Replace 127.0.0.1 with the host's LAN IP to reach the web UI from other machines.
+      # Never expose this port to the internet (architecture §11).
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # Optional: browse/query the chat log read-only (architecture §3.2).
+  datasette:
+    profiles: ["tools"]
+    image: datasetteproject/datasette:0.65.1
+    command: datasette serve /data/chatlog.db --host 0.0.0.0 --port 8001 --setting sql_time_limit_ms 5000
+    volumes:
+      - ./data:/data:ro
+    ports:
+      - "127.0.0.1:8001:8001"
+
+secrets:
+  twitch_client_secret:
+    file: ./secrets/twitch_client_secret

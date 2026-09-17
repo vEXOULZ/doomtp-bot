@@ -1,0 +1,19 @@
+Line        ::= Prefix Expr
+Expr        ::= Pipeline ( ( '&&' | '||' ) Pipeline )*
+Pipeline    ::= Stage ( '|' Stage )*
+Stage       ::= ( Group | Invocation ) ( ( '>' | '>>' ) VarRef )?
+Group       ::= '(' Expr ')'
+Invocation  ::= Prefix? '@'? Name Argument*
+Argument    ::= ( Text | Quoted | Escape | Placeholder )+
+Quoted      ::= '"' ( [^"\{] | Escape | Placeholder )* '"'
+Escape      ::= '\' Char
+Placeholder ::= '{' Reference ( ':' Type )? ( '??' Fallback )? '}'
+Reference   ::= ( '_' | Index | Root ) ( '.' Segment )*
+Root        ::= 'arg' | 'args' | 'chatter' | 'channel' | 'publisher' | 'cmd'
+              | 'bot' | 'now' | 'event' | 'match' | 'cooldown' | 'denied' | 'run'
+Segment     ::= Identifier | Digits ( '+' | '+raw' )?
+Type        ::= 'str' | 'int' | 'float' | 'bool' | 'range' | 'duration' | 'user' | 'url'
+              | 'choice(' Item ( ',' Item )* ')'
+VarRef      ::= ( 'chatter' | 'channel' | 'channel.chatter' | 'publisher' | 'publisher.chatter'
+              | 'publisher.channel' | 'publisher.channel.chatter' ) '.' VarName
+Name        ::= [a-z0-9] [a-z0-9_-]*

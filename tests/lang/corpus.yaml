@@ -1,0 +1,153 @@
+# Parser conformance corpus — command-language-spec Appendix A.1 (+ cases added with Appendix C).
+# Shared by pytest (parser: ast / error / column) and vitest in web-editor/ (token classes only).
+#
+# Fields:
+#   input               text as received (Line context: before pre-processing)
+#   context             line | body | trigger | listener | callback      (default: line)
+#   prefix              channel prefix                                     (default: "!")
+#   reply_parent_login  simulate a reply (spec §2.1 step 2)
+#   raw_tail            map of command -> {lead-args-joined-by-space: N}; "" key = no lead args
+# Expectations (exactly one):
+#   ast                 canonical form, see doomtp_bot.lang.ast.to_canonical
+#   error               parse error code (optionally `column`, 1-based)
+#   not_command: true   Line context only
+
+defaults:
+  raw_tail:
+    explain: {"": 1}
+    cc: {"add": 3, "edit": 3}
+
+cases:
+  - id: A1.01-pipe-placeholder
+    input: '!random 1-100 | echo dice rolled a {1}!'
+    ast: 'Pipe(random["1-100"], echo["dice","rolled","a","{1}!"])'
+
+  - id: A1.02-operators-only-when-standalone
+    input: '!echo a|b ;) -> >:( (lol)'
+    ast: 'echo["a|b",";)","->",">:(","(lol)"]'
+
+  - id: A1.03-apostrophe-and-double-quotes
+    input: "!echo it's \"a | b\" fine"
+    ast: 'echo["it''s","a | b","fine"]'
+
+  - id: A1.04-quote-concatenation
+    input: '!echo ab"c d"e'
+    ast: 'echo["abc de"]'
+
+  - id: A1.05-standalone-pipe
+    input: '!echo | literal'
+    ast: 'Pipe(echo[], literal[])'
+
+  - id: A1.06-escaped-pipe
+    input: '!echo \| literal'
+    ast: 'echo["|","literal"]'
+
+  - id: A1.07-reserved-semicolon
+    input: '!echo a ; b'
+    error: E_RESERVED_OPERATOR
+    column: 9
+
+  - id: A1.08-unterminated-quote
+    input: '!echo "unterminated'
+    error: E_UNTERMINATED_QUOTE
+
+  - id: A1.09-unknown-placeholder-root
+    input: '!echo {friend}'
+    error: E_BAD_PLACEHOLDER
+
+  - id: A1.10-escaped-brace
+    input: '!echo \{friend}'
+    ast: 'echo["\\{friend\\}"]'
+
+  - id: A1.11-group-or-and
+    input: '( !a || true ) && !b'
+    ast: 'And(Group(Or(a[], true[])), b[])'
+
+  - id: A1.12-precedence
+    input: '!a && !b | !c > channel.x || !d'
+    ast: 'Or(And(a[], Pipe(b[], Store(c[], channel.x))), d[])'
+
+  - id: A1.13-unexpected-operator
+    input: '!a | && !b'
+    error: E_UNEXPECTED_OPERATOR
+
+  - id: A1.14-dynamic-varref
+    input: '!a > {chatter.name}'
+    error: E_DYNAMIC_VARREF
+
+  - id: A1.15-explain-raw-tail
+    input: '!explain !random 1-6 | echo {1}'
+    ast: 'explain[]~"!random 1-6 | echo {1}"'
+
+  - id: A1.16-cc-add-raw-tail-quoted
+    input: '!cc add roll "!random 1-6 | echo {1}"'
+    ast: 'cc["add","roll"]~"!random 1-6 | echo {1}"'
+
+  - id: A1.17-not-a-command
+    input: '! random'
+    not_command: true
+
+  - id: A1.18-reply-mention-stripped
+    input: '@alice !random 1-6'
+    reply_parent_login: alice
+    ast: 'random["1-6"]'
+
+  - id: A1.19-nested-fallback
+    input: '!echo {chatter.location ?? {channel.location ?? Lisbon}}'
+    ast: 'echo["{chatter.location ?? {channel.location ?? Lisbon}}"]'
+
+  - id: A1.20-typed-choice-placeholder
+    context: body
+    input: 'echo {arg.1:choice(a,b) ?? a}'
+    ast: 'echo["{arg.1:choice(a,b) ?? a}"]'
+
+  # ── Added with Appendix C ──────────────────────────────────────────────────
+  - id: C.01-empty-group
+    input: '( ) !a'
+    not_command: true            # LineStart needs `( ` followed by prefix+name
+
+  - id: C.02-empty-group-in-body
+    context: body
+    input: '( )'
+    error: E_UNEXPECTED_OPERATOR
+
+  - id: C.03-bad-name-boundary
+    input: '!echo"x"'
+    error: E_BAD_NAME
+
+  - id: C.04-raw-tail-inside-expression
+    input: '!a && !cc add x y'
+    error: E_RAW_TAIL_POSITION
+
+  - id: C.05-cc-info-is-not-raw
+    input: '!cc info x | echo {1}'
+    ast: 'Pipe(cc["info","x"], echo["{1}"])'
+
+  - id: C.06-missing-operand
+    input: '!a |'
+    error: E_MISSING_OPERAND
+
+  - id: C.07-inches-quote
+    input: "!echo 6'2\""
+    error: E_UNTERMINATED_QUOTE
+
+  - id: C.08-append-store
+    input: '!roll >> chatter.rolls'
+    ast: 'Append(roll[], chatter.rolls)'
+
+  - id: C.09-publisher-channel-chatter
+    context: body
+    input: 'incr > publisher.channel.chatter.wins'
+    ast: 'Store(incr[], publisher.channel.chatter.wins)'
+
+  - id: C.10-reserved-var-name
+    input: '!a > channel.chatter'
+    error: E_BAD_VARREF
+
+  - id: C.11-personal-alias
+    input: '!@roll 20'
+    ast: '@roll["20"]'
+
+  - id: C.12-unbalanced-group
+    input: '( !a || !b'
+    error: E_UNBALANCED_GROUP

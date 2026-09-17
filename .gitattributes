@@ -1,0 +1,2 @@
+# Keep LF everywhere: the bot is built and deployed in Linux containers.
+* text=auto eol=lf
