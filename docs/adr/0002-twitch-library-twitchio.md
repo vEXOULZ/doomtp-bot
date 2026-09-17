@@ -67,7 +67,7 @@ A and B are close. A wins on chat-bot fit, since its bot ergonomics come from it
 
 ## Action Items
 
-1. [x] Pin `twitchio>=3,<4` in `pyproject.toml`. *(no `uv.lock` yet; the image and CI resolve with uv at build time)*
+1. [x] Pin `twitchio>=3,<4` in `pyproject.toml`, with `uv.lock` pinning the exact resolved set (twitchio 3.3.2 today). The image and CI install with `uv sync --locked`, which fails if the lock is stale.
 2. [x] Define the protocols the rest of the code depends on, and the domain events in `core/events.py`. *(they became narrow per-need protocols — `ChatSender`, `Subscriber`, `SessionLog` — instead of one `TwitchApi`, so fakes stay small)*
 3. [x] Implement token persistence hooks backed by `oauth_tokens` in SQLite. *(`twitch/tokens.py`; refreshes are saved through `event_token_refreshed`)*
 4. [ ] Record real EventSub payload fixtures for adapter contract tests. *(mapping is covered today with hand-built payload objects)*

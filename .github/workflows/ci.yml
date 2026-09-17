@@ -17,15 +17,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        # --locked fails if uv.lock is missing or stale for pyproject.toml.
+        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
       - name: Lint
-        run: ruff check src tests scripts && ruff format --check src tests scripts
+        run: uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
       - name: Type check
-        run: mypy
+        run: uv run mypy
       - name: Test
-        run: pytest -q
+        run: uv run pytest -q
       - name: Grammar copy in sync with spec
-        run: python scripts/check_railroad.py
+        run: uv run python scripts/check_railroad.py
 
   docker:
     runs-on: ubuntu-latest

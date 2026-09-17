@@ -31,6 +31,22 @@ services:
     ports:
       - "127.0.0.1:8001:8001"
 
+  # One-shot backup (ADR-0003). Run from host cron: docker compose run --rm backup
+  backup:
+    profiles: ["tools"]
+    build: .
+    image: doomtp-bot:dev
+    entrypoint: ["python", "/app/scripts/backup.py"]
+    command: ["--data-dir", "/data", "--keep", "7"]
+    volumes:
+      - ./data:/data
+      - ./scripts:/app/scripts:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
 secrets:
   twitch_client_secret:
     file: ./secrets/twitch_client_secret

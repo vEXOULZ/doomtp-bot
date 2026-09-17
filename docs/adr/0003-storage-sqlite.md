@@ -82,5 +82,5 @@ SQLite gives transactional safety that plain files lack, without the operational
 1. [x] On connect, set `PRAGMA journal_mode=WAL`, `busy_timeout=5000` and `foreign_keys=ON`. *(also `synchronous=NORMAL`)*
 2. [x] Write the migrations runner, plus `0001_init.sql` matching the data model in architecture.md.
 3. [x] Set file permissions to 600, because the file stores refresh tokens. *(POSIX only; Windows dev hosts keep the default ACL)*
-4. [ ] Add a nightly `.backup` job (host cron or sidecar) with rotation.
+4. [x] Add a nightly `.backup` job (host cron or sidecar) with rotation. *(`scripts/backup.py`: online backup API, gzipped, keeps 7 per database; run via `docker compose --profile tools run --rm backup` from cron. Off-host copies are still the operator's job.)*
 5. [x] Serialize write transactions per connection (`storage.db.transaction`), because one connection is shared by every writer in the process.

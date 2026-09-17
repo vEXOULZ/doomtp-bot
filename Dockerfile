@@ -1,13 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
-# ── Build: resolve and install dependencies into a venv with uv ────────────────
+# ── Build: install the locked dependency set into a venv with uv ───────────────
 FROM python:3.12-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never     UV_PROJECT_ENVIRONMENT=/opt/venv
 WORKDIR /app
-COPY pyproject.toml README.md ./
+# Dependencies first, so a source-only change doesn't re-resolve or re-download them.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
-RUN uv venv /opt/venv && VIRTUAL_ENV=/opt/venv uv pip install --no-cache .
+RUN uv sync --locked --no-dev --no-editable
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

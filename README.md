@@ -77,6 +77,33 @@ The API listens on `127.0.0.1:8080` only. To browse the chat log, run the option
 docker compose --profile tools up -d datasette
 ```
 
+The image installs the exact dependency set from `uv.lock`, so rebuilding an old commit gives the same
+versions. After changing a dependency in `pyproject.toml`, refresh the lock (CI fails if it is stale):
+
+```bash
+uv lock
+```
+
+## Backups
+
+`bot.db` holds the OAuth refresh tokens and every channel's configuration; `chatlog.db` holds the message
+history. Both are backed up by one script, which uses SQLite's online backup API and is safe to run while
+the bot is writing:
+
+```bash
+docker compose --profile tools run --rm backup
+```
+
+Each run writes a gzipped snapshot to `data/backups/` and keeps the newest 7 per database (`--keep`).
+For a nightly copy, add it to the host's crontab (`crontab -e`):
+
+```bash
+15 4 * * * cd /srv/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
+```
+
+Restore by stopping the bot, then gunzipping the snapshot over the database file. Keep a copy off the host:
+the backups sit on the same disk as the originals, so they survive mistakes, not drive failures.
+
 ## Project layout
 
 ```
