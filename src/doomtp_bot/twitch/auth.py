@@ -86,8 +86,10 @@ class TwitchAuth:
         tokens: TokenStore,
         http: OAuthHttp,
         on_bot_authorized: Callable[[AuthorizedAccount], Awaitable[None]] | None = None,
+        expected_bot_id: str | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        self.expected_bot_id = expected_bot_id
         self.client_id = client_id
         self.redirect_uri = redirect_uri
         self.tokens = tokens
@@ -125,6 +127,11 @@ class TwitchAuth:
             raise OAuthError("missing authorization code")
         token = await self.http.exchange_code(code, self.redirect_uri)
         info = await self.http.validate(token["access_token"])
+        if self.expected_bot_id and info["user_id"] != self.expected_bot_id:
+            raise OAuthError(
+                f"signed in as {info.get('login')} ({info['user_id']}), but the bot account is"
+                f" {self.expected_bot_id}. Log out of Twitch and sign in as the bot account."
+            )
         scopes = tuple(info.get("scopes") or token.get("scope") or ())
         missing = [s for s in ("user:read:chat", "user:write:chat") if s not in scopes]
         if missing:

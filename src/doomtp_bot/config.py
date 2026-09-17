@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     twitch_client_id: str | None = None
     twitch_client_secret: SecretStr | None = None
     twitch_client_secret_file: Path | None = None
+    # Expected Twitch user ID of the bot account; /auth/callback rejects tokens for any other account.
+    twitch_bot_id: str | None = None
 
     # Comma-separated Twitch user IDs; parsed by `bot_owner_ids`.
     bot_owner_ids_csv: str = Field(default="", validation_alias="BOT_OWNER_IDS")

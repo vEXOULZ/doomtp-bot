@@ -123,6 +123,7 @@ async def run(settings: Settings) -> None:
             tokens=TokenStore(dbs.bot),
             http=TwitchOAuthHttp(settings.twitch_client_id, secret),
             on_bot_authorized=on_bot_authorized,
+            expected_bot_id=settings.twitch_bot_id,
         )
 
     async def db_check() -> ComponentHealth:

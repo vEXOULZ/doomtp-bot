@@ -159,6 +159,17 @@ async def test_oauth_rejects_missing_chat_scopes(dbs: Databases) -> None:
         await auth.complete("code", state)
 
 
+async def test_oauth_rejects_wrong_account(dbs: Databases) -> None:
+    tokens = TokenStore(dbs.bot)
+    auth = TwitchAuth(
+        client_id="cid", redirect_uri="r", tokens=tokens, http=FakeOAuthHttp(), expected_bot_id="123"
+    )
+    state = parse_qs(urlsplit(auth.login_url()).query)["state"][0]
+    with pytest.raises(OAuthError, match="sign in as the bot account"):
+        await auth.complete("code", state)
+    assert await tokens.get() is None  # nothing stored for the wrong account
+
+
 async def test_auth_routes(dbs: Databases) -> None:
     auth = TwitchAuth(client_id="cid", redirect_uri="r", tokens=TokenStore(dbs.bot), http=FakeOAuthHttp())
     app = create_app(HealthRegistry(), auth)
