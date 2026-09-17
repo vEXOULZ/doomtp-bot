@@ -80,8 +80,8 @@ The research shows EventSub with a user token already gives basic-tier chat with
 
 ## Action Items
 
-1. [ ] Spike: subscribe to `channel.chat.message` for an unrelated test channel with only `user:read:chat` over WebSocket, and confirm it works.
-2. [ ] Spike: send with only `user:write:chat` to a channel where the bot isn't a mod, and confirm the behavior and rate limits.
+1. [x] Spike: subscribe to `channel.chat.message` for an unrelated test channel with only `user:read:chat` over WebSocket, and confirm it works. *Verified 2026-09-17: the bot joined `#developmenttopyramidsbot` (not modded, no broadcaster OAuth), received chat and all five chat subscriptions succeeded.*
+2. [x] Spike: send with only `user:write:chat` to a channel where the bot isn't a mod, and confirm the behavior and rate limits. *Verified 2026-09-17: replies were delivered there with a user token and no badge. Rate limits are not load-tested yet.*
 3. [ ] Build the CapabilityProbe, the `channels.capabilities` column, and feature `requires` declarations.
 4. [ ] Build the Helix `Get Streams` poller for basic-tier stream status.
 5. [ ] Build the `/auth/connect` broadcaster flow and per-broadcaster token storage.

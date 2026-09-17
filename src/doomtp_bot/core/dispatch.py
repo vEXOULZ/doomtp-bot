@@ -89,7 +89,7 @@ class Dispatcher:
             return
         settings = self.policy.channel_settings(msg.channel_id)
         prefix = settings.prefix if settings else "!"
-        is_command = looks_like_command(msg.text, prefix, msg.reply_parent_login)
+        is_command = looks_like_command(msg.text, prefix, msg.reply_mentions)
         if settings is None or settings.log_enabled:
             await self.writer.message(
                 msg, is_command=is_command
@@ -131,7 +131,7 @@ class Dispatcher:
                     message_sent_at=msg.sent_at / 1000,
                     is_cancelled=invalidated,
                 )
-                report = await self.runtime.run(msg.text, ctx, reply_parent_login=msg.reply_parent_login)
+                report = await self.runtime.run(msg.text, ctx, reply_parent_login=msg.reply_mentions)
                 if report is None:
                     return
                 await self._log_run(msg, report)

@@ -50,6 +50,9 @@ async def run(settings: Settings) -> None:
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     writer = ChatLogWriter(dbs.chatlog)
+    stale = await writer.close_stale_sessions()
+    if stale:
+        log.warning("chatlog.unclean_shutdown_detected", sessions_closed=stale)
     writer.start()
     moderation = ModerationIndex()
 

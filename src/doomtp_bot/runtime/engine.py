@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -125,7 +125,7 @@ class Runtime:
         text: str,
         ctx: ExecContext,
         *,
-        reply_parent_login: str | None = None,
+        reply_parent_login: str | Sequence[str] | None = None,
         scope_args: ScopeArgs | None = None,
         publisher: Publisher | None = None,
         stdin: Result | None = None,

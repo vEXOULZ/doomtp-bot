@@ -204,6 +204,29 @@ class ChatLogWriter:
         )
         await self.conn.commit()
 
+    async def close_stale_sessions(self) -> int:
+        """Close sessions a previous process never ended (killed or crashed). Call once at startup.
+
+        The end time is the last message received in that channel before the next session began, or the
+        session start if none was logged, so coverage gaps stay honest (ADR-0008).
+        """
+        cur = await self.conn.execute(
+            """
+            UPDATE log_sessions SET end_reason = 'unclean_shutdown', ended_at = COALESCE(
+                (SELECT MAX(m.received_at) FROM messages m
+                  WHERE m.channel_id = log_sessions.channel_id
+                    AND m.received_at >= log_sessions.started_at
+                    AND m.received_at < COALESCE(
+                        (SELECT MIN(s2.started_at) FROM log_sessions s2
+                          WHERE s2.channel_id = log_sessions.channel_id AND s2.started_at > log_sessions.started_at),
+                        9223372036854775807)),
+                started_at)
+            WHERE ended_at IS NULL
+            """
+        )
+        await self.conn.commit()
+        return cur.rowcount or 0
+
     async def end_all_sessions(self, reason: str) -> None:
         for channel_id in list(self._sessions):
             await self.end_session(channel_id, reason)

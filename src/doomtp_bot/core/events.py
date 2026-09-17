@@ -32,11 +32,17 @@ class ChatMessage:
     bits: int = 0
     reply_parent_id: str | None = None
     reply_parent_login: str | None = None
+    reply_parent_display: str | None = None
     reward_id: str | None = None
     source_channel_id: str | None = None
     is_self: bool = False
     source: Source = "eventsub"
     raw: str | None = None  # original IRC line when backfilled
+
+    @property
+    def reply_mentions(self) -> tuple[str, ...]:
+        """Names Twitch may have prefixed as `@name` on a reply (display name first, as observed live)."""
+        return tuple(n for n in (self.reply_parent_display, self.reply_parent_login) if n)
 
 
 @dataclass(frozen=True, slots=True)

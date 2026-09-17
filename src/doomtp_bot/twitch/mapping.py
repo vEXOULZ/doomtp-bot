@@ -53,6 +53,7 @@ def chat_message(payload: Any, bot_id: str | None) -> ChatMessage:
         bits=cheer.bits if cheer is not None else 0,
         reply_parent_id=reply.parent_message_id if reply is not None else None,
         reply_parent_login=reply.parent_user.name if reply is not None else None,
+        reply_parent_display=reply.parent_user.display_name if reply is not None else None,
         reward_id=payload.channel_points_id,
         source_channel_id=source.id if source is not None else None,
         is_self=bot_id is not None and chatter.id == bot_id,

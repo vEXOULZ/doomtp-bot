@@ -100,6 +100,31 @@ async def test_sessions_runs_and_outbound(dbs: Databases) -> None:
     assert await rows(dbs, "SELECT text_sent, twitch_message_id FROM outbound_msgs") == [("pong", "t1")]
 
 
+async def test_stale_sessions_closed_at_last_message_before_next_session(dbs: Databases) -> None:
+    await dbs.chatlog.executescript(
+        """
+        INSERT INTO log_sessions (channel_id, started_at) VALUES ('c1', 1000);  -- killed process
+        INSERT INTO log_sessions (channel_id, started_at) VALUES ('c1', 5000);  -- killed again
+        INSERT INTO log_sessions (channel_id, started_at) VALUES ('c2', 7000);  -- nothing logged
+        INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason) VALUES ('c3', 1, 2, 'shutdown');
+        """
+    )
+    await dbs.chatlog.commit()
+    writer = ChatLogWriter(dbs.chatlog)
+    for mid, at in (("a", 1500), ("b", 4000), ("c", 6000)):
+        await writer.message(msg(mid, at=at, channel="c1"))  # received_at = at + 5
+    await writer.stop()
+    assert await writer.close_stale_sessions() == 3
+    assert await rows(
+        dbs, "SELECT channel_id, started_at, ended_at, end_reason FROM log_sessions ORDER BY id"
+    ) == [
+        ("c1", 1000, 4005, "unclean_shutdown"),
+        ("c1", 5000, 6005, "unclean_shutdown"),
+        ("c2", 7000, 7000, "unclean_shutdown"),
+        ("c3", 1, 2, "shutdown"),
+    ]
+
+
 def test_moderation_index() -> None:
     index = ModerationIndex(clock_ms=lambda: 10_000)
     assert not index.is_invalidated("c1", "m1", "u1", 1000)

@@ -142,8 +142,12 @@ def _is_ident_char(ch: str) -> bool:
     return ch.isascii() and (ch.isalnum() or ch == "_")
 
 
-def preprocess_line(text: str, reply_parent_login: str | None = None) -> str:
-    """Spec §2.1 steps 1–3: strip invisible padding, the reply mention, and surrounding whitespace."""
+def preprocess_line(text: str, reply_parent_login: str | Sequence[str] | None = None) -> str:
+    """Spec §2.1 steps 1–3: strip invisible padding, the reply mention, and surrounding whitespace.
+
+    `reply_parent_login` names the replied-to user: a login, or several names (login and display name).
+    Twitch prefixes replies with `@DisplayName`, which can differ from the login beyond letter case.
+    """
     start, end = 0, len(text)
     while start < end and (text[start] in INVISIBLE_PADDING or is_ws(text[start])):
         start += 1
@@ -151,14 +155,18 @@ def preprocess_line(text: str, reply_parent_login: str | None = None) -> str:
         end -= 1
     text = text[start:end]
 
-    if reply_parent_login:
-        mention = "@" + reply_parent_login
+    names = [reply_parent_login] if isinstance(reply_parent_login, str) else list(reply_parent_login or ())
+    for name in names:
+        if not name:
+            continue
+        mention = "@" + name
         if (
             len(text) > len(mention)
-            and text[: len(mention)].lower() == mention.lower()
+            and text[: len(mention)].casefold() == mention.casefold()
             and is_ws(text[len(mention)])
         ):
             text = text[len(mention) :]
+            break
 
     start, end = 0, len(text)
     while start < end and is_ws(text[start]):
@@ -168,7 +176,7 @@ def preprocess_line(text: str, reply_parent_login: str | None = None) -> str:
     return text[start:end]
 
 
-def looks_like_command(text: str, prefix: str, reply_parent_login: str | None = None) -> bool:
+def looks_like_command(text: str, prefix: str, reply_parent_login: str | Sequence[str] | None = None) -> bool:
     """Cheap Line-context check (spec §2.1 step 4): would this chat message be parsed as a command?"""
     return _Parser(preprocess_line(text, reply_parent_login), ParserParams(prefix=prefix)).line_start()
 

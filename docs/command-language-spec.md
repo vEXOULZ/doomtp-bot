@@ -37,7 +37,7 @@ An **expression** is text that the implementation parses and evaluates to a sing
 Before lexing a chat message, the implementation MUST apply these steps in order:
 
 1. **Strip invisible padding.** Remove leading and trailing characters in: U+E0000 (the tag character some chat clients append to bypass duplicate-message filters), U+200B–U+200D, U+2060 and U+FEFF. Characters *inside* the text MUST NOT be changed.
-2. **Strip the reply mention.** If the message is a reply (it has reply metadata) and the text begins with `@<parent_user_login>` followed by WS, remove that mention and the whitespace. *(Verify the exact EventSub reply text format during implementation.)*
+2. **Strip the reply mention.** If the message is a reply (it has reply metadata) and the text begins with `@<parent display name>` or `@<parent login>` (case-insensitive) followed by WS, remove that mention and the whitespace. *(Verified live 2026-09-17: Twitch prefixes replies with the parent's **display name**, e.g. `@vexouLz pong`. Display names can differ from logins beyond case, so both are accepted.)*
 3. **Trim** leading and trailing WS.
 4. **Detect the command.** The text is an expression only if it matches `line_start` (§3.1): the channel prefix immediately followed by a name character, optionally preceded by standalone `(` tokens. Otherwise the message is not a command, and it goes to listeners only.
 

@@ -79,6 +79,15 @@ def test_preprocess_keeps_inner_invisible_characters() -> None:
     assert preprocess_line("!echo a\u200bb") == "!echo a\u200bb"
 
 
+def test_preprocess_reply_mention_uses_display_name_as_observed_live() -> None:
+    # Live Twitch prefixes replies with the parent's display name, e.g. "@vexouLz pong".
+    assert preprocess_line("@vexouLz !ping", ("vexouLz", "vexoulz")) == "!ping"
+    # Localized display names differ from the login entirely.
+    assert preprocess_line("@表示名 !ping", ("表示名", "tanaka_jp")) == "!ping"
+    assert preprocess_line("@tanaka_jp !ping", ("表示名", "tanaka_jp")) == "!ping"
+    assert preprocess_line("@someoneelse !ping", ("表示名", "tanaka_jp")) == "@someoneelse !ping"
+
+
 def test_preprocess_reply_mention_is_case_insensitive_and_needs_whitespace() -> None:
     assert preprocess_line("@Alice  !ping", "alice") == "!ping"
     assert preprocess_line("@alicex !ping", "alice") == "@alicex !ping"
