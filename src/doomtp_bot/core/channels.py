@@ -63,7 +63,11 @@ class ChannelManager:
             await self.join(bot_id, bot_login, Actor(None, "system"))
 
     async def subscribe_all(self) -> None:
+        """Subscribe every joined channel that isn't subscribed yet on this connection."""
+        is_subscribed = getattr(self.subscriber, "is_subscribed", None)
         for settings in self.active_channels():
+            if is_subscribed is not None and is_subscribed(settings.channel_id):
+                continue
             await self._subscribe(settings.channel_id)
 
     async def _subscribe(self, channel_id: str) -> list[str]:

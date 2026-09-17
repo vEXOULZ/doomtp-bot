@@ -205,6 +205,13 @@ async def test_join_and_part_flow(h: Harness) -> None:
     assert await h.rows("SELECT end_reason FROM log_sessions WHERE channel_id = '500'") == [("part",)]
 
 
+async def test_subscribe_all_skips_channels_already_subscribed(h: Harness) -> None:
+    h.twitch.is_subscribed = lambda channel_id: channel_id in h.twitch.subscribed  # type: ignore[attr-defined]
+    before = list(h.twitch.subscribed)
+    await h.channels.subscribe_all()
+    assert h.twitch.subscribed == before
+
+
 async def test_join_reports_twitch_refusal(h: Harness) -> None:
     h.twitch.refuse = True
     await h.say("owner", "!join other", channel=BOT_ID)
