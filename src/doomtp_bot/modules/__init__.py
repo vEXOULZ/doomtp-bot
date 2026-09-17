@@ -8,9 +8,9 @@ NON_TOGGLEABLE_MODULES = frozenset({"core", "core_admin"})
 
 
 def builtin_registry() -> CommandRegistry:
-    from doomtp_bot.modules import basic, core
+    from doomtp_bot.modules import basic, core, core_admin, help
 
     registry = CommandRegistry()
-    registry.extend(core.COMMANDS)
-    registry.extend(basic.COMMANDS)
+    for module in (core, core_admin, help, basic):
+        registry.extend(module.COMMANDS)
     return registry

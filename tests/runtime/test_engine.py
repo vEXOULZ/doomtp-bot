@@ -279,6 +279,11 @@ async def test_expression_timeout_discards_writes() -> None:
     assert r.result.code == Code.TIMEOUT and store.data == {}
 
 
+async def test_commands_cannot_return_runtime_reserved_codes() -> None:
+    r = await run(make_runtime(), "!fakedeny")
+    assert (r.result.code, r.send) == (Code.FAIL, "nope")
+
+
 async def test_crashing_command_is_contained() -> None:
     r = await run(make_runtime(), "!boom || echo still here")
     assert r.send == "still here"

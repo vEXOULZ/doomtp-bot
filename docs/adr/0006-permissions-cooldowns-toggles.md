@@ -39,6 +39,8 @@
 ### 2. Two cooldowns, both required
 
 - **Rule lookup:** the rule `(scope, command, role) → Cooldown(tier_s, user_s)` comes from the user's highest-ranked role that has a rule for this command. The lookup falls back to the command spec's defaults and then to the module's defaults.
+  - *As implemented:* rules are merged in the order spec defaults → global → channel. The tier is the **highest-ranked rule role whose rank the user reaches** (rank ≤ the user's effective rank), the same ranking used for permissions. This way a broadcaster without a `moderator` badge still gets the moderator rule.
+  - An implicit `moderator: 0/0` rule applies unless one is configured.
 - **Tier bucket** `(channel, command, tier_role)`: the default meaning of "global". Each tier has its own shared timer.
 - **User bucket** `(channel, command, user_id)`.
 - A command runs only if **both** have expired. When it runs, **both** start.

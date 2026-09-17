@@ -92,6 +92,11 @@ class ExecContext:
     denied: dict[str, Any] = field(default_factory=dict)
     bot: dict[str, Any] = field(default_factory=dict)
     resolve_user: UserResolver | None = None
+    run_as_rank: int | None = (
+        None  # triggers run at a fixed rank instead of the event user's (architecture §7)
+    )
+    in_callback: bool = False  # callbacks never trigger other callbacks
+    services: dict[str, Any] = field(default_factory=dict)  # e.g. "policy", "variables_admin", "twitch"
     is_cancelled: Callable[[], bool] = lambda: False
     rng: random.Random = field(default_factory=random.Random)
     clock: Callable[[], float] = time.time
@@ -152,3 +157,9 @@ class CommandContext:
 
     def ensure_not_cancelled(self) -> None:
         self.exec.ensure_not_cancelled()
+
+    def service(self, name: str) -> Any:
+        try:
+            return self.exec.services[name]
+        except KeyError:
+            raise RuntimeError(f"service {name!r} is not configured") from None

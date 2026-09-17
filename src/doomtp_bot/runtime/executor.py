@@ -141,6 +141,10 @@ class Executor:
             try:
                 async with asyncio.timeout(self.stage_timeout):
                     result = await command.handler(cmd_ctx, args, stdin)
+                # 100–255 are runtime-reserved (spec §6.2); commands must not return them.
+                if result.code >= 100:
+                    log.warning("command.reserved_code", command=spec.name, code=result.code)
+                    result = Result(Code.FAIL, result.message, result.data)
             except TimeoutError:
                 result = Result.failure(Code.TIMEOUT, f"{inv.name} timed out")
             except (RunCancelled, asyncio.CancelledError):

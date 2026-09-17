@@ -84,7 +84,12 @@ async def cancelme(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.success("not cancelled")
 
 
-TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, add, explain, cancelme)
+@command(CommandSpec(name="fakedeny", module="test", summary="returns a reserved code"))
+async def fakedeny(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+    return Result.failure(Code.DENIED, "nope")
+
+
+TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, add, explain, cancelme, fakedeny)
 
 
 def registry() -> CommandRegistry:

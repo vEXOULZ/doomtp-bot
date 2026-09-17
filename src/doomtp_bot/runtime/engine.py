@@ -7,7 +7,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 import structlog
 
@@ -54,9 +54,16 @@ class RunReport:
     cancelled: bool = False
     duration_ms: int = 0
     ast: Node | None = None
+    callback_report: RunReport | None = None
 
 
 CommitHook = Callable[[ExecContext, list[WriteOp]], Awaitable[None]]
+
+
+class CallbackProvider(Protocol):
+    def callback_expr(
+        self, ctx: ExecContext, command: str | None, module: str | None, kind: str
+    ) -> str | None: ...
 
 
 class Runtime:
@@ -70,6 +77,8 @@ class Runtime:
         access: VariableAccess | None = None,
         resolve_user: UserResolver | None = None,
         on_commit: CommitHook | None = None,
+        callbacks: CallbackProvider | None = None,
+        services: dict[str, Any] | None = None,
         expr_timeout: float = EXPR_TIMEOUT_S,
         max_invocations: int = MAX_INVOCATIONS,
     ) -> None:
@@ -80,6 +89,8 @@ class Runtime:
         self.access: VariableAccess = access or AllowAllAccess()
         self.resolve_user = resolve_user
         self.on_commit = on_commit
+        self.callbacks = callbacks
+        self.services: dict[str, Any] = {"registry": registry, "runtime": self, **(services or {})}
         self.expr_timeout = expr_timeout
         self.max_invocations = max_invocations
         self.executor = Executor(self.policy)
@@ -94,6 +105,7 @@ class Runtime:
         **kwargs: Any,
     ) -> ExecContext:
         kwargs.setdefault("resolve_user", self.resolve_user)
+        kwargs.setdefault("services", self.services)
         return ExecContext(
             context=context,
             channel=channel,
@@ -152,7 +164,7 @@ class Runtime:
                 failed_name=pre.failed_name,
                 ast=node,
             )
-            self._decide(report, ctx)
+            await self._settle(report, ctx)
             return self._finish(report, started)
 
         scope = Scope(pre.resolved, scope_args)
@@ -176,10 +188,44 @@ class Runtime:
             if report.committed and self.on_commit is not None:
                 await self.on_commit(ctx, report.committed)
         report.executed = list(scope.executed)
-        self._decide(report, ctx)
+        await self._settle(report, ctx)
         return self._finish(report, started)
 
     # ── helpers ─────────────────────────────────────────────────────────────
+    async def _settle(self, report: RunReport, ctx: ExecContext) -> None:
+        """Decide output; for silent denials/cooldowns, run the configured callback (ADR-0006 §3)."""
+        self._decide(report, ctx)
+        if report.callback is None or self.callbacks is None or ctx.in_callback:
+            return
+        command = report.failed_name
+        module = None
+        if command:
+            resolved = self.resolver.resolve_name(ctx, command)
+            module = resolved.command.spec.module if resolved else None
+        expr = self.callbacks.callback_expr(ctx, command, module, report.callback)
+        if not expr:
+            return
+        info = dict(report.decision.info) if report.decision else {}
+        sub_ctx = self.make_context(
+            channel=ctx.channel,
+            invoker=ctx.invoker,
+            context=Context.CALLBACK,
+            in_callback=True,
+            cooldown=info if report.callback == "on_cooldown" else {},
+            denied=info if report.callback == "on_denied" else {},
+            run_as_rank=ctx.run_as_rank,
+            trigger_type=ctx.trigger_type,
+            message_id=ctx.message_id,
+            is_cancelled=ctx.is_cancelled,
+            rng=ctx.rng,
+            clock=ctx.clock,
+            bot=ctx.bot,
+        )
+        sub = await self.run(expr, sub_ctx)
+        if sub is not None:
+            report.send = sub.send
+            report.callback_report = sub
+
     def _decide(self, report: RunReport, ctx: ExecContext) -> None:
         decision = decide_output(
             report.result,

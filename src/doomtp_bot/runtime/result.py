@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import enum
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
-Value: TypeAlias = None | bool | int | float | str | list["Value"] | dict[str, "Value"]
+# JSON-like data. Covariant containers so list[str] / dict[str, bool] are accepted; runtime values are list/dict.
+Value: TypeAlias = None | bool | int | float | str | Sequence["Value"] | Mapping[str, "Value"]
 
 MAX_DATA_BYTES = 4096
 MAX_MESSAGE_CHARS = 2000
