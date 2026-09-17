@@ -6,7 +6,6 @@ import random
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -95,8 +94,7 @@ async def resolve_user(login: str) -> dict[str, Any] | None:
 
 
 @pytest.fixture
-async def h(tmp_path: Path) -> AsyncIterator[Harness]:
-    dbs = await Databases.open(tmp_path / "bot.db", tmp_path / "chatlog.db")
+async def h(dbs: Databases) -> AsyncIterator[Harness]:
     clock = FakeClock()
     policy = PolicyService(dbs.bot, bot_owner_ids=frozenset({OWNER_ID}), clock=clock)
     await policy.reload()
@@ -105,10 +103,7 @@ async def h(tmp_path: Path) -> AsyncIterator[Harness]:
     runtime = Runtime(
         registry, policy=policy, callbacks=policy, resolve_user=resolve_user, services={"policy": policy}
     )
-    try:
-        yield Harness(dbs, policy, runtime, clock)
-    finally:
-        await dbs.close()
+    yield Harness(dbs, policy, runtime, clock)
 
 
 # ── roles and ranks ────────────────────────────────────────────────────────

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -42,8 +41,12 @@ class FakeTwitch:
     async def subscribe_channel(self, channel_id: str) -> list[str]:
         if self.refuse:
             return ["channel.chat.message"]
-        self.subscribed.append(channel_id)
+        if channel_id not in self.subscribed:  # idempotent, like TwitchService
+            self.subscribed.append(channel_id)
         return []
+
+    async def unsubscribe_channel(self, channel_id: str) -> None:
+        self.subscribed.remove(channel_id)
 
     async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
         self.sent.append((channel_id, text, reply_to))
@@ -98,9 +101,8 @@ class Harness:
 
 
 @pytest.fixture
-async def h(tmp_path: Path) -> AsyncIterator[Harness]:
+async def h(dbs: Databases) -> AsyncIterator[Harness]:
     gate.clear()
-    dbs = await Databases.open(tmp_path / "bot.db", tmp_path / "chatlog.db")
     policy = PolicyService(dbs.bot, bot_owner_ids=frozenset({"1"}))
     await policy.reload()
     writer = ChatLogWriter(dbs.chatlog, flush_interval=0.01)
@@ -123,6 +125,7 @@ async def h(tmp_path: Path) -> AsyncIterator[Harness]:
         runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation, channels=channels
     )
     await channels.ensure_home(BOT_ID, BOT_LOGIN)
+    await channels.subscribe_all()
     await channels.join(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system"))
     try:
         yield Harness(dbs, policy, writer, twitch, dispatcher, channels)
@@ -130,7 +133,6 @@ async def h(tmp_path: Path) -> AsyncIterator[Harness]:
         gate.set()
         await dispatcher.drain()
         await writer.stop()
-        await dbs.close()
 
 
 async def test_command_reply_is_sent_threaded_and_everything_logged(h: Harness) -> None:
@@ -205,11 +207,25 @@ async def test_join_and_part_flow(h: Harness) -> None:
     assert await h.rows("SELECT end_reason FROM log_sessions WHERE channel_id = '500'") == [("part",)]
 
 
-async def test_subscribe_all_skips_channels_already_subscribed(h: Harness) -> None:
-    h.twitch.is_subscribed = lambda channel_id: channel_id in h.twitch.subscribed  # type: ignore[attr-defined]
-    before = list(h.twitch.subscribed)
+async def test_part_unsubscribes_so_join_works_again(h: Harness) -> None:
+    await h.say("owner", "!part doomtp", channel=BOT_ID)
+    await h.settle()
+    assert CHANNEL_ID not in h.twitch.subscribed
+    await h.say("owner", "!join doomtp", channel=BOT_ID)
+    await h.settle()
+    assert h.twitch.sent[-1][1] == "joined #doomtp" and CHANNEL_ID in h.twitch.subscribed
+    assert await h.rows(
+        f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}' ORDER BY id"
+    ) == [
+        ("part",),
+        (None,),
+    ]
+
+
+async def test_startup_subscribes_home_channel_once(h: Harness) -> None:
+    await h.channels.ensure_home(BOT_ID, BOT_LOGIN)
     await h.channels.subscribe_all()
-    assert h.twitch.subscribed == before
+    assert sorted(h.twitch.subscribed) == sorted({BOT_ID, CHANNEL_ID})
 
 
 async def test_join_reports_twitch_refusal(h: Harness) -> None:

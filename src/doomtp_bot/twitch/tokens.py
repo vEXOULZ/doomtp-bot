@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
 
 import aiosqlite
+
+from doomtp_bot.clock import now_ms
+from doomtp_bot.storage.db import transaction
 
 BOT_IDENTITY = "bot"
 
@@ -52,33 +54,33 @@ class TokenStore:
         scopes: list[str] | tuple[str, ...],
         expires_in: int | None,
     ) -> None:
-        now = int(time.time() * 1000)
+        now = now_ms()
         expires_at = now + expires_in * 1000 if expires_in else None
-        await self.conn.execute(
-            "INSERT INTO oauth_tokens (identity, user_id, login, access_token, refresh_token, scopes, expires_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT (identity) DO UPDATE SET user_id = excluded.user_id, login = excluded.login,"
-            " access_token = excluded.access_token, refresh_token = excluded.refresh_token, scopes = excluded.scopes,"
-            " expires_at = excluded.expires_at, updated_at = excluded.updated_at",
-            (
-                identity,
-                user_id,
-                login,
-                access_token,
-                refresh_token,
-                json.dumps(list(scopes)),
-                expires_at,
-                now,
-            ),
-        )
-        await self.conn.commit()
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "INSERT INTO oauth_tokens (identity, user_id, login, access_token, refresh_token, scopes, expires_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (identity) DO UPDATE SET user_id = excluded.user_id, login = excluded.login,"
+                " access_token = excluded.access_token, refresh_token = excluded.refresh_token, scopes = excluded.scopes,"
+                " expires_at = excluded.expires_at, updated_at = excluded.updated_at",
+                (
+                    identity,
+                    user_id,
+                    login,
+                    access_token,
+                    refresh_token,
+                    json.dumps(list(scopes)),
+                    expires_at,
+                    now,
+                ),
+            )
 
     async def update_refreshed(
         self, user_id: str, access_token: str, refresh_token: str, expires_in: int
     ) -> None:
-        now = int(time.time() * 1000)
-        await self.conn.execute(
-            "UPDATE oauth_tokens SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ? WHERE user_id = ?",
-            (access_token, refresh_token, now + expires_in * 1000, now, user_id),
-        )
-        await self.conn.commit()
+        now = now_ms()
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE oauth_tokens SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ? WHERE user_id = ?",
+                (access_token, refresh_token, now + expires_in * 1000, now, user_id),
+            )

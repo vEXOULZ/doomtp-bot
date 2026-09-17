@@ -63,14 +63,16 @@ async def run(settings: Settings) -> None:
             await dispatcher.handle(event)
 
     twitch: TwitchService | None = None
-    auth: TwitchAuth | None = None
     secret = settings.client_secret()
     if settings.twitch_client_id and secret:
-        tokens = TokenStore(dbs.bot)
         twitch = TwitchService(
-            client_id=settings.twitch_client_id, client_secret=secret, tokens=tokens, sink=sink
+            client_id=settings.twitch_client_id, client_secret=secret, tokens=TokenStore(dbs.bot), sink=sink
         )
 
+    channels = ChannelManager(policy, twitch, writer, default_prefix=settings.default_prefix)
+    services: dict[str, object] = {"policy": policy, "variable_store": store, "channels": channels}
+    if twitch is not None:
+        services.update(twitch=twitch, login_for=twitch.login_for)
     runtime = Runtime(
         builtin_registry(),
         policy=policy,
@@ -78,23 +80,18 @@ async def run(settings: Settings) -> None:
         store=store,
         access=access,
         resolve_user=twitch.resolve_user if twitch else None,
-        services={"policy": policy, "variable_store": store},
+        services=services,
     )
-    channels = ChannelManager(policy, twitch, writer)
-    runtime.services["channels"] = channels
-    if twitch is not None:
-        runtime.services["twitch"] = twitch
-        runtime.services["login_for"] = twitch.login_for
 
     def rate_for(channel_id: str) -> tuple[int, float]:
+        """Moderator send limits when the channel tier or the bot's role there allows them."""
         settings_ = policy.channel_settings(channel_id)
-        if settings_ is not None and settings_.tier in ("moderator", "full"):
-            return 90, 30.0
-        if twitch is not None and twitch.bot_id is not None:
-            bot = policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "")
-            if bot.rank >= MODERATOR_RANK:
-                return 90, 30.0
-        return 20, 30.0
+        elevated = settings_ is not None and settings_.tier in ("moderator", "full")
+        if not elevated and twitch is not None and twitch.bot_id is not None:
+            elevated = (
+                policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
+            )
+        return (90, 30.0) if elevated else (20, 30.0)
 
     def hold_ms_for(channel_id: str) -> int:
         settings_ = policy.channel_settings(channel_id)
@@ -119,11 +116,12 @@ async def run(settings: Settings) -> None:
         log.info("twitch.authorized", bot=account.login, scopes=list(account.scopes))
         asyncio.create_task(start_twitch())  # noqa: RUF006 - fire and forget; errors are logged inside
 
+    auth: TwitchAuth | None = None
     if twitch is not None and settings.twitch_client_id and secret:
         auth = TwitchAuth(
             client_id=settings.twitch_client_id,
             redirect_uri=settings.public_base_url.rstrip("/") + "/auth/callback",
-            tokens=TokenStore(dbs.bot),
+            tokens=twitch.tokens,
             http=TwitchOAuthHttp(settings.twitch_client_id, secret),
             on_bot_authorized=on_bot_authorized,
             expected_bot_id=settings.twitch_bot_id,

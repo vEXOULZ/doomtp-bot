@@ -11,7 +11,7 @@ from doomtp_bot.runtime.namespaces import VarPath, classify, is_reserved_var_nam
 from doomtp_bot.runtime.policy import Decision
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import InputMode
-from doomtp_bot.runtime.variables import VAR_NAME_RE
+from doomtp_bot.runtime.variables import VAR_NAME_RE, VariableError, key_for
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
@@ -32,10 +32,6 @@ class Preflight:
     decision: Decision | None = None
 
 
-def first_invocation(node: Node) -> Invocation:
-    return invocations(node)[0]
-
-
 def stdin_receivers(node: Node) -> set[int]:
     """Invocation indexes that receive pipe stdin (the first evaluated invocation of each pipe's right side)."""
     found: set[int] = set()
@@ -43,7 +39,7 @@ def stdin_receivers(node: Node) -> set[int]:
     def walk(n: Node) -> None:
         match n:
             case Pipe(left, right):
-                found.add(first_invocation(right).index)
+                found.add(invocations(right)[0].index)
                 walk(left)
                 walk(right)
             case And(left, right) | Or(left, right):
@@ -136,18 +132,10 @@ def preflight(
 
     def check_store(store: Store) -> Preflight | None:
         target = store.target
-        if target.namespace.startswith("publisher") and ctx.publisher is None:
-            return fail(
-                None,
-                None,
-                Result.failure(
-                    Code.USAGE, f"{target.namespace}.{target.name} is only available inside custom commands"
-                ),
-            )
-        if "chatter" in target.namespace.split(".") and ctx.invoker is None:
-            return fail(
-                None, None, Result.failure(Code.USAGE, f"{target.namespace}.{target.name} needs a chatter")
-            )
+        try:
+            key_for(ctx, target.namespace, target.name)  # same addressability rules as the write itself
+        except VariableError as exc:
+            return fail(None, None, exc.result())
         if not access.can_write(ctx, target.namespace, target.name):
             return fail(
                 None,

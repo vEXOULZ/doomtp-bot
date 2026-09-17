@@ -6,8 +6,12 @@ Migrations live in `migrations/<db>/NNNN_name.sql`. The applied version is track
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
+import weakref
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -55,6 +59,37 @@ async def connect(path: Path) -> aiosqlite.Connection:
     if os.name == "posix":
         os.chmod(path, 0o600)  # bot.db holds refresh tokens
     return conn
+
+
+_WRITE_LOCKS: weakref.WeakKeyDictionary[aiosqlite.Connection, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def write_lock(conn: aiosqlite.Connection) -> asyncio.Lock:
+    """One lock per connection: every coroutine shares it, so transactions must not interleave."""
+    lock = _WRITE_LOCKS.get(conn)
+    if lock is None:
+        lock = _WRITE_LOCKS[conn] = asyncio.Lock()
+    return lock
+
+
+@asynccontextmanager
+async def transaction(
+    conn: aiosqlite.Connection, *, immediate: bool = False
+) -> AsyncIterator[aiosqlite.Connection]:
+    """Serialized write transaction: commit on success, roll back on any exception.
+
+    `immediate` takes SQLite's write lock up front. Don't nest these on the same connection.
+    """
+    async with write_lock(conn):
+        if immediate:
+            await conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            await conn.rollback()
+            raise
+        else:
+            await conn.commit()
 
 
 async def current_version(conn: aiosqlite.Connection) -> int:

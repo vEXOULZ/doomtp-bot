@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from pathlib import Path
-
-import pytest
-
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, MessageDeleted, UserMessagesCleared
 from doomtp_bot.moderation.index import ModerationIndex
@@ -20,13 +15,6 @@ def msg(
         message_id=mid, channel_id=channel, channel_login="doomtp", user_id=user, user_login=login,
         display_name=login.title(), text=text, sent_at=at, received_at=at + 5, badges=(Badge("subscriber", "3"),),
     )  # fmt: skip
-
-
-@pytest.fixture
-async def dbs(tmp_path: Path) -> AsyncIterator[Databases]:
-    databases = await Databases.open(tmp_path / "bot.db", tmp_path / "chatlog.db")
-    yield databases
-    await databases.close()
 
 
 async def rows(dbs: Databases, sql: str) -> list[tuple[object, ...]]:
@@ -46,6 +34,15 @@ async def test_writer_batches_and_is_idempotent(dbs: Databases) -> None:
         ("m2", 0, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
     ]
     assert await rows(dbs, "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'slayer'") != []
+
+
+async def test_one_bad_row_does_not_lose_the_batch(dbs: Databases) -> None:
+    writer = ChatLogWriter(dbs.chatlog)
+    await writer.message(msg("m1"))
+    await writer.message(msg("m2", channel=None))  # type: ignore[arg-type]  # violates NOT NULL
+    await writer.message(msg("m3"))
+    await writer.stop()
+    assert await rows(dbs, "SELECT message_id FROM messages ORDER BY message_id") == [("m1",), ("m3",)]
 
 
 async def test_users_are_keyed_by_id_and_renames_are_kept(dbs: Databases) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -11,19 +10,15 @@ from typing import TYPE_CHECKING, Any
 import aiosqlite
 
 from doomtp_bot.audit.log import write_audit
+from doomtp_bot.clock import now_ms
+from doomtp_bot.runtime.namespaces import CHATTER_KEY
+from doomtp_bot.runtime.result import to_json
 from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import Space, VarKey, WriteOp, apply_op
+from doomtp_bot.storage.db import transaction
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
-
-# Which key column holds the chatter (user id) for each namespace.
-CHATTER_KEY: dict[str, str] = {
-    "chatter": "key1",
-    "channel.chatter": "key2",
-    "publisher.chatter": "key2",
-    "publisher.channel.chatter": "key3",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +88,8 @@ class SqliteVariableStore:
         if not ops:
             return
         actor = ctx.invoker.id if ctx.invoker else None
-        now = int(time.time() * 1000)
-        try:
-            await self.conn.execute("BEGIN IMMEDIATE")
+        now = now_ms()
+        async with transaction(self.conn, immediate=True):
             for op in ops:
                 current = await self.get(op.key)
                 before = current
@@ -113,7 +107,7 @@ class SqliteVariableStore:
                         " ON CONFLICT (ns, key1, key2, key3, name) DO UPDATE SET value = excluded.value,"
                         " updated_at = excluded.updated_at, updated_by = excluded.updated_by,"
                         " updated_via = excluded.updated_via",
-                        (k.ns, k.key1, k.key2, k.key3, k.name, json.dumps(value, separators=(",", ":"), ensure_ascii=False),
+                        (k.ns, k.key1, k.key2, k.key3, k.name, to_json(value),
                          now, actor, ctx.run_id),
                     )  # fmt: skip
                 owner = _chatter_of(k)
@@ -128,7 +122,3 @@ class SqliteVariableStore:
                         before=None if before is MISSING else before,
                         after=None if value is MISSING else value,
                     )
-            await self.conn.commit()
-        except BaseException:
-            await self.conn.rollback()
-            raise

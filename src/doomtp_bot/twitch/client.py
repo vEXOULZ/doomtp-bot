@@ -153,6 +153,8 @@ class TwitchService:
         """Subscribe to basic-tier chat events for a channel. Returns the subscription types that failed."""
         if self.client is None or self.bot_id is None:
             return [s.type for s in CHAT_SUBSCRIPTIONS]
+        if channel_id in self._subscribed:
+            return []
         failed: list[str] = []
         for subscription in CHAT_SUBSCRIPTIONS:
             try:
@@ -168,8 +170,18 @@ class TwitchService:
             self._subscribed.add(channel_id)
         return failed
 
-    def is_subscribed(self, channel_id: str) -> bool:
-        return channel_id in self._subscribed
+    async def unsubscribe_channel(self, channel_id: str) -> None:
+        self._subscribed.discard(channel_id)
+        if self.client is None:
+            return
+        for sub_id, sub in self.client.websocket_subscriptions().items():
+            if sub.condition.get("broadcaster_user_id") == channel_id:
+                try:
+                    await self.client.delete_websocket_subscription(sub_id, force=True)
+                except Exception as exc:
+                    log.warning(
+                        "twitch.unsubscribe_failed", channel=channel_id, type=sub.type, error=repr(exc)
+                    )
 
     # ── Helix ───────────────────────────────────────────────────────────────
     async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
@@ -189,22 +201,23 @@ class TwitchService:
         if cached is not None:
             self._users_by_login.move_to_end(login)
             return cached
-        if self.client is None:
-            return None
-        users = await self.client.fetch_users(logins=[login], token_for=self.bot_id)
-        if not users:
-            return None
-        return self._remember(users[0].id, users[0].name or login, users[0].display_name or login)
+        return await self._fetch_user(login, logins=[login])
 
     async def resolve_user_id(self, user_id: str) -> dict[str, str] | None:
-        if user_id in self._logins_by_id:
-            return self._users_by_login.get(self._logins_by_id[user_id])
+        login = self._logins_by_id.get(user_id)
+        if login is not None and login in self._users_by_login:
+            self._users_by_login.move_to_end(login)
+            return self._users_by_login[login]
+        return await self._fetch_user(user_id, ids=[user_id])
+
+    async def _fetch_user(self, fallback_name: str, **by: list[str]) -> dict[str, str] | None:
         if self.client is None:
             return None
-        users = await self.client.fetch_users(ids=[user_id], token_for=self.bot_id)
+        users = await self.client.fetch_users(**by, token_for=self.bot_id)  # type: ignore[arg-type]
         if not users:
             return None
-        return self._remember(users[0].id, users[0].name or user_id, users[0].display_name or user_id)
+        user = users[0]
+        return self._remember(user.id, user.name or fallback_name, user.display_name or fallback_name)
 
     async def login_for(self, user_id: str) -> str | None:
         user = await self.resolve_user_id(user_id)
@@ -215,6 +228,6 @@ class TwitchService:
         self._users_by_login[login] = record
         self._logins_by_id[user_id] = login
         if len(self._users_by_login) > USER_CACHE_SIZE:
-            old_login, old = self._users_by_login.popitem(last=False)
+            _, old = self._users_by_login.popitem(last=False)
             self._logins_by_id.pop(old["id"], None)
         return record

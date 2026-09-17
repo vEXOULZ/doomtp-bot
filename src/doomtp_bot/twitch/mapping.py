@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime
 from typing import Any
 
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core.events import (
     Badge,
     ChatCleared,
@@ -17,7 +17,7 @@ from doomtp_bot.core.events import (
 
 
 def _ms(moment: datetime | None) -> int:
-    return int(moment.timestamp() * 1000) if moment is not None else int(time.time() * 1000)
+    return int(moment.timestamp() * 1000) if moment is not None else now_ms()
 
 
 def _fragment(fragment: Any) -> dict[str, Any]:
@@ -46,7 +46,7 @@ def chat_message(payload: Any, bot_id: str | None) -> ChatMessage:
         display_name=chatter.display_name or chatter.name or "",
         text=payload.text,
         sent_at=_ms(payload.timestamp),
-        received_at=int(time.time() * 1000),
+        received_at=now_ms(),
         badges=tuple(Badge(b.set_id, b.id, b.info or "") for b in payload.badges),
         fragments=tuple(_fragment(f) for f in payload.fragments),
         message_type=payload.type,

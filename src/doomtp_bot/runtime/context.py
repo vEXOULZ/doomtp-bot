@@ -126,10 +126,6 @@ class Args:
         value = self.params.get(name)
         return default if value is None else value
 
-    def rest(self, start: int = 1) -> str:
-        """Arguments from 1-based position `start` joined with single spaces."""
-        return " ".join(self.values[start - 1 :])
-
 
 @dataclass
 class CommandContext:

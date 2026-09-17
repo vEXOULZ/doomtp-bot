@@ -6,7 +6,7 @@ from typing import Protocol
 
 import structlog
 
-from doomtp_bot.policy.repository import Actor
+from doomtp_bot.policy.repository import Actor, PolicyRepository
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
 
@@ -16,7 +16,11 @@ log = structlog.get_logger(__name__)
 class Subscriber(Protocol):
     bot_id: str | None
 
-    async def subscribe_channel(self, channel_id: str) -> list[str]: ...
+    async def subscribe_channel(self, channel_id: str) -> list[str]:
+        """Idempotent per connection. Returns the subscription types that failed."""
+        ...
+
+    async def unsubscribe_channel(self, channel_id: str) -> None: ...
 
 
 class SessionLog(Protocol):
@@ -25,50 +29,66 @@ class SessionLog(Protocol):
     async def end_session(self, channel_id: str, reason: str) -> None: ...
 
 
+def _is_joined(settings: ChannelSettings | None) -> bool:
+    return settings is not None and settings.active and settings.status == "joined"
+
+
 class ChannelManager:
-    def __init__(self, policy: PolicyService, subscriber: Subscriber | None, sessions: SessionLog) -> None:
+    def __init__(
+        self,
+        policy: PolicyService,
+        subscriber: Subscriber | None,
+        sessions: SessionLog,
+        *,
+        default_prefix: str = "!",
+    ) -> None:
         self.policy = policy
         self.subscriber = subscriber
         self.sessions = sessions
+        self.default_prefix = default_prefix
 
     def active_channels(self) -> list[ChannelSettings]:
-        return [c for c in self.policy.snapshot.channels.values() if c.active and c.status == "joined"]
+        return [c for c in self.policy.snapshot.channels.values() if _is_joined(c)]
 
     def is_active(self, channel_id: str) -> bool:
-        settings = self.policy.channel_settings(channel_id)
-        return settings is not None and settings.active and settings.status == "joined"
+        return _is_joined(self.policy.channel_settings(channel_id))
 
     async def join(self, channel_id: str, login: str, actor: Actor) -> list[str]:
         """Mark the channel joined and subscribe. Returns failed subscription types (empty on success)."""
-        await self.policy.mutate(lambda repo: repo.ensure_channel(channel_id, login, actor))
-        settings = self.policy.channel_settings(channel_id)
-        if settings is not None and (settings.status != "joined" or not settings.active):
-            await self.policy.mutate(
-                lambda repo: repo.set_channel_field(channel_id, "status", "joined", actor)
-            )
-            await self.policy.mutate(lambda repo: repo.set_channel_field(channel_id, "active", 1, actor))
+        await self._mark_joined(channel_id, login, actor)
         failed = await self._subscribe(channel_id)
         log.info("channel.join", channel=login, failed=failed)
         return failed
 
     async def part(self, channel_id: str, actor: Actor) -> None:
-        await self.policy.mutate(lambda repo: repo.set_channel_field(channel_id, "status", "parted", actor))
-        await self.policy.mutate(lambda repo: repo.set_channel_field(channel_id, "active", 0, actor))
+        async def mark_parted(repo: PolicyRepository) -> None:
+            await repo.set_channel_field(channel_id, "status", "parted", actor)
+            await repo.set_channel_field(channel_id, "active", 0, actor)
+
+        await self.policy.mutate(mark_parted)
+        if self.subscriber is not None:
+            await self.subscriber.unsubscribe_channel(channel_id)
         await self.sessions.end_session(channel_id, "part")
         log.info("channel.part", channel_id=channel_id)
 
     async def ensure_home(self, bot_id: str, bot_login: str) -> None:
-        """The bot's own channel is always joined, so broadcasters can type !join there."""
+        """The bot's own channel is always joined, so broadcasters can type !join there. subscribe_all() connects it."""
         if not self.is_active(bot_id):
-            await self.join(bot_id, bot_login, Actor(None, "system"))
+            await self._mark_joined(bot_id, bot_login, Actor(None, "system"))
 
     async def subscribe_all(self) -> None:
-        """Subscribe every joined channel that isn't subscribed yet on this connection."""
-        is_subscribed = getattr(self.subscriber, "is_subscribed", None)
+        """Subscribe every joined channel (at startup and after re-authorization)."""
         for settings in self.active_channels():
-            if is_subscribed is not None and is_subscribed(settings.channel_id):
-                continue
             await self._subscribe(settings.channel_id)
+
+    async def _mark_joined(self, channel_id: str, login: str, actor: Actor) -> None:
+        async def mark(repo: PolicyRepository) -> None:
+            await repo.ensure_channel(channel_id, login, actor, self.default_prefix)
+            await repo.set_channel_field(channel_id, "status", "joined", actor)
+            await repo.set_channel_field(channel_id, "active", 1, actor)
+
+        if not self.is_active(channel_id):
+            await self.policy.mutate(mark)
 
     async def _subscribe(self, channel_id: str) -> list[str]:
         if self.subscriber is None:

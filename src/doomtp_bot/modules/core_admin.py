@@ -6,14 +6,15 @@ Not toggleable. Every write goes through PolicyService (audited, snapshot rebuil
 from __future__ import annotations
 
 import re
-import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, parse
 from doomtp_bot.modules import NON_TOGGLEABLE_MODULES
-from doomtp_bot.policy.repository import Actor
+from doomtp_bot.modules._common import actor, command_spec, rank, user_arg
+from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
     BOT_ADMIN_RANK,
     BUILTIN_RANKS,
@@ -24,7 +25,7 @@ from doomtp_bot.policy.roles import (
 )
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 from doomtp_bot.runtime.values import ConversionError, convert
 
@@ -36,10 +37,6 @@ ROLE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 PREFIX_FORBIDDEN = set('{}"\\|&>()')
 
 
-class _Usage(Exception):
-    pass
-
-
 def _policy(ctx: CommandContext) -> PolicyService:
     return ctx.service("policy")  # type: ignore[no-any-return]
 
@@ -48,33 +45,22 @@ def _registry(ctx: CommandContext) -> CommandRegistry:
     return ctx.service("registry")  # type: ignore[no-any-return]
 
 
-def _actor(ctx: CommandContext) -> Actor:
-    return Actor(ctx.invoker.id if ctx.invoker else None, "chat")
-
-
-def _rank(ctx: CommandContext) -> int:
-    return ctx.invoker.rank if ctx.invoker else 0
-
-
 def _is_broadcaster(ctx: CommandContext) -> bool:
     return ctx.invoker is not None and "broadcaster" in ctx.invoker.roles
 
 
-async def _user(ctx: CommandContext, raw: str) -> dict[str, Any]:
-    try:
-        return await convert(raw, "user", resolve_user=ctx.exec.resolve_user)  # type: ignore[no-any-return]
-    except ConversionError as exc:
-        raise _Usage(str(exc)) from exc
-
-
-async def _ensure_channel(ctx: CommandContext) -> None:
+async def _write(
+    ctx: CommandContext, operation: Callable[[PolicyRepository], Any], scope: str | None = None
+) -> Any:
+    """Apply a policy write. Channel-scoped writes first create the channel row if it doesn't exist yet."""
     policy = _policy(ctx)
-    if policy.channel_settings(ctx.channel.id) is None:
+    if scope != GLOBAL and policy.channel_settings(ctx.channel.id) is None:
         await policy.mutate(
             lambda repo: repo.ensure_channel(
-                ctx.channel.id, ctx.channel.login, _actor(ctx), ctx.channel.prefix
+                ctx.channel.id, ctx.channel.login, actor(ctx), ctx.channel.prefix
             )
         )
+    return await policy.mutate(operation)
 
 
 def _spec(name: str, summary: str, usage: str, required_role: str = "moderator", **kw: Any) -> CommandSpec:
@@ -92,30 +78,20 @@ def _spec(name: str, summary: str, usage: str, required_role: str = "moderator",
 
 def _handler(fn: Any) -> Any:
     async def wrapped(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-        try:
-            return await fn(ctx, list(args.values), args)  # type: ignore[no-any-return]
-        except _Usage as exc:
-            return Result.failure(Code.USAGE, str(exc))
+        return await fn(ctx, list(args.values), args)  # type: ignore[no-any-return]
 
     return wrapped
 
 
 def _need(values: list[str], count: int, usage: str) -> None:
     if len(values) < count:
-        raise _Usage(f"usage: {usage}")
+        raise CommandError(f"usage: {usage}")
 
 
 def _int(raw: str, what: str, lo: int, hi: int) -> int:
     if not raw.lstrip("-").isdigit() or not lo <= int(raw) <= hi:
-        raise _Usage(f"{what} must be a whole number from {lo} to {hi}")
+        raise CommandError(f"{what} must be a whole number from {lo} to {hi}")
     return int(raw)
-
-
-def _command_spec(ctx: CommandContext, name: str) -> CommandSpec:
-    found = _registry(ctx).get(name.lower().removeprefix(ctx.channel.prefix))
-    if found is None:
-        raise _Usage(f"unknown command: {name}")
-    return found.spec
 
 
 # ── !role ───────────────────────────────────────────────────────────────────
@@ -139,24 +115,23 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
     name = v[1].lower()
     if action == "create":
         _need(v, 3, ROLE_USAGE)
-        rank = _int(v[2], "rank", CUSTOM_RANK_MIN, CUSTOM_RANK_MAX)
+        new_rank = _int(v[2], "rank", CUSTOM_RANK_MIN, CUSTOM_RANK_MAX)
         if not ROLE_NAME_RE.match(name) or name in BUILTIN_RANKS:
-            raise _Usage("role names: lowercase letters, digits, _ (not a built-in role)")
+            raise CommandError("role names: lowercase letters, digits, _ (not a built-in role)")
         if policy.snapshot.roles_by_scope.get(channel_id, {}).get(name):
-            raise _Usage(f"role {name} already exists")
+            raise CommandError(f"role {name} already exists")
         if not can_manage_role(
-            _rank(ctx), rank, actor_is_broadcaster=_is_broadcaster(ctx), role_is_channel=True
+            rank(ctx), new_rank, actor_is_broadcaster=_is_broadcaster(ctx), role_is_channel=True
         ):
             return Result.failure(Code.FAIL, "you can only create roles ranked below your own")
-        await _ensure_channel(ctx)
-        await policy.mutate(lambda repo: repo.create_role(channel_id, name, rank, _actor(ctx)))
-        return Result.success(f"created role {name} (rank {rank})")
+        await _write(ctx, lambda repo: repo.create_role(channel_id, name, new_rank, actor(ctx)))
+        return Result.success(f"created role {name} (rank {new_rank})")
 
     role = policy.role_named(channel_id, name)
     if role is None:
-        raise _Usage(f"unknown role {name}")
+        raise CommandError(f"unknown role {name}")
     manageable = not role.builtin and can_manage_role(
-        _rank(ctx),
+        rank(ctx),
         role.rank,
         actor_is_broadcaster=_is_broadcaster(ctx),
         role_is_channel=role.channel_id == channel_id,
@@ -172,34 +147,34 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if action == "delete":
         if role.channel_id != channel_id or not manageable:
             return Result.failure(Code.FAIL, f"you can't delete {name}")
-        await policy.mutate(lambda repo: repo.delete_role(role.id, _actor(ctx)))
+        await policy.mutate(lambda repo: repo.delete_role(role.id, actor(ctx)))
         return Result.success(f"deleted role {name}")
     if action in ("add", "remove"):
         _need(v, 3, ROLE_USAGE)
         if not manageable:
             return Result.failure(Code.FAIL, f"you can't manage {name}")
-        user = await _user(ctx, v[2])
+        user = await user_arg(ctx, v[2])
         if action == "add":
             expires = None
             if len(v) > 3:
                 try:
                     seconds = await convert(v[3], "duration")
                 except ConversionError as exc:
-                    raise _Usage(f"duration: {exc}") from exc
-                expires = int((time.time() + seconds) * 1000)
+                    raise CommandError(f"duration: {exc}") from exc
+                expires = int((ctx.exec.clock() + seconds) * 1000)
             await policy.mutate(
                 lambda repo: repo.add_member(
-                    role.id, channel_id, name, user["id"], user["name"], expires, _actor(ctx)
+                    role.id, channel_id, name, user["id"], user["name"], expires, actor(ctx)
                 )
             )
             return Result.success(f"gave {name} to {user['display']}" + (f" for {v[3]}" if expires else ""))
         removed = await policy.mutate(
-            lambda repo: repo.remove_member(role.id, channel_id, name, user["id"], _actor(ctx))
+            lambda repo: repo.remove_member(role.id, channel_id, name, user["id"], actor(ctx))
         )
         return Result.success(
             f"removed {name} from {user['display']}" if removed else f"{user['display']} doesn't have {name}"
         )
-    raise _Usage(f"usage: {ROLE_USAGE}")
+    raise CommandError(f"usage: {ROLE_USAGE}")
 
 
 # ── !perm ───────────────────────────────────────────────────────────────────
@@ -210,43 +185,37 @@ PERM_USAGE = "perm show <command> | set <command> <role> | allow <command> <role
 async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = _policy(ctx)
     _need(v, 2, PERM_USAGE)
-    action, spec, channel_id = v[0].lower(), _command_spec(ctx, v[1]), ctx.channel.id
+    action, spec, channel_id = v[0].lower(), command_spec(ctx, v[1]), ctx.channel.id
     if action == "show":
         required, allowed = policy.required_role(channel_id, spec)
         text = f"{spec.name}: requires {required}" + (
             f", or exactly: {', '.join(allowed)}" if allowed else ""
         )
         return Result.success(text, {"required_role": required, "allowed_roles": list(allowed or [])})
-    if spec.module == MODULE and _rank(ctx) < BOT_ADMIN_RANK:
+    if spec.module == MODULE and rank(ctx) < BOT_ADMIN_RANK:
         return Result.failure(Code.FAIL, "only bot admins can change admin command permissions")
     if action == "set":
         _need(v, 3, PERM_USAGE)
         role = v[2].lower()
         if policy.rank_of(channel_id, role) is None:
-            raise _Usage(f"unknown role {role}")
-        await _ensure_channel(ctx)
-        await policy.mutate(
-            lambda repo: repo.set_command_rule(channel_id, spec.name, role, None, _actor(ctx))
-        )
+            raise CommandError(f"unknown role {role}")
+        await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.name, role, None, actor(ctx)))
         return Result.success(f"{spec.name} now requires {role}")
     if action == "allow":
         _need(v, 3, PERM_USAGE)
         roles = [r.strip().lower() for r in " ".join(v[2:]).split(",") if r.strip()]
         unknown = [r for r in roles if policy.rank_of(channel_id, r) is None]
         if not roles or unknown:
-            raise _Usage(f"unknown role(s): {', '.join(unknown) or '(none given)'}")
+            raise CommandError(f"unknown role(s): {', '.join(unknown) or '(none given)'}")
         required, _ = policy.required_role(channel_id, spec)
-        await _ensure_channel(ctx)
-        await policy.mutate(
-            lambda repo: repo.set_command_rule(channel_id, spec.name, required, roles, _actor(ctx))
+        await _write(
+            ctx, lambda repo: repo.set_command_rule(channel_id, spec.name, required, roles, actor(ctx))
         )
         return Result.success(f"{spec.name} is also allowed for: {', '.join(roles)}")
     if action == "clear":
-        await policy.mutate(
-            lambda repo: repo.set_command_rule(channel_id, spec.name, None, None, _actor(ctx))
-        )
+        await policy.mutate(lambda repo: repo.set_command_rule(channel_id, spec.name, None, None, actor(ctx)))
         return Result.success(f"{spec.name} permissions reset to default ({spec.required_role})")
-    raise _Usage(f"usage: {PERM_USAGE}")
+    raise CommandError(f"usage: {PERM_USAGE}")
 
 
 # ── !cooldown ───────────────────────────────────────────────────────────────
@@ -257,11 +226,9 @@ COOLDOWN_USAGE = "cooldown show <command> | set <command> <role> <tier_s> <user_
 async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = _policy(ctx)
     _need(v, 2, COOLDOWN_USAGE)
-    action, spec, channel_id = v[0].lower(), _command_spec(ctx, v[1]), ctx.channel.id
+    action, spec, channel_id = v[0].lower(), command_spec(ctx, v[1]), ctx.channel.id
     if action == "show":
-        rules = dict(spec.default_cooldowns)
-        rules.update(policy.snapshot.cooldown_rules.get((GLOBAL, spec.name), {}))
-        rules.update(policy.snapshot.cooldown_rules.get((channel_id, spec.name), {}))
+        rules = policy.cooldown_rules(channel_id, spec)
         if not rules:
             return Result.success(f"{spec.name}: no cooldowns", {})
         text = "; ".join(f"{role} {c.tier_s}s/{c.user_s}s" for role, c in sorted(rules.items()))
@@ -271,21 +238,20 @@ async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 3, COOLDOWN_USAGE)
     role = v[2].lower()
     if policy.rank_of(channel_id, role) is None:
-        raise _Usage(f"unknown role {role}")
+        raise CommandError(f"unknown role {role}")
     if action == "set":
         _need(v, 5, COOLDOWN_USAGE)
         tier_s, user_s = _int(v[3], "tier_s", 0, 86_400), _int(v[4], "user_s", 0, 86_400)
-        await _ensure_channel(ctx)
-        await policy.mutate(
-            lambda repo: repo.set_cooldown(channel_id, spec.name, role, tier_s, user_s, _actor(ctx))
+        await _write(
+            ctx, lambda repo: repo.set_cooldown(channel_id, spec.name, role, tier_s, user_s, actor(ctx))
         )
         return Result.success(f"{spec.name} for {role}: {tier_s}s shared, {user_s}s personal")
     if action == "clear":
         await policy.mutate(
-            lambda repo: repo.set_cooldown(channel_id, spec.name, role, None, None, _actor(ctx))
+            lambda repo: repo.set_cooldown(channel_id, spec.name, role, None, None, actor(ctx))
         )
         return Result.success(f"{spec.name} cooldown for {role} reset to default")
-    raise _Usage(f"usage: {COOLDOWN_USAGE}")
+    raise CommandError(f"usage: {COOLDOWN_USAGE}")
 
 
 # ── !module / !cmd ──────────────────────────────────────────────────────────
@@ -295,8 +261,8 @@ CMD_USAGE = "cmd enable|disable|reset <command> [global] | log <command> <off|er
 
 def _scope(ctx: CommandContext, v: list[str], position: int) -> str:
     if len(v) > position and v[position].lower() == "global":
-        if _rank(ctx) < BOT_ADMIN_RANK:
-            raise _Usage("only bot admins can change global settings")
+        if rank(ctx) < BOT_ADMIN_RANK:
+            raise CommandError("only bot admins can change global settings")
         return GLOBAL
     return ctx.channel.id
 
@@ -316,16 +282,14 @@ async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 2, MODULE_USAGE)
     module = v[1].lower()
     if module not in modules:
-        raise _Usage(f"unknown module {module}")
+        raise CommandError(f"unknown module {module}")
     if module in NON_TOGGLEABLE_MODULES:
         return Result.failure(Code.FAIL, f"{module} can't be turned off")
     scope = _scope(ctx, v, 2)
-    enabled = {"enable": True, "disable": False, "reset": None}.get(action, "bad")
-    if enabled == "bad":
-        raise _Usage(f"usage: {MODULE_USAGE}")
-    if scope != GLOBAL:
-        await _ensure_channel(ctx)
-    await policy.mutate(lambda repo: repo.set_module_toggle(scope, module, enabled, _actor(ctx)))  # type: ignore[arg-type]
+    if action not in ("enable", "disable", "reset"):
+        raise CommandError(f"usage: {MODULE_USAGE}")
+    enabled = None if action == "reset" else action == "enable"
+    await _write(ctx, lambda repo: repo.set_module_toggle(scope, module, enabled, actor(ctx)), scope)
     where = "everywhere" if scope == GLOBAL else "here"
     return Result.success(
         f"{module} {'reset' if enabled is None else ('enabled' if enabled else 'disabled')} {where}"
@@ -334,36 +298,35 @@ async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 @_handler
 async def _cmd(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
     _need(v, 2, CMD_USAGE)
-    action, spec = v[0].lower(), _command_spec(ctx, v[1])
+    action, spec = v[0].lower(), command_spec(ctx, v[1])
     if action == "log":
         _need(v, 3, CMD_USAGE)
         try:
             level = LogLevel(v[2].lower())
         except ValueError as exc:
-            raise _Usage(f"usage: {CMD_USAGE}") from exc
-        await _ensure_channel(ctx)
-        await policy.mutate(
+            raise CommandError(f"usage: {CMD_USAGE}") from exc
+        await _write(
+            ctx,
             lambda repo: repo.set_command_toggle(
-                ctx.channel.id, spec.name, _actor(ctx), log_level=level.value
-            )
+                ctx.channel.id, spec.name, actor(ctx), log_level=level.value
+            ),
         )
         return Result.success(f"{spec.name} log level: {level.value}")
     if spec.module in NON_TOGGLEABLE_MODULES:
         return Result.failure(Code.FAIL, f"{spec.name} can't be turned off")
     scope = _scope(ctx, v, 2)
-    if scope != GLOBAL:
-        await _ensure_channel(ctx)
     if action == "reset":
-        await policy.mutate(
-            lambda repo: repo.set_command_toggle(scope, spec.name, _actor(ctx), clear_enabled=True)
+        await _write(
+            ctx, lambda repo: repo.set_command_toggle(scope, spec.name, actor(ctx), clear_enabled=True), scope
         )
         return Result.success(f"{spec.name} reset")
     if action not in ("enable", "disable"):
-        raise _Usage(f"usage: {CMD_USAGE}")
+        raise CommandError(f"usage: {CMD_USAGE}")
     enabled = action == "enable"
-    await policy.mutate(lambda repo: repo.set_command_toggle(scope, spec.name, _actor(ctx), enabled=enabled))
+    await _write(
+        ctx, lambda repo: repo.set_command_toggle(scope, spec.name, actor(ctx), enabled=enabled), scope
+    )
     return Result.success(
         f"{spec.name} {'enabled' if enabled else 'disabled'}{' everywhere' if scope == GLOBAL else ''}"
     )
@@ -383,12 +346,12 @@ async def _ignore(ctx: CommandContext, v: list[str], args: Args) -> Result:
         return Result.success(f"{len(ids)} ignored here", ids)
     _need(v, 2, IGNORE_USAGE)
     if action not in ("add", "remove"):
-        raise _Usage(f"usage: {IGNORE_USAGE}")
-    user, scope = await _user(ctx, v[1]), _scope(ctx, v, 2)
-    if scope != GLOBAL:
-        await _ensure_channel(ctx)
-    await policy.mutate(
-        lambda repo: repo.set_ignored(scope, user["id"], user["name"], action == "add", _actor(ctx))
+        raise CommandError(f"usage: {IGNORE_USAGE}")
+    user, scope = await user_arg(ctx, v[1]), _scope(ctx, v, 2)
+    await _write(
+        ctx,
+        lambda repo: repo.set_ignored(scope, user["id"], user["name"], action == "add", actor(ctx)),
+        scope,
     )
     return Result.success(f"{'ignoring' if action == 'add' else 'no longer ignoring'} {user['display']}")
 
@@ -408,14 +371,12 @@ def validate_prefix(prefix: str) -> str | None:
 
 @_handler
 async def _prefix(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
     if not v:
         return Result.success(f"prefix: {ctx.channel.prefix}", ctx.channel.prefix)
     problem = validate_prefix(v[0])
     if problem:
-        raise _Usage(problem)
-    await _ensure_channel(ctx)
-    await policy.mutate(lambda repo: repo.set_channel_field(ctx.channel.id, "prefix", v[0], _actor(ctx)))
+        raise CommandError(problem)
+    await _write(ctx, lambda repo: repo.set_channel_field(ctx.channel.id, "prefix", v[0], actor(ctx)))
     return Result.success(f"prefix is now {v[0]}")
 
 
@@ -428,10 +389,10 @@ async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 2, ADMIN_USAGE)
     action = v[0].lower()
     if action not in ("add", "remove"):
-        raise _Usage(f"usage: {ADMIN_USAGE}")
-    user = await _user(ctx, v[1])
+        raise CommandError(f"usage: {ADMIN_USAGE}")
+    user = await user_arg(ctx, v[1])
     await policy.mutate(
-        lambda repo: repo.set_global_admin(user["id"], user["name"], action == "add", _actor(ctx))
+        lambda repo: repo.set_global_admin(user["id"], user["name"], action == "add", actor(ctx))
     )
     return Result.success(f"{user['display']} is {'now' if action == 'add' else 'no longer'} a bot admin")
 
@@ -447,23 +408,22 @@ async def _callback(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 3, CALLBACK_USAGE)
     action, kind, scope = v[0].lower(), v[1].lower(), v[2].lower()
     if kind not in ("on_cooldown", "on_denied") or not SCOPE_RE.match(scope):
-        raise _Usage(f"usage: {CALLBACK_USAGE}")
+        raise CommandError(f"usage: {CALLBACK_USAGE}")
     if action == "clear":
         await policy.mutate(
-            lambda repo: repo.set_callback(ctx.channel.id, scope, kind, None, SYNTAX_VERSION, _actor(ctx))
+            lambda repo: repo.set_callback(ctx.channel.id, scope, kind, None, SYNTAX_VERSION, actor(ctx))
         )
         return Result.success(f"cleared {kind} for {scope}")
     if action != "set" or not args.raw_tail:
-        raise _Usage(f"usage: {CALLBACK_USAGE}")
+        raise CommandError(f"usage: {CALLBACK_USAGE}")
     runtime = ctx.service("runtime")
     try:
         parse(args.raw_tail, Context.CALLBACK, runtime.parser_params(ctx.channel.prefix))
     except ParseError as exc:
-        raise _Usage(str(exc)) from exc
+        raise CommandError(str(exc)) from exc
     expr = args.raw_tail
-    await _ensure_channel(ctx)
-    await policy.mutate(
-        lambda repo: repo.set_callback(ctx.channel.id, scope, kind, expr, SYNTAX_VERSION, _actor(ctx))
+    await _write(
+        ctx, lambda repo: repo.set_callback(ctx.channel.id, scope, kind, expr, SYNTAX_VERSION, actor(ctx))
     )
     return Result.success(f"set {kind} for {scope}")
 

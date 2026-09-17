@@ -7,14 +7,13 @@ access matrix) lives in doomtp_bot.variables.
 from __future__ import annotations
 
 import copy
-import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from doomtp_bot.runtime.namespaces import VAR_NAMESPACES, is_reserved_var_name
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, CommandError, json_size
 from doomtp_bot.runtime.values import MISSING
 
 if TYPE_CHECKING:
@@ -26,14 +25,9 @@ MAX_NAMES_PER_SPACE = 200
 VAR_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
-class VariableError(Exception):
+class VariableError(CommandError):
     def __init__(self, code: int, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-    def result(self) -> Result:
-        return Result.failure(self.code, self.message)
+        super().__init__(message, code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +83,7 @@ def key_for(ctx: ExecContext, namespace: str, name: str) -> VarKey:
 
 
 def check_value_size(value: Any) -> None:
-    size = len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    size = json_size(value)
     if size > MAX_VALUE_BYTES:
         raise VariableError(Code.USAGE, f"value too large ({size} bytes, max {MAX_VALUE_BYTES})")
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -118,7 +118,3 @@ def validate_params(params: Sequence[Param]) -> None:
             raise ValueError(f"unknown param type {p.type!r}")
         if p.type == "choice" and not p.choices:
             raise ValueError(f"choice param {p.name!r} needs choices")
-
-
-# Command handler signature: (ctx, args, stdin) -> Result. Context/args types arrive with the executor.
-Handler = Callable[[Any, Any, "Result | None"], Awaitable["Result"]]

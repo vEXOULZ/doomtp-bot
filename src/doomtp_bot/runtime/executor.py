@@ -14,7 +14,7 @@ from doomtp_bot import __version__
 from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Part, Pipe, Placeholder, Store, Text
 from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, RunCancelled
 from doomtp_bot.runtime.namespaces import FieldPath, VarPath, classify
-from doomtp_bot.runtime.result import MAX_DATA_BYTES, Code, Result
+from doomtp_bot.runtime.result import MAX_DATA_BYTES, Code, CommandError, Result
 from doomtp_bot.runtime.values import (
     MISSING,
     ConversionError,
@@ -145,6 +145,8 @@ class Executor:
                 if result.code >= 100:
                     log.warning("command.reserved_code", command=spec.name, code=result.code)
                     result = Result(Code.FAIL, result.message, result.data)
+            except CommandError as exc:
+                result = exc.result()
             except TimeoutError:
                 result = Result.failure(Code.TIMEOUT, f"{inv.name} timed out")
             except (RunCancelled, asyncio.CancelledError):
@@ -241,14 +243,8 @@ class Executor:
             return MISSING
         if root in ("arg", "args"):
             return self.arg_value(scope.args, path if root == "arg" else ("1+", *path))
-        if root == "event":
-            return descend(ctx.event, path)
-        if root == "match":
-            return descend(ctx.match, path)
-        if root == "cooldown":
-            return descend(ctx.cooldown, path)
-        if root == "denied":
-            return descend(ctx.denied, path)
+        if root in ("event", "match", "cooldown", "denied"):
+            return descend(getattr(ctx, root), path)
         if root == "bot":
             return descend({"name": "doomtp-bot", "id": "", "version": __version__, **ctx.bot}, path)
         if root == "run":
@@ -274,19 +270,13 @@ class Executor:
         head, *rest = path
         if head == "count":
             return len(args.values) if not rest else MISSING
-        if head.endswith("+raw"):
-            n = int(head[:-4])
+        if head.endswith(("+", "+raw")):
+            raw = head.endswith("+raw")
+            n = int(head.removesuffix("raw").removesuffix("+"))
             if n < 1 or n > len(args.values):
                 return MISSING
-            return (
-                args.raw_text[args.raw_offsets[n - 1] :]
-                if args.raw_offsets
-                else " ".join(args.values[n - 1 :])
-            )
-        if head.endswith("+"):
-            n = int(head[:-1])
-            if n < 1 or n > len(args.values):
-                return MISSING
+            if raw and args.raw_offsets:
+                return args.raw_text[args.raw_offsets[n - 1] :]
             return " ".join(args.values[n - 1 :])
         if head.isdigit():
             n = int(head)

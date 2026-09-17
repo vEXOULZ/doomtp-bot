@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import time
 from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
@@ -13,6 +12,7 @@ from typing import Any
 import aiosqlite
 import structlog
 
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core.events import (
     ChatCleared,
     ChatMessage,
@@ -21,6 +21,7 @@ from doomtp_bot.core.events import (
     ModerationAction,
     UserMessagesCleared,
 )
+from doomtp_bot.storage.db import transaction
 
 log = structlog.get_logger(__name__)
 
@@ -29,10 +30,6 @@ FLUSH_BATCH = 200
 QUEUE_MAX = 10_000
 
 Op = tuple[str, tuple[Any, ...]]
-
-
-def now_ms() -> int:
-    return int(time.time() * 1000)
 
 
 class ChatLogWriter:
@@ -50,7 +47,6 @@ class ChatLogWriter:
         self._task: asyncio.Task[None] | None = None
         self._sessions: dict[str, int] = {}
         self.last_flush_ms: int | None = None
-        self.rows_written = 0
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -72,10 +68,9 @@ class ChatLogWriter:
 
     # ── producers ───────────────────────────────────────────────────────────
     async def message(self, msg: ChatMessage, *, is_command: bool = False) -> None:
-        await self._put(
-            "user",
-            (msg.user_id, msg.user_login, msg.display_name, msg.sent_at),
-        )
+        user = (msg.user_id, msg.user_login, msg.display_name, msg.sent_at)
+        await self._put("user", user)
+        await self._put("user_name", user)
         await self._put(
             "message",
             (
@@ -97,49 +92,42 @@ class ChatLogWriter:
     ) -> None:
         match event:
             case MessageDeleted():
-                await self._put(
-                    "mod_event",
-                    (
-                        event.channel_id,
-                        "delete",
-                        event.message_id,
-                        event.target_user_id,
-                        None,
-                        None,
-                        None,
-                        event.source,
-                        event.at,
-                    ),
-                )
+                await self._mod_event(event.channel_id, "delete", event.source, event.at,
+                                      message_id=event.message_id, target=event.target_user_id)  # fmt: skip
                 await self._put("flag_deleted", (event.at, event.message_id))
             case UserMessagesCleared():
-                await self._put(
-                    "mod_event",
-                    (
-                        event.channel_id,
-                        "user_clear",
-                        None,
-                        event.target_user_id,
-                        None,
-                        None,
-                        None,
-                        event.source,
-                        event.at,
-                    ),
+                await self._mod_event(
+                    event.channel_id, "user_clear", event.source, event.at, target=event.target_user_id
                 )
                 await self._put(
                     "flag_user_cleared", (event.at, event.channel_id, event.target_user_id, event.at)
                 )
             case ChatCleared():
-                await self._put(
-                    "mod_event",
-                    (event.channel_id, "chat_clear", None, None, None, None, None, event.source, event.at),
-                )
+                await self._mod_event(event.channel_id, "chat_clear", event.source, event.at)
                 await self._put("flag_chat_cleared", (event.at, event.channel_id, event.at))
             case ModerationAction():
                 kind = event.action if event.action in ("timeout", "ban", "unban", "delete") else "user_clear"
-                await self._put("mod_event", (event.channel_id, kind, event.extra.get("message_id"), event.target_user_id,
-                                              event.moderator_user_id, event.duration_s, event.reason, "eventsub", event.at))  # fmt: skip
+                await self._mod_event(event.channel_id, kind, "eventsub", event.at,
+                                      message_id=event.extra.get("message_id"), target=event.target_user_id,
+                                      moderator=event.moderator_user_id, duration_s=event.duration_s,
+                                      reason=event.reason)  # fmt: skip
+
+    async def _mod_event(
+        self,
+        channel_id: str,
+        kind: str,
+        source: str,
+        at: int,
+        *,
+        message_id: str | None = None,
+        target: str | None = None,
+        moderator: str | None = None,
+        duration_s: int | None = None,
+        reason: str | None = None,
+    ) -> None:
+        await self._put(
+            "mod_event", (channel_id, kind, message_id, target, moderator, duration_s, reason, source, at)
+        )
 
     async def command_run(
         self,
@@ -188,21 +176,21 @@ class ChatLogWriter:
     async def start_session(self, channel_id: str) -> None:
         if channel_id in self._sessions:
             return
-        cur = await self.conn.execute(
-            "INSERT INTO log_sessions (channel_id, started_at) VALUES (?, ?)", (channel_id, now_ms())
-        )
-        await self.conn.commit()
+        async with transaction(self.conn):
+            cur = await self.conn.execute(
+                "INSERT INTO log_sessions (channel_id, started_at) VALUES (?, ?)", (channel_id, now_ms())
+            )
         self._sessions[channel_id] = int(cur.lastrowid or 0)
 
     async def end_session(self, channel_id: str, reason: str) -> None:
         session_id = self._sessions.pop(channel_id, None)
         if session_id is None:
             return
-        await self.conn.execute(
-            "UPDATE log_sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
-            (now_ms(), reason, session_id),
-        )
-        await self.conn.commit()
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE log_sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
+                (now_ms(), reason, session_id),
+            )
 
     async def close_stale_sessions(self) -> int:
         """Close sessions a previous process never ended (killed or crashed). Call once at startup.
@@ -210,8 +198,9 @@ class ChatLogWriter:
         The end time is the last message received in that channel before the next session began, or the
         session start if none was logged, so coverage gaps stay honest (ADR-0008).
         """
-        cur = await self.conn.execute(
-            """
+        async with transaction(self.conn):
+            cur = await self.conn.execute(
+                """
             UPDATE log_sessions SET end_reason = 'unclean_shutdown', ended_at = COALESCE(
                 (SELECT MAX(m.received_at) FROM messages m
                   WHERE m.channel_id = log_sessions.channel_id
@@ -223,8 +212,7 @@ class ChatLogWriter:
                 started_at)
             WHERE ended_at IS NULL
             """
-        )
-        await self.conn.commit()
+            )
         return cur.rowcount or 0
 
     async def end_all_sessions(self, reason: str) -> None:
@@ -242,56 +230,57 @@ class ChatLogWriter:
     async def _run(self) -> None:
         stopping = False
         while not stopping:
-            pending: list[Op] = []
             first = await self._queue.get()
+            pending: list[Op] = []
             if first is None:
                 stopping = True
             else:
                 pending.append(first)
-                deadline = asyncio.get_running_loop().time() + self.flush_interval
-                while len(pending) < self.batch:
-                    timeout = deadline - asyncio.get_running_loop().time()
-                    if timeout <= 0:
-                        break
-                    try:
-                        item = await asyncio.wait_for(self._queue.get(), timeout)
-                    except TimeoutError:
-                        break
-                    if item is None:
-                        stopping = True
-                        break
-                    pending.append(item)
-            if stopping:
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    while True:
-                        item = self._queue.get_nowait()
-                        if item is not None:
+                loop = asyncio.get_running_loop()
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout_at(loop.time() + self.flush_interval):
+                        while len(pending) < self.batch:
+                            item = await self._queue.get()
+                            if item is None:
+                                stopping = True
+                                break
                             pending.append(item)
+            if stopping:
+                pending.extend(self._drain_nowait())
             if pending:
                 await self._write(pending)
 
     async def _flush_pending(self) -> None:
-        pending: list[Op] = []
+        pending = self._drain_nowait()
+        if pending:
+            await self._write(pending)
+
+    def _drain_nowait(self) -> list[Op]:
+        drained: list[Op] = []
         with contextlib.suppress(asyncio.QueueEmpty):
             while True:
                 item = self._queue.get_nowait()
                 if item is not None:
-                    pending.append(item)
-        if pending:
-            await self._write(pending)
+                    drained.append(item)
+        return drained
 
     async def _write(self, ops: list[Op]) -> None:
         try:
-            for kind, params in ops:
-                await self.conn.execute(_SQL[kind], params)
-                if kind == "user":
-                    await self.conn.execute(_SQL["user_name"], (params[0], params[1], params[2], params[3]))
-            await self.conn.commit()
-            self.rows_written += len(ops)
-            self.last_flush_ms = now_ms()
+            async with transaction(self.conn):
+                for kind, params in ops:
+                    await self.conn.execute(_SQL[kind], params)
         except Exception:
-            await self.conn.rollback()
             log.exception("chatlog.flush_failed", ops=len(ops))
+            await self._write_one_by_one(ops)  # one bad row must not lose the whole batch
+        self.last_flush_ms = now_ms()
+
+    async def _write_one_by_one(self, ops: list[Op]) -> None:
+        for kind, params in ops:
+            try:
+                async with transaction(self.conn):
+                    await self.conn.execute(_SQL[kind], params)
+            except Exception:
+                log.exception("chatlog.row_dropped", kind=kind)
 
 
 _SQL: dict[str, str] = {

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Final
 from urllib.parse import urlsplit
 
-from doomtp_bot.runtime.result import Result, Value
+from doomtp_bot.runtime.result import Result, Value, to_json
 
 
 class _Missing:
@@ -96,9 +96,7 @@ def render(value: Value | Any) -> str:
     if isinstance(value, list):
         return ", ".join(render(v) for v in value)
     if isinstance(value, dict):
-        import json
-
-        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        return to_json(value)
     return str(value)
 
 

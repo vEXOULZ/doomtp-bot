@@ -276,13 +276,23 @@ class _Parser:
         if self.eof():
             return
         op = self.operator_at(self.pos)
-        if op == ";":
-            raise self._error(ParseErrorCode.RESERVED_OPERATOR)
         if op == ")":
             raise self._error(ParseErrorCode.UNBALANCED_GROUP)
+        raise self._operator_error(op)
+
+    def _operator_error(self, op: str | None) -> ParseError:
+        """Reserved `;` → E_RESERVED_OPERATOR, any other operator → E_UNEXPECTED_OPERATOR."""
+        if op == ";":
+            return self._error(ParseErrorCode.RESERVED_OPERATOR)
         if op is not None:
-            raise self._error(ParseErrorCode.UNEXPECTED_OPERATOR, op=op)
-        raise self._error(ParseErrorCode.INTERNAL)
+            return self._error(ParseErrorCode.UNEXPECTED_OPERATOR, op=op)
+        return self._error(ParseErrorCode.INTERNAL)
+
+    def require_operand(self, op: str) -> None:
+        """`_ EOF %E_MISSING_OPERAND`: skip spaces, and fail if the line ends where an operand must follow."""
+        self.opt_ws()
+        if self.eof():
+            raise self._error(ParseErrorCode.MISSING_OPERAND, op=op)
 
     # ── C.3 expressions ─────────────────────────────────────────────────────
     def expr(self) -> Node:
@@ -304,9 +314,7 @@ class _Parser:
 
     def logic_operand(self, op: str) -> Node:
         """LogicOperand <- WS Pipeline / _ EOF %E_MISSING_OPERAND"""
-        self.opt_ws()
-        if self.eof():
-            raise self._error(ParseErrorCode.MISSING_OPERAND, op=op)
+        self.require_operand(op)
         return self.pipeline()
 
     def pipeline(self) -> Node:
@@ -322,9 +330,7 @@ class _Parser:
 
     def operand(self, op: str) -> Node:
         """Operand <- WS Stage / _ EOF %E_MISSING_OPERAND"""
-        self.opt_ws()
-        if self.eof():
-            raise self._error(ParseErrorCode.MISSING_OPERAND, op=op)
+        self.require_operand(op)
         return self.stage()
 
     def stage(self) -> Node:
@@ -340,9 +346,7 @@ class _Parser:
 
     def store_target(self, op: str) -> VarRef:
         """StoreTarget <- WS VarRef / _ EOF %E_MISSING_OPERAND / WS OperatorToken %E_UNEXPECTED_OPERATOR"""
-        self.opt_ws()
-        if self.eof():
-            raise self._error(ParseErrorCode.MISSING_OPERAND, op=op)
+        self.require_operand(op)
         found = self.operator_at(self.pos)
         if found is not None:
             raise self._error(ParseErrorCode.UNEXPECTED_OPERATOR, op=found)
@@ -353,19 +357,15 @@ class _Parser:
         op = self.operator_at(self.pos)
         if op == "(":
             return self.group()
-        if op == ";":
-            raise self._error(ParseErrorCode.RESERVED_OPERATOR)
         if op is not None:
-            raise self._error(ParseErrorCode.UNEXPECTED_OPERATOR, op=op)
+            raise self._operator_error(op)
         return self.invocation()
 
     def group(self) -> Group:
         """Group <- Open GroupInner GroupEnd"""
         self.pos += 1  # Open (boundary already checked by primary)
         # GroupInner <- WS Expr / _ EOF %E_MISSING_OPERAND
-        self.opt_ws()
-        if self.eof():
-            raise self._error(ParseErrorCode.MISSING_OPERAND, op="(")
+        self.require_operand("(")
         inner = self.expr()
         # GroupEnd <- WS Close / _ EOF %UNBALANCED / WS Reserved %RESERVED / WS OperatorToken %UNEXPECTED
         self.opt_ws()
@@ -375,11 +375,7 @@ class _Parser:
         if op == ")":
             self.pos += 1
             return Group(inner)
-        if op == ";":
-            raise self._error(ParseErrorCode.RESERVED_OPERATOR)
-        if op is not None:
-            raise self._error(ParseErrorCode.UNEXPECTED_OPERATOR, op=op)
-        raise self._error(ParseErrorCode.INTERNAL)
+        raise self._operator_error(op)
 
     # ── C.4 invocations ─────────────────────────────────────────────────────
     def cmd_prefix(self) -> None:

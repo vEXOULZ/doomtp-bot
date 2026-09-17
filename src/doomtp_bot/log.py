@@ -15,14 +15,16 @@ class RedactQueryFilter(logging.Filter):
     """Mask OAuth codes and tokens in logged URLs (uvicorn access log, library messages)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.args:
-            record.args = tuple(
-                _SENSITIVE_QUERY.sub(r"\1[redacted]", a) if isinstance(a, str) else a
-                for a in (record.args if isinstance(record.args, tuple) else (record.args,))
-            )
-        if isinstance(record.msg, str):
-            record.msg = _SENSITIVE_QUERY.sub(r"\1[redacted]", record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact(a) for a in record.args)
+        elif isinstance(record.args, dict):  # "%(name)s"-style args must stay a mapping
+            record.args = {k: _redact(v) for k, v in record.args.items()}
+        record.msg = _redact(record.msg)
         return True
+
+
+def _redact(value: object) -> object:
+    return _SENSITIVE_QUERY.sub(r"\1[redacted]", value) if isinstance(value, str) else value
 
 
 def configure_logging(level: str = "INFO", fmt: str = "console") -> None:

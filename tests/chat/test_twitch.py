@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -115,13 +114,6 @@ class FakeOAuthHttp:
 
     async def validate(self, access_token: str) -> dict[str, Any]:
         return {"user_id": "999", "login": "doomtp_bot", "scopes": self.scopes}
-
-
-@pytest.fixture
-async def dbs(tmp_path: Path) -> AsyncIterator[Databases]:
-    databases = await Databases.open(tmp_path / "bot.db", tmp_path / "chatlog.db")
-    yield databases
-    await databases.close()
 
 
 async def test_oauth_flow_stores_token_and_notifies(dbs: Databases) -> None:

@@ -32,9 +32,9 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     name = args.get("command")
     if name:
         found = registry.get(name.lower().removeprefix(prefix))
-        if found is None or not policy.is_permitted(ctx.exec, found.spec):
+        spec = found.spec if found is not None else None
+        if spec is None or not policy.is_permitted(ctx.exec, spec):
             return Result.failure(Code.NOT_FOUND, f"no command named {name}")
-        spec = found.spec
         text = f"{prefix}{spec.usage()} — {spec.summary}"
         if spec.aliases:
             text += f" (aliases: {', '.join(spec.aliases)})"

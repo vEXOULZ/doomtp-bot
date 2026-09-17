@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import enum
 import re
-import time
 from typing import TYPE_CHECKING
 
 import aiosqlite
 
 from doomtp_bot.audit.log import write_audit
+from doomtp_bot.clock import now_ms
 from doomtp_bot.lang.parser import Context
+from doomtp_bot.storage.db import transaction
 
 if TYPE_CHECKING:
     from doomtp_bot.policy.service import PolicyService
@@ -58,12 +59,6 @@ class VariableAccessPolicy:
         pub = ctx.publisher.publication if ctx.publisher else None
         return pub is not None and (ctx.channel.id, pub, f"{namespace}.{name}") in self._grants
 
-    def _reaches_channel_write_role(self, ctx: ExecContext) -> bool:
-        settings = self.policy.channel_settings(ctx.channel.id)
-        role = settings.channel_var_write_role if settings else "moderator"
-        required = self.policy.rank_of(ctx.channel.id, role)
-        return required is not None and self.policy.effective_rank(ctx) >= required
-
     def can_write(self, ctx: ExecContext, namespace: str, name: str) -> bool:
         actor = actor_of(ctx)
         if actor is Actor.CALLBACK:
@@ -74,7 +69,7 @@ class VariableAccessPolicy:
             return actor in (Actor.TYPED, Actor.OWN_CC)
         if namespace == "channel":
             if actor in (Actor.TYPED, Actor.OWN_CC, Actor.TRIGGER):
-                return self._reaches_channel_write_role(ctx)
+                return self.policy.reaches_setting_role(ctx, "channel_var_write_role")
             return actor is Actor.FOREIGN_PUB and self._has_grant(ctx, namespace, name)
         if namespace == "channel.chatter":
             if actor in (Actor.TYPED, Actor.OWN_CC, Actor.TRIGGER):
@@ -88,12 +83,12 @@ class VariableAccessPolicy:
     ) -> None:
         if not GRANTABLE_RE.match(variable):
             raise ValueError("grants name exact channel.x or channel.chatter.x variables (no wildcards)")
-        try:
+        async with transaction(self.conn):
             if granted:
                 await self.conn.execute(
                     "INSERT OR REPLACE INTO publication_write_grants"
                     " (channel_id, publication_name, variable, granted_by, granted_at) VALUES (?, ?, ?, ?, ?)",
-                    (channel_id, publication, variable, actor_user_id or "system", int(time.time() * 1000)),
+                    (channel_id, publication, variable, actor_user_id or "system", now_ms()),
                 )
             else:
                 await self.conn.execute(
@@ -108,8 +103,4 @@ class VariableAccessPolicy:
                 channel_id=channel_id,
                 target=f"{publication}:{variable}",
             )
-            await self.conn.commit()
-        except BaseException:
-            await self.conn.rollback()
-            raise
         await self.reload()

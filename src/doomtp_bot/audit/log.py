@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import json
-import time
 from typing import Any
 
 import aiosqlite
+
+from doomtp_bot.clock import now_ms
+from doomtp_bot.runtime.result import to_json
 
 
 def _encode(value: Any) -> str | None:
     if value is None:
         return None
-    return value if isinstance(value, str) else json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return value if isinstance(value, str) else to_json(value)
 
 
 async def write_audit(
@@ -38,6 +39,6 @@ async def write_audit(
             target,
             _encode(before),
             _encode(after),
-            int(time.time() * 1000),
+            now_ms(),
         ),
     )

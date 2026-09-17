@@ -6,17 +6,19 @@ so they commit atomically with the rest of the line.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import TYPE_CHECKING, Any
 
+from doomtp_bot.modules._common import rank, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
-from doomtp_bot.runtime.namespaces import VAR_NAMESPACES
+from doomtp_bot.runtime.namespaces import CHATTER_KEY, VAR_NAMESPACES
 from doomtp_bot.runtime.registry import Command, command
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
-from doomtp_bot.runtime.values import MISSING, ConversionError, convert, descend, render
-from doomtp_bot.runtime.variables import Space, VariableError, VarKey, WriteOp, key_for
+from doomtp_bot.runtime.values import MISSING, descend, render
+from doomtp_bot.runtime.variables import Space, VarKey, WriteOp, key_for
 
 if TYPE_CHECKING:
     from doomtp_bot.variables.store import SqliteVariableStore
@@ -29,10 +31,6 @@ USAGE = (
 _NS_LONGEST_FIRST = sorted(VAR_NAMESPACES, key=len, reverse=True)
 
 
-class _Usage(Exception):
-    pass
-
-
 def parse_ref(token: str, *, allow_path: bool = False) -> tuple[str, str, tuple[str, ...]]:
     """'channel.chatter.points.best' → ('channel.chatter', 'points', ('best',))."""
     for ns in _NS_LONGEST_FIRST:
@@ -41,7 +39,7 @@ def parse_ref(token: str, *, allow_path: bool = False) -> tuple[str, str, tuple[
             if not name or (path and not allow_path):
                 break
             return ns, name, tuple(path)
-    raise _Usage(f"expected a variable like channel.deaths or chatter.location, got {token}")
+    raise CommandError(f"expected a variable like channel.deaths or chatter.location, got {token}")
 
 
 def parse_value(raw: str) -> Any:
@@ -57,37 +55,16 @@ def parse_value(raw: str) -> Any:
     return raw
 
 
-async def _target_user(ctx: CommandContext, raw: str) -> dict[str, Any]:
-    try:
-        return await convert(raw, "user", resolve_user=ctx.exec.resolve_user)  # type: ignore[no-any-return]
-    except ConversionError as exc:
-        raise _Usage(str(exc)) from exc
-
-
 def _key_for_user(ctx: CommandContext, ns: str, name: str, user_id: str) -> VarKey:
-    key = key_for(ctx.exec, ns, name)
-    column = {
-        "chatter": "key1",
-        "channel.chatter": "key2",
-        "publisher.chatter": "key2",
-        "publisher.channel.chatter": "key3",
-    }.get(ns)
+    column = CHATTER_KEY.get(ns)
     if column is None:
-        raise _Usage(f"{ns} has no per-user values")
-    return VarKey(**{**{f: getattr(key, f) for f in ("ns", "key1", "key2", "key3", "name")}, column: user_id})
-
-
-def _rank(ctx: CommandContext) -> int:
-    return ctx.invoker.rank if ctx.invoker else 0
+        raise CommandError(f"{ns} has no per-user values")
+    return dataclasses.replace(key_for(ctx.exec, ns, name), **{column: user_id})
 
 
 def _var_admin(ctx: CommandContext) -> bool:
     policy = ctx.exec.services.get("policy")
-    if policy is None:
-        return False
-    settings = policy.channel_settings(ctx.channel.id)
-    required = policy.rank_of(ctx.channel.id, settings.var_admin_role if settings else "moderator")
-    return required is not None and _rank(ctx) >= required
+    return policy is not None and bool(policy.reaches_setting_role(ctx.exec, "var_admin_role"))
 
 
 def _store(ctx: CommandContext) -> SqliteVariableStore:
@@ -111,27 +88,22 @@ def _store(ctx: CommandContext) -> SqliteVariableStore:
     )
 )
 async def var_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    try:
-        return await _var(ctx, list(args.values))
-    except _Usage as exc:
-        return Result.failure(Code.USAGE, str(exc))
-    except VariableError as exc:
-        return exc.result()
+    return await _var(ctx, list(args.values))
 
 
 async def _var(ctx: CommandContext, v: list[str]) -> Result:
     if not v:
-        raise _Usage(f"usage: {USAGE}")
+        raise CommandError(f"usage: {USAGE}")
     action = v[0].lower()
     access = ctx.exec.variables.access
 
     if action == "list":
         if len(v) < 2 or v[1] not in VAR_NAMESPACES:
-            raise _Usage("usage: var list <" + "|".join(VAR_NAMESPACES) + "> [user]")
+            raise CommandError("usage: var list <" + "|".join(VAR_NAMESPACES) + "> [user]")
         ns = v[1]
         probe = key_for(ctx.exec, ns, "probe")
         if len(v) > 2:
-            user = await _target_user(ctx, v[2])
+            user = await user_arg(ctx, v[2])
             probe = _key_for_user(ctx, ns, "probe", user["id"])
         entries = await _store(ctx).entries(Space(probe.ns, probe.key1, probe.key2, probe.key3))
         if not entries:
@@ -142,13 +114,13 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         )
 
     if len(v) < 2:
-        raise _Usage(f"usage: {USAGE}")
+        raise CommandError(f"usage: {USAGE}")
 
     if action == "get":
         ns, name, path = parse_ref(v[1], allow_path=True)
         key = key_for(ctx.exec, ns, name)
         if len(v) > 2:
-            key = _key_for_user(ctx, ns, name, (await _target_user(ctx, v[2]))["id"])
+            key = _key_for_user(ctx, ns, name, (await user_arg(ctx, v[2]))["id"])
         value = descend(await ctx.variables.get(key), path)
         label = v[1] + (f" ({v[2]})" if len(v) > 2 else "")
         if value is MISSING:
@@ -158,16 +130,16 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
     if action == "top":
         ns, name, _ = parse_ref(v[1])
         if ns not in ("channel.chatter", "publisher.channel.chatter", "publisher.chatter"):
-            raise _Usage(
+            raise CommandError(
                 "top works on channel.chatter.*, publisher.chatter.* and publisher.channel.chatter.* values"
             )
         count = 5
         if len(v) > 2:
             if not v[2].isdigit() or not 1 <= int(v[2]) <= 25:
-                raise _Usage("count must be 1–25")
+                raise CommandError("count must be 1–25")
             count = int(v[2])
         if ctx.invoker is None:
-            raise _Usage("top needs a chatter")
+            raise CommandError("top needs a chatter")
         space_key = key_for(ctx.exec, ns, name)
         rows = await _store(ctx).top(ns, space_key.key1, space_key.key2, name, count)
         resolve_login = ctx.exec.services.get("login_for")
@@ -188,25 +160,25 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         key = key_for(ctx.exec, ns, name)
         if action == "set":
             if len(v) < 3:
-                raise _Usage("usage: var set <ns.name> <value>")
+                raise CommandError("usage: var set <ns.name> <value>")
             new = await ctx.variables.buffer(WriteOp("set", key, parse_value(" ".join(v[2:]))))
         else:
             amount: Any = 1
             if len(v) > 2:
                 amount = parse_value(v[2])
                 if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-                    raise _Usage("amount must be a number")
+                    raise CommandError("amount must be a number")
             new = await ctx.variables.buffer(WriteOp("incr", key, amount))
         return Result.success(f"{ns}.{name} = {render(new)}", new)
 
     if action == "del":
         if len(v) > 2:
-            user = await _target_user(ctx, v[2])
+            user = await user_arg(ctx, v[2])
             key = _key_for_user(ctx, ns, name, user["id"])
             own = ctx.invoker is not None and user["id"] == ctx.invoker.id
             allowed = own and access.can_write(ctx.exec, ns, name)
             if not own:
-                allowed = (ns == "channel.chatter" and _var_admin(ctx)) or _rank(ctx) >= BOT_ADMIN_RANK
+                allowed = (ns == "channel.chatter" and _var_admin(ctx)) or rank(ctx) >= BOT_ADMIN_RANK
             label = f"{ns}.{name} for {user['display']}"
         else:
             key = key_for(ctx.exec, ns, name)
@@ -219,7 +191,7 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         await ctx.variables.buffer(WriteOp("delete", key))
         return Result.success(f"deleted {label}")
 
-    raise _Usage(f"usage: {USAGE}")
+    raise CommandError(f"usage: {USAGE}")
 
 
 COMMANDS: tuple[Command, ...] = (var_cmd,)

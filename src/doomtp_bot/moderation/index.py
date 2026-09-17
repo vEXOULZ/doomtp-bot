@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import time
 from collections import OrderedDict
 from collections.abc import Callable
 
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core.events import ChatCleared, MessageDeleted, UserMessagesCleared
 
 DELETED_TTL_MS = 10 * 60 * 1000
@@ -13,7 +13,7 @@ MAX_DELETED = 20_000
 
 
 class ModerationIndex:
-    def __init__(self, clock_ms: Callable[[], int] = lambda: int(time.time() * 1000)) -> None:
+    def __init__(self, clock_ms: Callable[[], int] = now_ms) -> None:
         self._clock_ms = clock_ms
         self._deleted: OrderedDict[str, int] = OrderedDict()  # message_id → recorded at
         self._user_clears: dict[tuple[str, str], int] = {}  # (channel, user) → latest clear time
@@ -29,6 +29,7 @@ class ModerationIndex:
             case UserMessagesCleared(channel_id=channel, target_user_id=user, at=at):
                 key = (channel, user)
                 self._user_clears[key] = max(self._user_clears.get(key, 0), at)
+                self._prune_clears(now)
             case ChatCleared(channel_id=channel, at=at):
                 self._chat_clears[channel] = max(self._chat_clears.get(channel, 0), at)
 
@@ -46,6 +47,12 @@ class ModerationIndex:
         self, channel_id: str, message_id: str | None, user_id: str | None, sent_at_ms: int
     ) -> Callable[[], bool]:
         return lambda: self.is_invalidated(channel_id, message_id, user_id, sent_at_ms)
+
+    def _prune_clears(self, now: int) -> None:
+        """Clears only matter to messages still in flight; drop old ones once the map grows."""
+        if len(self._user_clears) > MAX_DELETED:
+            cutoff = now - DELETED_TTL_MS
+            self._user_clears = {k: at for k, at in self._user_clears.items() if at >= cutoff}
 
     def _prune(self, now: int) -> None:
         while self._deleted and (

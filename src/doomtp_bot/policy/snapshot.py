@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-import time
 from dataclasses import dataclass, field
 
 import aiosqlite
 
+from doomtp_bot import clock
 from doomtp_bot.policy.roles import GLOBAL, Role
 from doomtp_bot.runtime.spec import Cooldown
 
@@ -68,7 +69,7 @@ class PolicySnapshot:
         )
 
     def custom_roles_for(self, channel_id: str, user_id: str, now_ms: int | None = None) -> list[Role]:
-        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        now_ms = clock.now_ms() if now_ms is None else now_ms
         found: list[Role] = []
         for m in self.memberships.get(user_id, ()):
             if m.expires_at is not None and m.expires_at <= now_ms:
@@ -153,18 +154,4 @@ async def load_snapshot(conn: aiosqlite.Connection) -> PolicySnapshot:
             ignored.setdefault(r["channel_id"], set()).add(r["user_id"])
     snap.ignored.update({k: frozenset(v) for k, v in ignored.items()})
 
-    # frozen dataclass: rebuild with the scalar field set
-    return PolicySnapshot(
-        channels=snap.channels,
-        roles_by_id=snap.roles_by_id,
-        roles_by_scope=snap.roles_by_scope,
-        memberships=snap.memberships,
-        global_admins=admins,
-        module_toggles=snap.module_toggles,
-        command_toggles=snap.command_toggles,
-        command_log_levels=snap.command_log_levels,
-        command_rules=snap.command_rules,
-        cooldown_rules=snap.cooldown_rules,
-        callbacks=snap.callbacks,
-        ignored=snap.ignored,
-    )
+    return dataclasses.replace(snap, global_admins=admins)

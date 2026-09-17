@@ -6,7 +6,6 @@ import json
 import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -90,8 +89,7 @@ class Harness:
 
 
 @pytest.fixture
-async def h(tmp_path: Path) -> AsyncIterator[Harness]:
-    dbs = await Databases.open(tmp_path / "bot.db", tmp_path / "chatlog.db")
+async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
     store = SqliteVariableStore(dbs.bot)
@@ -105,10 +103,7 @@ async def h(tmp_path: Path) -> AsyncIterator[Harness]:
         resolve_user=resolve_user,
         services={"policy": policy, "variable_store": store, "login_for": login_for},
     )
-    try:
-        yield Harness(dbs, policy, store, access, runtime)
-    finally:
-        await dbs.close()
+    yield Harness(dbs, policy, store, access, runtime)
 
 
 # ── store ──────────────────────────────────────────────────────────────────

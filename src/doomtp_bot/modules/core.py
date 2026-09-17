@@ -75,4 +75,3 @@ async def echo_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
 
 
 COMMANDS: tuple[Command, ...] = (true_cmd, false_cmd, default_cmd, fail_cmd, echo_cmd)
-SENTINEL_NAMES = frozenset(c.spec.name for c in COMMANDS)

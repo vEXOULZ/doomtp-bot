@@ -16,6 +16,14 @@ VAR_NAMESPACES = (
     "publisher.channel.chatter",
 )
 
+# Which VarKey column holds the chatter's user id, for namespaces that have one.
+CHATTER_KEY: dict[str, str] = {
+    "chatter": "key1",
+    "channel.chatter": "key2",
+    "publisher.chatter": "key2",
+    "publisher.channel.chatter": "key3",
+}
+
 # Read-only context fields that shadow variable names (namespaces.md §4).
 RESERVED_FIELDS: dict[str, frozenset[str]] = {
     "chatter": frozenset({"id", "name", "display", "rank", "roles", "is_sub", "is_vip", "is_mod"}),

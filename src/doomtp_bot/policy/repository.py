@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import json
-import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import aiosqlite
 
 from doomtp_bot.audit.log import write_audit
+from doomtp_bot.clock import now_ms
 from doomtp_bot.policy.roles import GLOBAL
-
-
-def now_ms() -> int:
-    return int(time.time() * 1000)
+from doomtp_bot.storage.db import transaction
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,16 +22,6 @@ class Actor:
 class PolicyRepository:
     def __init__(self, conn: aiosqlite.Connection) -> None:
         self.conn = conn
-
-    @asynccontextmanager
-    async def _tx(self) -> AsyncIterator[aiosqlite.Connection]:
-        try:
-            yield self.conn
-        except BaseException:
-            await self.conn.rollback()
-            raise
-        else:
-            await self.conn.commit()
 
     async def _audit(
         self, actor: Actor, action: str, channel_id: str | None, target: str, before: object, after: object
@@ -59,7 +44,7 @@ class PolicyRepository:
     # ── channels ────────────────────────────────────────────────────────────
     async def ensure_channel(self, channel_id: str, login: str, actor: Actor, prefix: str = "!") -> bool:
         """Create the channel row if missing. Returns True if it was created."""
-        async with self._tx():
+        async with transaction(self.conn):
             existing = await self._one("SELECT login FROM channels WHERE channel_id = ?", (channel_id,))
             ts = now_ms()
             if existing is not None:
@@ -84,7 +69,7 @@ class PolicyRepository:
         }  # fmt: skip
         if column not in allowed:
             raise ValueError(f"unknown channel setting {column}")
-        async with self._tx():
+        async with transaction(self.conn):
             before = await self._one(
                 f"SELECT {column} AS v FROM channels WHERE channel_id = ?", (channel_id,)
             )
@@ -103,7 +88,7 @@ class PolicyRepository:
 
     # ── roles ───────────────────────────────────────────────────────────────
     async def create_role(self, channel_id: str, name: str, rank: int, actor: Actor) -> int:
-        async with self._tx():
+        async with transaction(self.conn):
             cur = await self.conn.execute(
                 "INSERT INTO roles (channel_id, name, rank, builtin, created_by, created_at) VALUES (?, ?, ?, 0, ?, ?)",
                 (channel_id, name, rank, actor.user_id, now_ms()),
@@ -112,7 +97,7 @@ class PolicyRepository:
             return int(cur.lastrowid or 0)
 
     async def delete_role(self, role_id: int, actor: Actor) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             row = await self._one(
                 "SELECT channel_id, name, rank FROM roles WHERE id = ? AND builtin = 0", (role_id,)
             )
@@ -133,7 +118,7 @@ class PolicyRepository:
         expires_at: int | None,
         actor: Actor,
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO role_members (role_id, user_id, user_login, granted_by, granted_at, expires_at)"
                 " VALUES (?, ?, ?, ?, ?, ?)"
@@ -153,7 +138,7 @@ class PolicyRepository:
     async def remove_member(
         self, role_id: int, channel_id: str, role_name: str, user_id: str, actor: Actor
     ) -> bool:
-        async with self._tx():
+        async with transaction(self.conn):
             cur = await self.conn.execute(
                 "DELETE FROM role_members WHERE role_id = ? AND user_id = ?", (role_id, user_id)
             )
@@ -170,15 +155,8 @@ class PolicyRepository:
         ) as cur:
             return [(r["user_id"], r["user_login"], r["expires_at"]) for r in await cur.fetchall()]
 
-    async def purge_expired_members(self) -> int:
-        async with self._tx():
-            cur = await self.conn.execute(
-                "DELETE FROM role_members WHERE expires_at IS NOT NULL AND expires_at <= ?", (now_ms(),)
-            )
-            return cur.rowcount or 0
-
     async def set_global_admin(self, user_id: str, user_login: str, enabled: bool, actor: Actor) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             if enabled:
                 await self.conn.execute(
                     "INSERT OR REPLACE INTO global_admins (user_id, user_login, granted_by, granted_at) VALUES (?, ?, ?, ?)",
@@ -199,7 +177,7 @@ class PolicyRepository:
     async def set_module_toggle(
         self, channel_id: str, module: str, enabled: bool | None, actor: Actor
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             if enabled is None:
                 await self.conn.execute(
                     "DELETE FROM module_toggles WHERE channel_id = ? AND module = ?", (channel_id, module)
@@ -221,7 +199,7 @@ class PolicyRepository:
         log_level: str | None = None,
         clear_enabled: bool = False,
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             row = await self._one(
                 "SELECT enabled, log_level FROM command_toggles WHERE channel_id = ? AND command = ?",
                 (channel_id, command),
@@ -258,7 +236,7 @@ class PolicyRepository:
         allowed_roles: list[str] | None,
         actor: Actor,
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             if required_role is None and allowed_roles is None:
                 await self.conn.execute(
                     "DELETE FROM command_rules WHERE channel_id = ? AND command = ?", (channel_id, command)
@@ -285,7 +263,7 @@ class PolicyRepository:
     async def set_cooldown(
         self, channel_id: str, command: str, role: str, tier_s: int | None, user_s: int | None, actor: Actor
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             if tier_s is None or user_s is None:
                 await self.conn.execute(
                     "DELETE FROM cooldown_rules WHERE channel_id = ? AND command = ? AND role = ?",
@@ -308,7 +286,7 @@ class PolicyRepository:
     async def set_callback(
         self, channel_id: str, scope: str, kind: str, expr: str | None, syntax_version: str, actor: Actor
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             if expr is None:
                 await self.conn.execute(
                     "DELETE FROM callbacks WHERE channel_id = ? AND scope = ? AND kind = ?",
@@ -331,7 +309,7 @@ class PolicyRepository:
         actor: Actor,
         reason: str | None = None,
     ) -> None:
-        async with self._tx():
+        async with transaction(self.conn):
             if ignored:
                 await self.conn.execute(
                     "INSERT OR REPLACE INTO ignore_list (channel_id, user_id, user_login, reason, added_by, added_at)"

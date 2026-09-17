@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -21,7 +21,6 @@ from doomtp_bot.policy.roles import (
     BOT_OWNER_RANK,
     BUILTIN_RANKS,
     GLOBAL,
-    MODERATOR_RANK,
     Role,
     roles_from_badges,
 )
@@ -37,6 +36,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 CALLBACK_RATE_LIMIT_S = 30.0
+CALLBACK_PRUNE_AT = 10_000
 
 
 class PolicyService:
@@ -45,12 +45,10 @@ class PolicyService:
         conn: aiosqlite.Connection,
         *,
         bot_owner_ids: frozenset[str] = frozenset(),
-        module_defaults: Mapping[str, bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.repo = PolicyRepository(conn)
         self.owners = bot_owner_ids
-        self.module_defaults = dict(module_defaults or {})
         self.cooldowns = CooldownTracker(clock)
         self.snapshot = PolicySnapshot()
         self._clock = clock
@@ -146,7 +144,7 @@ class PolicyService:
             return toggles[(channel_id, module)]
         if (GLOBAL, module) in toggles:
             return toggles[(GLOBAL, module)]
-        return self.module_defaults.get(module, True)
+        return True
 
     def log_level(self, channel_id: str, spec: CommandSpec) -> LogLevel:
         levels = self.snapshot.command_log_levels
@@ -185,12 +183,17 @@ class PolicyService:
         )
 
     # ── cooldowns (ADR-0006 §2) ─────────────────────────────────────────────
-    def cooldown_rule(self, ctx: ExecContext, spec: CommandSpec) -> tuple[str, Cooldown] | None:
-        """The rule of the highest-ranked role that has a rule and that the caller's rank reaches."""
-        channel_id = ctx.channel.id
+    def cooldown_rules(self, channel_id: str, spec: CommandSpec) -> dict[str, Cooldown]:
+        """Configured cooldowns per role: spec defaults, then global rules, then this channel's rules."""
         merged: dict[str, Cooldown] = dict(spec.default_cooldowns)
         merged.update(self.snapshot.cooldown_rules.get((GLOBAL, spec.name), {}))
         merged.update(self.snapshot.cooldown_rules.get((channel_id, spec.name), {}))
+        return merged
+
+    def cooldown_rule(self, ctx: ExecContext, spec: CommandSpec) -> tuple[str, Cooldown] | None:
+        """The rule of the highest-ranked role that has a rule and that the caller's rank reaches."""
+        channel_id = ctx.channel.id
+        merged = self.cooldown_rules(channel_id, spec)
         merged.setdefault("moderator", Cooldown(0, 0))
         rank = self.effective_rank(ctx)
         candidates = sorted(
@@ -218,7 +221,8 @@ class PolicyService:
         return self.cooldowns.state(ctx.channel.id, self._cooldown_key(ctx, spec), tier, user_id)
 
     # ── runtime.policy.Policy ───────────────────────────────────────────────
-    def check(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+    def _gate(self, ctx: ExecContext, spec: CommandSpec) -> Decision | None:
+        """Toggles, capabilities and permission: everything but cooldowns. None means allowed."""
         if not self.is_enabled(ctx.channel.id, spec):
             return Decision(False, Code.UNKNOWN, "disabled", {"command": spec.name})
         missing = set(spec.requires) - set(ctx.channel.capabilities)
@@ -226,7 +230,10 @@ class PolicyService:
             return Decision(
                 False, Code.UNKNOWN, "unavailable", {"command": spec.name, "missing": sorted(missing)}
             )
-        denied = self.permission(ctx, spec)
+        return self.permission(ctx, spec)
+
+    def check(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+        denied = self._gate(ctx, spec)
         if denied is not None:
             return denied
         state = self.cooldown_state(ctx, spec)
@@ -245,9 +252,7 @@ class PolicyService:
         return Decision.allow()
 
     def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
-        if not self.is_enabled(ctx.channel.id, spec) or set(spec.requires) - set(ctx.channel.capabilities):
-            return False
-        return self.permission(ctx, spec) is None
+        return self._gate(ctx, spec) is None
 
     def commit_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> None:
         found = self.cooldown_rule(ctx, spec)
@@ -271,14 +276,11 @@ class PolicyService:
             )
             if s
         ]
-        expr = None
-        for channel in (ctx.channel.id, GLOBAL):
-            for scope in scopes:
-                expr = self.snapshot.callbacks.get((channel, scope, kind))
-                if expr:
-                    break
-            if expr:
-                break
+        callbacks = self.snapshot.callbacks
+        expr = next(
+            (e for ch in (ctx.channel.id, GLOBAL) for s in scopes if (e := callbacks.get((ch, s, kind)))),
+            None,
+        )
         if not expr:
             return None
         user = ctx.invoker.id if ctx.invoker else ""
@@ -286,9 +288,16 @@ class PolicyService:
         now = self._clock()
         if now - self._callback_sent.get(key, -CALLBACK_RATE_LIMIT_S) < CALLBACK_RATE_LIMIT_S:
             return None
+        if len(self._callback_sent) >= CALLBACK_PRUNE_AT:
+            self._callback_sent = {
+                k: t for k, t in self._callback_sent.items() if now - t < CALLBACK_RATE_LIMIT_S
+            }
         self._callback_sent[key] = now
         return expr
 
-    @staticmethod
-    def is_moderator(chatter: Chatter | None) -> bool:
-        return chatter is not None and chatter.rank >= MODERATOR_RANK
+    def reaches_setting_role(self, ctx: ExecContext, setting: str) -> bool:
+        """Does the caller's rank reach the role named by a channel setting (e.g. var_admin_role)?"""
+        settings = self.channel_settings(ctx.channel.id)
+        role = getattr(settings, setting) if settings else "moderator"
+        required = self.rank_of(ctx.channel.id, role)
+        return required is not None and self.effective_rank(ctx) >= required

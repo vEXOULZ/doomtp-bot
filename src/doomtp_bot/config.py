@@ -46,10 +46,6 @@ class Settings(BaseSettings):
         return None
 
     @property
-    def twitch_configured(self) -> bool:
-        return bool(self.twitch_client_id and self.client_secret())
-
-    @property
     def bot_db_path(self) -> Path:
         return self.data_dir / "bot.db"
 

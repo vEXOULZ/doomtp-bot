@@ -15,6 +15,15 @@ MAX_DATA_BYTES = 4096
 MAX_MESSAGE_CHARS = 2000
 
 
+def to_json(value: object) -> str:
+    """Compact JSON used for every stored or size-checked value."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def json_size(value: object) -> int:
+    return len(to_json(value).encode("utf-8"))
+
+
 class Code(enum.IntEnum):
     OK = 0
     FAIL = 1
@@ -26,10 +35,6 @@ class Code(enum.IntEnum):
     UNKNOWN = 127
     COOLDOWN = 128
     CANCELLED = 130
-
-
-# Codes whose final Result is never sent to chat (spec §6.6).
-SILENT_CODES = frozenset({Code.DENIED, Code.COOLDOWN, Code.CANCELLED})
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +54,7 @@ class Result:
         return self.code == Code.OK
 
     def data_size(self) -> int:
-        return len(json.dumps(self.data, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        return json_size(self.data)
 
     @classmethod
     def success(cls, message: str | None = None, data: Value = None) -> Result:
@@ -60,3 +65,15 @@ class Result:
         if code == Code.OK:
             raise ValueError("failure() requires a non-zero code")
         return cls(code, message, data)
+
+
+class CommandError(Exception):
+    """Raised by a handler (or runtime helper) to end the command with a failure Result."""
+
+    def __init__(self, message: str, code: int = Code.USAGE) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+    def result(self) -> Result:
+        return Result.failure(self.code, self.message)
