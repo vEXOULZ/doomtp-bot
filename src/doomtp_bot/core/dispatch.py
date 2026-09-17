@@ -16,7 +16,7 @@ from doomtp_bot.core.events import (
     UserMessagesCleared,
 )
 from doomtp_bot.lang.ast import invocations
-from doomtp_bot.lang.parser import looks_like_command
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, looks_like_command
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.spec import LogLevel
 
@@ -88,7 +88,7 @@ class Dispatcher:
         if not self.channels.is_active(msg.channel_id):
             return
         settings = self.policy.channel_settings(msg.channel_id)
-        prefix = settings.prefix if settings else "!"
+        prefix = settings.prefix if settings else DEFAULT_PREFIX
         is_command = looks_like_command(msg.text, prefix, msg.reply_mentions)
         if settings is None or settings.log_enabled:
             await self.writer.message(

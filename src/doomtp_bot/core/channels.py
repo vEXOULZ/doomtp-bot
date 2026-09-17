@@ -6,6 +6,7 @@ from typing import Protocol
 
 import structlog
 
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.repository import Actor, PolicyRepository
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
@@ -40,7 +41,7 @@ class ChannelManager:
         subscriber: Subscriber | None,
         sessions: SessionLog,
         *,
-        default_prefix: str = "!",
+        default_prefix: str = DEFAULT_PREFIX,
     ) -> None:
         self.policy = policy
         self.subscriber = subscriber

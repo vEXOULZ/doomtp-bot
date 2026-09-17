@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 import aiosqlite
 
 from doomtp_bot import clock
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import GLOBAL, Role
 from doomtp_bot.runtime.spec import Cooldown
 
@@ -21,7 +22,7 @@ class ChannelSettings:
     status: str = "joined"
     tier: str = "basic"
     capabilities: frozenset[str] = frozenset()
-    prefix: str = "!"
+    prefix: str = DEFAULT_PREFIX
     reply_hold_ms: int = 0
     log_enabled: bool = True
     history_backfill: bool = False

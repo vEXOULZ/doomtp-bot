@@ -14,6 +14,7 @@ from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
@@ -117,7 +118,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
         resolve_user=twitch.resolve_user,
         services={"policy": policy, "twitch": twitch},
     )
-    channels = ChannelManager(policy, twitch, writer)
+    channels = ChannelManager(policy, twitch, writer, default_prefix="!")  # emoji default: see below
     runtime.services["channels"] = channels
     moderation = ModerationIndex()
     outbox = Outbox(twitch, writer)
@@ -241,3 +242,16 @@ async def test_sent_reply_links_to_its_command_run(h: Harness) -> None:
     runs = await h.rows("SELECT run_ref FROM command_runs")
     sent = await h.rows("SELECT run_ref FROM outbound_msgs")
     assert runs == sent and runs[0][0]
+
+
+async def test_default_emoji_prefix_with_or_without_a_space(h: Harness) -> None:
+    """The shipped default sign is 🏜, and `🏜 ping` is as valid as `🏜ping` (spec §2.1)."""
+    await h.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "prefix", DEFAULT_PREFIX, Actor(None, "system"))
+    )
+    await h.say("alice", f"{DEFAULT_PREFIX}echo a")
+    await h.say("alice", f"{DEFAULT_PREFIX} echo b")
+    await h.say("alice", f"{DEFAULT_PREFIX}️ echo c")  # client sent the emoji-presentation form
+    await h.say("alice", "!echo d")  # the old sign is ordinary chat now
+    await h.settle()
+    assert [text for _, text, _ in h.twitch.sent] == ["a", "b", "c"]

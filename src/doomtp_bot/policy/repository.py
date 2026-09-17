@@ -9,6 +9,7 @@ import aiosqlite
 
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.storage.db import transaction
 
@@ -42,7 +43,9 @@ class PolicyRepository:
             return await cur.fetchone()
 
     # ── channels ────────────────────────────────────────────────────────────
-    async def ensure_channel(self, channel_id: str, login: str, actor: Actor, prefix: str = "!") -> bool:
+    async def ensure_channel(
+        self, channel_id: str, login: str, actor: Actor, prefix: str = DEFAULT_PREFIX
+    ) -> bool:
         """Create the channel row if missing. Returns True if it was created."""
         async with transaction(self.conn):
             existing = await self._one("SELECT login FROM channels WHERE channel_id = ?", (channel_id,))

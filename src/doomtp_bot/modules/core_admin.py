@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import Context, parse
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse
 from doomtp_bot.modules._common import actor, command_spec, rank, user_arg
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
@@ -432,7 +432,7 @@ async def _callback(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 def _make(name: str, summary: str, usage: str, fn: Any, required_role: str = "moderator") -> Command:
-    example = Example("!" + usage.split(" |")[0], "")
+    example = Example(DEFAULT_PREFIX + usage.split(" |")[0], "")
     return command(_spec(name, summary, usage, required_role, examples=(example,)))(fn)
 
 

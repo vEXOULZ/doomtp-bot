@@ -29,8 +29,8 @@ def raw_tail_from(name: str, lead: Sequence[str]) -> int | RawTail:
     return RawTail.NONE
 
 
-PARAMS = ParserParams(
-    raw_tail_from=raw_tail_from, reserved_var_names=lambda ns, n: n in {"chatter", "channel"}
+PARAMS = ParserParams(  # the ASCII prefix; the emoji default gets its own tests below
+    prefix="!", raw_tail_from=raw_tail_from, reserved_var_names=lambda ns, n: n in {"chatter", "channel"}
 )
 
 

@@ -151,3 +151,24 @@ cases:
   - id: C.12-unbalanced-group
     input: '( !a || !b'
     error: E_UNBALANCED_GROUP
+
+  # ── emoji prefix (spec §2.1: the shipped default, with an optional gap) ──
+  - id: C.13-emoji-prefix
+    prefix: '🏜'
+    input: '🏜ping'
+    ast: 'ping[]'
+
+  - id: C.14-emoji-prefix-gap
+    prefix: '🏜'
+    input: '🏜 random 1-100 | echo {1}'
+    ast: 'Pipe(random["1-100"], echo["{1}"])'
+
+  - id: C.15-emoji-prefix-variation-selector
+    prefix: '🏜'
+    input: "🏜️ echo hi"
+    ast: 'echo["hi"]'
+
+  - id: C.16-ascii-prefix-has-no-gap
+    input: '! random'
+    not_command: true
+

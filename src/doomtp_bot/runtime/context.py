@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.lang.parser import Context
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context
 from doomtp_bot.runtime.values import UserResolver
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ class ChannelInfo:
     id: str
     login: str
     display: str = ""
-    prefix: str = "!"
+    prefix: str = DEFAULT_PREFIX
     timezone: str = "UTC"
     live: bool = False
     title: str = ""

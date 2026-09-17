@@ -8,6 +8,8 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -27,7 +29,7 @@ class Settings(BaseSettings):
     web_port: int = 8080
     public_base_url: str = "http://localhost:8080"
 
-    default_prefix: str = "!"
+    default_prefix: str = DEFAULT_PREFIX
     history_provider_url: str = "https://recent-messages.robotty.de/api/v2"
 
     log_level: str = "INFO"

@@ -1,9 +1,9 @@
-Line        ::= Prefix Expr
+Line        ::= Prefix Gap? Expr
 Expr        ::= Pipeline ( ( '&&' | '||' ) Pipeline )*
 Pipeline    ::= Stage ( '|' Stage )*
 Stage       ::= ( Group | Invocation ) ( ( '>' | '>>' ) VarRef )?
 Group       ::= '(' Expr ')'
-Invocation  ::= Prefix? '@'? Name Argument*
+Invocation  ::= Prefix? Gap? '@'? Name Argument*
 Argument    ::= ( Text | Quoted | Escape | Placeholder )+
 Quoted      ::= '"' ( [^"\{] | Escape | Placeholder )* '"'
 Escape      ::= '\' Char
@@ -16,4 +16,5 @@ Type        ::= 'str' | 'int' | 'float' | 'bool' | 'range' | 'duration' | 'user'
               | 'choice(' Item ( ',' Item )* ')'
 VarRef      ::= ( 'chatter' | 'channel' | 'channel.chatter' | 'publisher' | 'publisher.chatter'
               | 'publisher.channel' | 'publisher.channel.chatter' ) '.' VarName
+Gap         ::= WS            /* only after a non-ASCII (emoji) prefix */
 Name        ::= [a-z0-9] [a-z0-9_-]*

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import random
 from collections.abc import AsyncIterator
@@ -67,6 +68,7 @@ class Harness:
 
     def ctx(self, who: str | None, context: Context = Context.LINE, **kw: Any) -> ExecContext:
         channel = self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN)
+        channel = dataclasses.replace(channel, prefix="!")  # these tests type the ASCII sign
         return self.runtime.make_context(
             channel=channel,
             invoker=self.chatter(who) if who else None,

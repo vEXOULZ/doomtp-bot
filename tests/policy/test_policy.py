@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import random
 import time
 from collections.abc import AsyncIterator
@@ -10,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
@@ -74,6 +76,8 @@ class Harness:
 
     async def say(self, who: str, text: str, **ctx_kwargs: Any) -> RunReport | None:
         channel = self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN, **ctx_kwargs.pop("live", {}))
+        if channel.prefix == DEFAULT_PREFIX:  # these tests type the ASCII sign, unless one was set
+            channel = dataclasses.replace(channel, prefix="!")
         ctx = self.runtime.make_context(
             channel=channel, invoker=self.chatter(who), rng=random.Random(1), **ctx_kwargs
         )

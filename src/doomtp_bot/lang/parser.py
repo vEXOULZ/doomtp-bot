@@ -35,6 +35,10 @@ MAX_EXPR_CHARS = 2000
 MAX_PLACEHOLDER_NESTING = 4
 MAX_NAME_CHARS = 32
 MAX_VAR_NAME_CHARS = 32
+DEFAULT_PREFIX = (
+    "\U0001f3dc"  # \ud83c\udfdc \u2014 the default command sign; channels change it with `prefix`
+)
+VARIATION_SELECTOR = "\ufe0f"  # emoji presentation selector, optional around an emoji prefix
 
 REGISTERED_ROOTS = frozenset(
     {
@@ -111,11 +115,42 @@ def _no_reserved_vars(namespace: str, name: str) -> bool:
 class ParserParams:
     """Runtime parameters for one parse call (spec §C.6)."""
 
-    prefix: str = "!"
+    prefix: str = DEFAULT_PREFIX
     raw_tail_from: RawTailFn = _no_raw_tail
     registered_roots: frozenset[str] = field(default_factory=lambda: REGISTERED_ROOTS)
     reserved_var_names: Callable[[str, str], bool] = _no_reserved_vars
     max_placeholder_nesting: int = MAX_PLACEHOLDER_NESTING
+
+
+class _Prefixed:
+    """Mixin for the two places that match the channel prefix (LineStart and CmdPrefix)."""
+
+    s: str
+    n: int
+    params: ParserParams
+
+    def after_prefix(self, at: int) -> int | None:
+        """Index just past the prefix at `at` (plus its optional gap), or None if it isn't there.
+
+        U+FE0F is skipped on both sides, so a channel prefix saved as `\U0001f3dc` still matches the
+        emoji-presentation `\U0001f3dc\ufe0f` that many chat clients send, and the other way round.
+        """
+        prefix, i, j = self.params.prefix, at, 0
+        while j < len(prefix):
+            if prefix[j] == VARIATION_SELECTOR:
+                j += 1
+            elif i < self.n and self.s[i] == VARIATION_SELECTOR:
+                i += 1
+            elif i < self.n and self.s[i] == prefix[j]:
+                i, j = i + 1, j + 1
+            else:
+                return None
+        while i < self.n and self.s[i] == VARIATION_SELECTOR:
+            i += 1
+        if allows_gap(prefix):
+            while i < self.n and is_ws(self.s[i]):
+                i += 1
+        return i
 
 
 class NotACommand(Exception):
@@ -128,6 +163,13 @@ def is_ws(ch: str) -> bool:
 
 def _is_name_start(ch: str) -> bool:
     return ch.isascii() and ch.isalnum()
+
+
+def allows_gap(prefix: str) -> bool:
+    """Emoji prefixes may be followed by a space: `\U0001f3dc ping` reads naturally, `! ping` does not
+    (it would turn ordinary chat like "! that was close" into a command)."""
+    stripped = prefix.rstrip(VARIATION_SELECTOR)
+    return bool(stripped) and not stripped[-1].isascii()
 
 
 def _is_name_char(ch: str) -> bool:
@@ -197,7 +239,7 @@ def parse(text: str, context: Context, params: ParserParams) -> Node:
     return _number_invocations(parser.line_body())
 
 
-class _Parser:
+class _Parser(_Prefixed):
     def __init__(self, text: str, params: ParserParams) -> None:
         self.s = text
         self.n = len(text)
@@ -243,19 +285,18 @@ class _Parser:
 
     # ── C.2 entry points ────────────────────────────────────────────────────
     def line_start(self) -> bool:
-        """LineStart <- &( (Open WS)* PREFIX '@'? NameStart )"""
+        """LineStart <- &( (Open WS)* PREFIX PrefixGap? '@'? NameStart )"""
         at = 0
         while self.s.startswith("(", at) and at + 1 < self.n and is_ws(self.s[at + 1]):
             at += 1
             while at < self.n and is_ws(self.s[at]):
                 at += 1
-        prefix = self.params.prefix
-        if not self.s.startswith(prefix, at):
+        end = self.after_prefix(at)
+        if end is None:
             return False
-        at += len(prefix)
-        if self.s.startswith("@", at):
-            at += 1
-        return at < self.n and _is_name_start(self.s[at])
+        if self.s.startswith("@", end):
+            end += 1
+        return end < self.n and _is_name_start(self.s[end])
 
     def line_body(self) -> Node:
         """LineBody <- RawTailInvocation _ EOF / Expr End"""
@@ -379,15 +420,13 @@ class _Parser:
 
     # ── C.4 invocations ─────────────────────────────────────────────────────
     def cmd_prefix(self) -> None:
-        """CmdPrefix? <- PREFIX &('@'? NameStart)"""
-        prefix = self.params.prefix
-        if not self.s.startswith(prefix, self.pos):
+        """CmdPrefix? <- PREFIX PrefixGap? &('@'? NameStart)"""
+        end = self.after_prefix(self.pos)
+        if end is None:
             return
-        at = self.pos + len(prefix)
-        if self.s.startswith("@", at):
-            at += 1
+        at = end + 1 if self.s.startswith("@", end) else end
         if at < self.n and _is_name_start(self.s[at]):
-            self.pos += len(prefix)
+            self.pos = end
 
     def name(self) -> str:
         """Name <- NameStart NameChar* &(WSChar / EOF) / &'{' %E_DYNAMIC_NAME / %E_BAD_NAME"""

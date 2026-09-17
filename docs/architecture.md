@@ -37,7 +37,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | F5 | **Permission tiers:** Twitch built-ins (broadcaster, lead mod, mod, VIP, sub), custom roles (e.g. ambassador) at any rank including above moderator, and **global bot owners and bot admins** above everything |
 | F6 | **Cooldowns:** a global cooldown per tier **and** a per-user cooldown. **Both must have expired** for the command to run. Rejections are silent, with an optional **callback** that can customize the response. |
 | F7 | **Toggles** for modules and individual commands, **globally and per channel** |
-| F8 | **Per-channel command prefix** |
+| F8 | **Per-channel command prefix**, defaulting to `🏜`. An emoji prefix may be followed by a space (`🏜 ping`); an ASCII one may not (spec §2.1). |
 | F9 | **Command self-documentation:** every command defines a description, parameters, data outputs and usage examples. Chat `!help` lists only the commands *that user* can run. The REST API lists **all** commands for a docs web page. |
 | F10 | **`!explain <expr>`:** dry run that shows the parse tree, name resolution, and the result of every policy check |
 | F11 | **Custom commands:** users build pipelines, save them under their own alias, **publish** them to channels where they have permission, **link** other users' commands under their own alias, and **republish** them. **Edits propagate instantly.** Linking and publishing replies warn about this. Parameters are documented as `arg.N`. |

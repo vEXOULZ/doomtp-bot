@@ -12,7 +12,7 @@
 - The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY** are used as in RFC 2119.
 - Grammar is written in ISO-style EBNF. `WS` is defined in §2.2.
 - "Implementation" means the doomtp-bot lexer, parser, resolver, preflight and executor.
-- Examples use `!` as the channel prefix.
+- Examples use `!` as the channel prefix. The shipped default is `🏜` (§2.1); every channel can change it.
 - Configurable limits are written as `LIMIT_NAME (default)`. Channels MAY lower limits but MUST NOT raise them above the global configuration.
 
 ## 1. Scope and contexts
@@ -39,11 +39,15 @@ Before lexing a chat message, the implementation MUST apply these steps in order
 1. **Strip invisible padding.** Remove leading and trailing characters in: U+E0000 (the tag character some chat clients append to bypass duplicate-message filters), U+200B–U+200D, U+2060 and U+FEFF. Characters *inside* the text MUST NOT be changed.
 2. **Strip the reply mention.** If the message is a reply (it has reply metadata) and the text begins with `@<parent display name>` or `@<parent login>` (case-insensitive) followed by WS, remove that mention and the whitespace. *(Verified live 2026-09-17: Twitch prefixes replies with the parent's **display name**, e.g. `@vexouLz pong`. Display names can differ from logins beyond case, so both are accepted.)*
 3. **Trim** leading and trailing WS.
-4. **Detect the command.** The text is an expression only if it matches `line_start` (§3.1): the channel prefix immediately followed by a name character, optionally preceded by standalone `(` tokens. Otherwise the message is not a command, and it goes to listeners only.
+4. **Detect the command.** The text is an expression only if it matches `line_start` (§3.1): the channel prefix followed by a name character, optionally preceded by standalone `(` tokens. Otherwise the message is not a command, and it goes to listeners only.
 
 Other Unicode normalization (NFC/NFKC, case folding) MUST NOT be applied to argument text. Command names are case-folded (§2.6).
 
-**The channel prefix** MUST be 1–3 characters, contain no WS, not start with `/` or `.`, and not contain `{`, `}`, `"`, `\`, `|`, `&`, `>`, `(` or `)`. Its **last character MUST NOT be a name character** (`[A-Za-z0-9_@-]`), so the boundary between prefix and name is unambiguous.
+**The channel prefix** MUST be 1–3 characters, contain no WS, not start with `/` or `.`, and not contain `{`, `}`, `"`, `\`, `|`, `&`, `>`, `(` or `)`. Its **last character MUST NOT be a name character** (`[A-Za-z0-9_@-]`), so the boundary between prefix and name is unambiguous. The default prefix is `🏜` (U+1F3DC).
+
+**The prefix gap.** When the prefix's last character is **not ASCII** — an emoji prefix such as `🏜` — WS between the prefix and the name is allowed and ignored: `🏜 ping` and `🏜ping` are the same command. ASCII prefixes do **not** allow the gap, because `! ping` and `! that was close` are indistinguishable in ordinary chat.
+
+**U+FE0F (the emoji presentation selector)** is ignored when matching the prefix, on either side. A prefix saved as `🏜` matches a message that begins with `🏜\uFE0F`, and the other way round, because chat clients differ in which form they send.
 
 ### 2.2 Whitespace
 
@@ -135,7 +139,7 @@ pipeline    = stage , { WS , "|" , WS , stage } ;
 stage       = primary , [ WS , ( ">" | ">>" ) , WS , varref ] ;
 primary     = group | invocation ;
 group       = "(" , WS , expr , WS , ")" ;
-invocation  = [ prefix ] , name , { WS , word } , [ raw_tail ] ;
+invocation  = [ prefix , [ prefix_gap ] ] , name , { WS , word } , [ raw_tail ] ;
 word        = chunk ;                                  (* §2.3, not an operator token *)
 raw_tail    = WS , ? remainder of input, see §3.3 ? ;
 varref      = var_ns , "." , var_name ;
@@ -143,7 +147,8 @@ var_ns      = "chatter" | "channel" | "channel.chatter"
             | "publisher" | "publisher.chatter" | "publisher.channel" | "publisher.channel.chatter" ;
 var_name    = "a".."z" , { "a".."z" | "0".."9" | "_" } ;  (* max 32; not reserved, namespaces.md §5 *)
 
-line_start_check = { "(" , WS } , prefix , name_char_1 ;   (* lookahead only *)
+line_start_check = { "(" , WS } , prefix , [ prefix_gap ] , name_char_1 ;   (* lookahead only *)
+prefix_gap      = WS ;                          (* non-ASCII prefixes only, §2.1 *)
 ```
 
 - The `WS` around operator tokens is implied by the chunking rule (§2.3). The grammar writes it out for clarity.
@@ -579,7 +584,7 @@ The parser golden-test corpus MUST include at least the following cases. `⟨…
 | 14 | `!a > {chatter.name}` | `E_DYNAMIC_VARREF` |
 | 15 | `!explain !random 1-6 \| echo {1}` | `explain` with raw tail `!random 1-6 \| echo {1}` |
 | 16 | `!cc add roll "!random 1-6 \| echo {1}"` | raw tail `!random 1-6 \| echo {1}` (outer quotes removed) |
-| 17 | `! random` | not a command (no name character right after the prefix) |
+| 17 | `! random` | not a command with an ASCII prefix (no name character right after it); with `🏜` as the prefix, `🏜 random` **is** a command (§2.1 prefix gap) |
 | 18 | `@alice !random 1-6` sent as a reply to alice | reply mention stripped → `random⟨1-6⟩` |
 | 19 | `!echo {chatter.location ?? {channel.location ?? Lisbon}}` | nested fallback placeholder |
 | 20 | `!echo {arg.1:choice(a,b) ?? a}` | typed placeholder with a choice type (valid in the Body context only) |
@@ -653,7 +658,7 @@ Body            <- _ LineBody
 LineBody        <- RawTailInvocation _ EOF
                  / Expr End
 
-LineStart       <- &( (Open WS)* PREFIX '@'? NameStart )
+LineStart       <- &( (Open WS)* PREFIX PrefixGap? '@'? NameStart )
 
 End             <- _ EOF
                  / WS Reserved %E_RESERVED_OPERATOR
@@ -712,7 +717,9 @@ RawLeadArg      <- &{ needs_more_lead(n, a) } WS !OperatorToken Word
 RawTail         <- WS r:RawText                       # action: strip one pair of outer quotes (§3.3 rule 3)
 RawText         <- (!EOF .)+
 
-CmdPrefix       <- PREFIX &('@'? NameStart)
+CmdPrefix       <- PREFIX PrefixGap? &('@'? NameStart)
+# PREFIX matching ignores U+FE0F on either side (§2.1). The gap exists only for non-ASCII prefixes.
+PrefixGap       <- &{ prefix_allows_gap() } WS
 Name            <- NameStart NameChar* &(WSChar / EOF)          # action: lowercase; check length ≤ 32
                  / &'{' %E_DYNAMIC_NAME
                  / %E_BAD_NAME
@@ -809,6 +816,7 @@ If the `&{…}` check in the first `VarRef` alternative fails (a reserved or ove
 | Parameter | Source |
 |-----------|--------|
 | `PREFIX` | the channel's prefix (§2.1). Ignored for non-Line contexts except inside `CmdPrefix`. |
+| `prefix_allows_gap()` | true when the prefix's last character (ignoring U+FE0F) is not ASCII (§2.1) |
 | `raw_tail_from(name, lead_args)` | the command registry: built-in specs with `raw_tail_from` |
 | `is_registered_root(ident)` | namespaces.md §1–§5 |
 | `is_reserved_var(ns, name)` | namespaces.md §5 |
@@ -860,12 +868,12 @@ Checks outside the grammar, run before parsing:
 This is a simplified W3C-style EBNF (XML spec notation) for **railroad diagrams** on the public docs page. It leaves out error productions, predicates and raw tails. Appendix C is authoritative.
 
 ```ebnf
-Line        ::= Prefix Expr
+Line        ::= Prefix Gap? Expr
 Expr        ::= Pipeline ( ( '&&' | '||' ) Pipeline )*
 Pipeline    ::= Stage ( '|' Stage )*
 Stage       ::= ( Group | Invocation ) ( ( '>' | '>>' ) VarRef )?
 Group       ::= '(' Expr ')'
-Invocation  ::= Prefix? '@'? Name Argument*
+Invocation  ::= Prefix? Gap? '@'? Name Argument*
 Argument    ::= ( Text | Quoted | Escape | Placeholder )+
 Quoted      ::= '"' ( [^"\{] | Escape | Placeholder )* '"'
 Escape      ::= '\' Char
@@ -878,6 +886,7 @@ Type        ::= 'str' | 'int' | 'float' | 'bool' | 'range' | 'duration' | 'user'
               | 'choice(' Item ( ',' Item )* ')'
 VarRef      ::= ( 'chatter' | 'channel' | 'channel.chatter' | 'publisher' | 'publisher.chatter'
               | 'publisher.channel' | 'publisher.channel.chatter' ) '.' VarName
+Gap         ::= WS            /* only after a non-ASCII (emoji) prefix */
 Name        ::= [a-z0-9] [a-z0-9_-]*
 ```
 
