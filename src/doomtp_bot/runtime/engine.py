@@ -192,6 +192,11 @@ class Runtime:
             ctx.variables.discard()
             report.result = Result.failure(Code.TIMEOUT, "timed out")
         else:
+            if ctx.dry_run:  # !explain --run: nothing it wrote is kept (spec §9)
+                ctx.variables.discard()
+                report.executed = list(scope.executed)
+                await self._settle(report, ctx)
+                return self._finish(report, started)
             try:
                 report.committed = await ctx.variables.commit(ctx)
             except VariableError as exc:

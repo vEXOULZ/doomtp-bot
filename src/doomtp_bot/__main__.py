@@ -200,7 +200,7 @@ async def run(settings: Settings) -> None:
     health.register("chatlog", chatlog_check)
     health.register("twitch", twitch_check)
 
-    app = create_app(health, auth)
+    app = create_app(health, auth, runtime=runtime, policy=policy)
     server = uvicorn.Server(
         uvicorn.Config(app, host=settings.web_host, port=settings.web_port, log_config=None, lifespan="on")
     )

@@ -12,6 +12,7 @@ def builtin_registry() -> CommandRegistry:
         core,
         core_admin,
         customcmds,
+        explain,
         filters,
         help,
         triggers,
@@ -19,6 +20,17 @@ def builtin_registry() -> CommandRegistry:
     )
 
     registry = CommandRegistry()
-    for module in (core, core_admin, channels, help, basic, variables, customcmds, filters, triggers):
+    for module in (
+        core,
+        core_admin,
+        channels,
+        help,
+        basic,
+        variables,
+        customcmds,
+        filters,
+        triggers,
+        explain,
+    ):
         registry.extend(module.COMMANDS)
     return registry

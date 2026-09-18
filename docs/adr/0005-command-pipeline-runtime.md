@@ -108,5 +108,5 @@ Requirement F4 (code, message and data) together with the operator set essential
 2. [x] Write the parser per the normative grammar (spec Appendix C), with a golden corpus (text → AST) including the chat-collision cases.
 3. [x] Build the resolver and preflight with static placeholder checks. *(built-ins only; publication and personal lookups arrive with ADR-0009)*
 4. [x] Build the executor: operator semantics, buffered writes, moderation checkpoints, limits and timeouts.
-5. [ ] Add `!explain` and `POST /api/v1/explain`. *(failures already carry `data.error` identifiers for it)*
-6. [~] Generate `!help` from the specs *(done)*; `GET /api/v1/commands` is still pending.
+5. [x] Add `!explain` and `POST /api/v1/explain`. *(`--run` evaluates with the write buffer discarded and no cooldown commits; the caller sends nothing)*
+6. [x] Generate `!help` and `GET /api/v1/commands` from the specs.

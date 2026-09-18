@@ -73,8 +73,8 @@ async def add(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     return Result.success(str(total), total)
 
 
-@command(CommandSpec(name="explain", module="test", summary="raw tail echo", raw_tail_from=1))
-async def explain(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+@command(CommandSpec(name="rawecho", module="test", summary="raw tail echo", raw_tail_from=1))
+async def rawecho(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     return Result.success(f"raw={args.raw_tail}")
 
 
@@ -89,7 +89,7 @@ async def fakedeny(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.failure(Code.DENIED, "nope")
 
 
-TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, add, explain, cancelme, fakedeny)
+TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, add, rawecho, cancelme, fakedeny)
 
 
 def registry() -> CommandRegistry:

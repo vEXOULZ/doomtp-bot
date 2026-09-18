@@ -1,6 +1,6 @@
 # ADR-0011: One authoritative parser on the server; the web editor highlights only
 
-**Status:** Accepted
+**Status:** Accepted (server side implemented) — 2026-09-18
 **Date:** 2026-09-16
 **Deciders:** Project owner
 

@@ -341,7 +341,7 @@ async def test_not_a_command_returns_none() -> None:
 
 
 async def test_raw_tail_reaches_handler() -> None:
-    r = await run(make_runtime(), "!explain !a | b {c}")
+    r = await run(make_runtime(), "!rawecho !a | b {c}")
     assert r.send == "raw=!a | b {c}"
 
 

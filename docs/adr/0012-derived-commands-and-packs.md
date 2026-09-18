@@ -76,5 +76,5 @@ stand`. Publishing the pack publishes **every member at once**, and unpublishing
 2. [x] Resolution through channel publication → channel pack → global publication → global pack.
 3. [x] `!cc pack create|add|rm|list|info`, `!cc publish pack <name> [global]`, `!cc unpublish pack <name>`.
 4. [x] Pack name becomes the module name, so existing `!module` toggles apply.
-5. [ ] `!explain` and `/api/v1/commands` report which scope a name resolved through.
+5. [x] `!explain` and `/api/v1/commands` report which scope a name resolved through. *(the report carries source, owner and version per invocation)*
 6. [ ] A starter set of derived commands, once the badword filter and `!cc param` docs settle.

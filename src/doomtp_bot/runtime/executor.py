@@ -153,7 +153,8 @@ class Executor:
         except _UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
-            self.policy.commit_cooldown(ctx, spec)
+            if not ctx.dry_run:  # !explain --run must not use up a cooldown (spec §9)
+                self.policy.commit_cooldown(ctx, spec)
             args = Args(values, params, inv.raw_tail)
             cmd_ctx = CommandContext(ctx, inv.index, inv.name, prev)
             try:

@@ -97,6 +97,8 @@ class ExecContext:
         None  # triggers run at a fixed rank instead of the event user's (architecture §7)
     )
     in_callback: bool = False  # callbacks never trigger other callbacks
+    # `!explain --run`: evaluate, but commit no writes, no cooldowns, and send nothing (spec §9).
+    dry_run: bool = False
     services: dict[str, Any] = field(default_factory=dict)  # e.g. "policy", "variables_admin", "twitch"
     is_cancelled: Callable[[], bool] = lambda: False
     rng: random.Random = field(default_factory=random.Random)
