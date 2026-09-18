@@ -62,6 +62,14 @@ def _key_for_user(ctx: CommandContext, ns: str, name: str, user_id: str) -> VarK
     return dataclasses.replace(key_for(ctx.exec, ns, name), **{column: user_id})
 
 
+def _reject_filtered(ctx: CommandContext, text: str) -> None:
+    """Stored text goes through the channel's filter too (architecture §9)."""
+    filters = ctx.exec.services.get("filters")
+    hits = filters.rejects(ctx.channel.id, text) if filters is not None else []
+    if hits:
+        raise CommandError(f"the filter rejects that: {', '.join(hits)}")
+
+
 def _var_admin(ctx: CommandContext) -> bool:
     policy = ctx.exec.services.get("policy")
     return policy is not None and bool(policy.reaches_setting_role(ctx.exec, "var_admin_role"))
@@ -155,6 +163,8 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
     ns, name, _ = parse_ref(v[1])
 
     if action in ("set", "incr"):
+        if action == "set":
+            _reject_filtered(ctx, " ".join(v[2:]))
         if not access.can_write(ctx.exec, ns, name):
             # Raised, not returned: a write denial is the runtime's 126, not a command's own failure code.
             raise CommandError(f"you can't change {ns}.{name}", Code.DENIED)

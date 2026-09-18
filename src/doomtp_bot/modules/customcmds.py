@@ -95,14 +95,21 @@ async def _own(ctx: CommandContext, name: str) -> CustomCommand:
     return found
 
 
-async def _validate_body(ctx: CommandContext, body: str) -> None:
-    """Parse the body the way it will run, so a broken command is never saved (ADR-0009)."""
+async def _validate_body(ctx: CommandContext, body: str, *names: str) -> None:
+    """Parse the body the way it will run, and filter what is about to be stored (ADR-0009, §9)."""
     try:
         _service(ctx).parse_body(body, ctx.channel.prefix)
     except ParseError as exc:
         raise CommandError(str(exc)) from exc
     except CustomCommandError as exc:
         raise CommandError(str(exc)) from exc
+    filters = ctx.exec.services.get("filters")
+    if filters is None:
+        return
+    for text in (body, *names):
+        hits = filters.rejects(ctx.channel.id, text)
+        if hits:
+            raise CommandError(f"the filter rejects that: {', '.join(hits)}")
 
 
 async def _publication_here(ctx: CommandContext, name: str) -> tuple[Publication, CustomCommand]:
@@ -120,7 +127,7 @@ async def _add(ctx: CommandContext, v: list[str], args: Args) -> Result:
     body = args.raw_tail or " ".join(v[2:])
     if not body:
         raise CommandError(f"usage: {USAGE}")
-    await _validate_body(ctx, body)
+    await _validate_body(ctx, body, v[1])
     user_id, login = _invoker(ctx)
     try:
         created = await _service(ctx).create(owner_user_id=user_id, owner_login=login, name=v[1], body=body)

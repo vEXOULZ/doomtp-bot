@@ -22,6 +22,7 @@ from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
+from doomtp_bot.filters.service import FilterService
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
@@ -54,6 +55,8 @@ async def run(settings: Settings) -> None:
     await access.reload()
     customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
     packs = PackService(dbs.bot, customcmds)
+    content_filter = FilterService(dbs.bot)
+    await content_filter.reload()
     writer = ChatLogWriter(dbs.chatlog)
     stale = await writer.close_stale_sessions()
     if stale:
@@ -81,6 +84,7 @@ async def run(settings: Settings) -> None:
         "channels": channels,
         "customcmds": customcmds,
         "packs": packs,
+        "filters": content_filter,
         "variable_access": access,
     }
     if twitch is not None:
@@ -110,7 +114,13 @@ async def run(settings: Settings) -> None:
         settings_ = policy.channel_settings(channel_id)
         return settings_.reply_hold_ms if settings_ else 0
 
-    outbox = Outbox(twitch or _NoSender(), writer, rate_for=rate_for, hold_ms_for=hold_ms_for)
+    outbox = Outbox(
+        twitch or _NoSender(),
+        writer,
+        rate_for=rate_for,
+        hold_ms_for=hold_ms_for,
+        content_filter=content_filter.apply,
+    )
     dispatcher = Dispatcher(
         runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation, channels=channels
     )

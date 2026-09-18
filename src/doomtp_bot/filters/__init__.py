@@ -1,1 +1,1 @@
-"""Badword filter: normalization, matching, mask/replace/tag/block (architecture §9)."""
+"""Badword filter: normalization, matching and the channel lists (architecture §9)."""
