@@ -419,6 +419,8 @@ triggers(id INTEGER PRIMARY KEY, channel_id TEXT, type TEXT,
 - Every trigger passes through the same runtime, including preflight, cooldowns (keyed by trigger), the moderation index (for listeners and redemptions) and the Outbox.
 - Some trigger types need capabilities. Redemptions need the full tier, and follows need moderator status (ADR-0007).
 
+**Built so far:** `!trigger listen <regex> => <expression>`, `!trigger add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, each with `list`, `rm` and `on`/`off`. Listeners and the notification events the basic tier receives (raid, sub, resub, gift sub) run end to end; the other event types are stored with a warning that the bot can't receive them yet. Timers tick every 5s against a per-channel line counter; `only_live` waits on the stream poller (ADR-0007). Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
+
 ---
 
 ## 8. Moderation-aware replies

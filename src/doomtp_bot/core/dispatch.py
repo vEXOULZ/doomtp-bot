@@ -21,12 +21,17 @@ from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.spec import LogLevel
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.channels import ChannelManager
     from doomtp_bot.core.outbox import Outbox
     from doomtp_bot.moderation.index import ModerationIndex
     from doomtp_bot.policy.service import PolicyService
     from doomtp_bot.runtime.engine import RunReport, Runtime
+    from doomtp_bot.triggers.runner import TriggerRunner
+    from doomtp_bot.triggers.service import TriggerService
+    from doomtp_bot.triggers.timers import ChatActivity
 
 log = structlog.get_logger(__name__)
 
@@ -61,6 +66,9 @@ class Dispatcher:
         outbox: Outbox,
         moderation: ModerationIndex,
         channels: ChannelManager,
+        triggers: TriggerService | None = None,
+        trigger_runner: TriggerRunner | None = None,
+        activity: ChatActivity | None = None,
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -69,6 +77,9 @@ class Dispatcher:
         self.outbox = outbox
         self.moderation = moderation
         self.channels = channels
+        self.triggers = triggers
+        self.trigger_runner = trigger_runner
+        self.activity = activity
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -79,6 +90,7 @@ class Dispatcher:
             case ChatNotification():
                 if self.channels.is_active(event.channel_id):
                     await self.writer.notification(event)
+                    self._spawn(self._notification_triggers(event), f"trigger-{event.id}")
             case MessageDeleted() | UserMessagesCleared() | ChatCleared():
                 self.moderation.record(event)
                 if self.channels.is_active(event.channel_id):
@@ -94,15 +106,67 @@ class Dispatcher:
             await self.writer.message(
                 msg, is_command=is_command
             )  # logged first, always — including ignored users
-        if msg.is_self or not is_command:
+        if self.activity is not None and not msg.is_self:
+            self.activity.saw_message(msg.channel_id)
+        if msg.is_self:
             return
         if self.policy.is_ignored(msg.channel_id, msg.user_id) or BOT_BADGE_SET_IDS & {
             b.set_id for b in msg.badges
         }:
             return
-        task = asyncio.create_task(self._run(msg), name=f"run-{msg.message_id}")
+        if not is_command:
+            self._spawn(self._listeners(msg), f"listen-{msg.message_id}")  # architecture §7
+            return
+        self._spawn(self._run(msg), f"run-{msg.message_id}")
+
+    def _spawn(self, work: Coroutine[None, None, None], name: str) -> None:
+        task = asyncio.create_task(work, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _listeners(self, msg: ChatMessage) -> None:
+        """Regex listeners run on ordinary chat lines, cancelled by moderation like any other run."""
+        if self.triggers is None or self.trigger_runner is None:
+            return
+        hits = self.triggers.listeners_matching(msg.channel_id, msg.text)
+        if not hits:
+            return
+        invalidated = self.moderation.checker(msg.channel_id, msg.message_id, msg.user_id, msg.sent_at)
+        async with self._slots:
+            for trigger, fields in hits:
+                await self.trigger_runner.run(
+                    trigger,
+                    channel_login=msg.channel_login,
+                    event={"user": {"id": msg.user_id, "name": msg.user_login}, "message": msg.text},
+                    match=fields,
+                    user=(msg.user_id, msg.user_login, msg.display_name),
+                    input_text=msg.text,
+                    is_cancelled=invalidated,
+                    message_id=msg.message_id,
+                )
+
+    async def _notification_triggers(self, event: ChatNotification) -> None:
+        """Subs, resubs, gift subs, raids and announcements (architecture §7)."""
+        if self.triggers is None or self.trigger_runner is None:
+            return
+        found = self.triggers.event_triggers(event.channel_id, event.type, event.payload)
+        if not found:
+            return
+        settings = self.policy.channel_settings(event.channel_id)
+        user = event.payload.get("user") or {}
+        async with self._slots:
+            for trigger in found:
+                await self.trigger_runner.run(
+                    trigger,
+                    channel_login=settings.login if settings else event.channel_id,
+                    event=event.payload,
+                    user=(
+                        (event.user_id, str(user.get("name", "")), str(user.get("display", "")))
+                        if event.user_id
+                        else None
+                    ),
+                    input_text=str(event.payload.get("message") or ""),
+                )
 
     async def drain(self) -> None:
         """Wait for in-flight command runs (used at shutdown and in tests)."""

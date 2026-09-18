@@ -30,6 +30,9 @@ from doomtp_bot.policy.roles import MODERATOR_RANK
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases, current_version
+from doomtp_bot.triggers.runner import TriggerRunner
+from doomtp_bot.triggers.service import TriggerService
+from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
 from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHttp
 from doomtp_bot.twitch.client import TwitchService
 from doomtp_bot.twitch.tokens import TokenStore
@@ -57,6 +60,9 @@ async def run(settings: Settings) -> None:
     packs = PackService(dbs.bot, customcmds)
     content_filter = FilterService(dbs.bot)
     await content_filter.reload()
+    triggers = TriggerService(dbs.bot)
+    await triggers.reload()
+    activity = ChatActivity()
     writer = ChatLogWriter(dbs.chatlog)
     stale = await writer.close_stale_sessions()
     if stale:
@@ -85,6 +91,7 @@ async def run(settings: Settings) -> None:
         "customcmds": customcmds,
         "packs": packs,
         "filters": content_filter,
+        "triggers": triggers,
         "variable_access": access,
     }
     if twitch is not None:
@@ -121,8 +128,18 @@ async def run(settings: Settings) -> None:
         hold_ms_for=hold_ms_for,
         content_filter=content_filter.apply,
     )
+    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox)
+    timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity)
     dispatcher = Dispatcher(
-        runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation, channels=channels
+        runtime=runtime,
+        policy=policy,
+        writer=writer,
+        outbox=outbox,
+        moderation=moderation,
+        channels=channels,
+        triggers=triggers,
+        trigger_runner=trigger_runner,
+        activity=activity,
     )
 
     async def start_twitch() -> None:
@@ -179,10 +196,12 @@ async def run(settings: Settings) -> None:
         uvicorn.Config(app, host=settings.web_host, port=settings.web_port, log_config=None, lifespan="on")
     )
     log.info("bot.start", version=__version__, api=f"http://{settings.web_host}:{settings.web_port}")
+    timers.start()
     twitch_start = asyncio.create_task(start_twitch())
     try:
         await server.serve()  # uvicorn owns SIGINT/SIGTERM and returns after a graceful shutdown
     finally:
+        await timers.stop()
         twitch_start.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await twitch_start
