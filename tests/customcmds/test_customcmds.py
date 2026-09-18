@@ -32,6 +32,17 @@ USERS = {
 BADGES = {"mod": {"moderator"}}
 
 
+class TickingClock:
+    """Monotonic clock that jumps a minute per read, so per-user cooldowns never block a test."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += 60.0
+        return self.now
+
+
 async def resolve_user(login: str) -> dict[str, Any] | None:
     return next((dict(u) for u in USERS.values() if u["name"] == login.lower()), None)
 
@@ -75,13 +86,13 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot)
+    policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    service = CustomCommandService(dbs.bot)
     store = SqliteVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
+    service = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
     runtime = Runtime(
         builtin_registry(),
         policy=policy,
@@ -89,7 +100,12 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
         access=access,
         resolve_user=resolve_user,
         custom=CustomCommandLoader(service),
-        services={"policy": policy, "variable_store": store},
+        services={
+            "policy": policy,
+            "variable_store": store,
+            "customcmds": service,
+            "variable_access": access,
+        },
     )
     yield Harness(dbs, policy, service, store, access, runtime)
 
@@ -263,3 +279,79 @@ async def test_bodies_are_parsed_in_body_context(h: Harness) -> None:
     assert isinstance(typed.result.data, dict) and typed.result.data["error"] == "E_BAD_REFERENCE"
     assert h.service.parse_body("echo ok", "!") is not None
     assert Context.BODY is Context("body")
+
+
+# ── the !cc chat commands ──────────────────────────────────────────────────
+async def test_cc_add_publish_link_and_run_from_chat(h: Harness) -> None:
+    created = await h.say("alice", "!cc add hype echo {chatter.display} is hyped!")
+    assert created is not None and created.startswith("created !hype (cc_")
+    assert await h.say("alice", "!hype") == "Alice is hyped!"
+
+    # A viewer can't publish; a moderator can, and the reply warns about live edits.
+    denied = await h.run("bob", "!cc publish hype")
+    assert (denied.result.code, denied.send) == (Code.DENIED, None)
+
+    hype = await h.service.by_owner(USERS["alice"]["id"], "hype")
+    assert hype is not None
+    await h.service.link(user_id=USERS["mod"]["id"], alias="hype", command=hype)
+    published = await h.say("mod", "!cc publish hype")
+    assert published is not None and "⚠ @alice can edit or delete it" in published
+    assert await h.say("bob", "!hype") == "Bob is hyped!"
+
+
+async def test_cc_link_warns_and_respects_sharing(h: Harness) -> None:
+    await h.say("alice", "!cc add hi echo hi from {publisher.name}")
+    refused = await h.run("bob", "!cc link @alice hi")
+    assert refused.result.code == Code.USAGE  # not shared yet
+    assert await h.say("alice", "!cc share hi on") is not None
+
+    linked = await h.say("bob", "!cc link @alice hi mine")
+    assert linked is not None and "⚠ @alice can edit or delete it" in linked
+    assert await h.say("bob", "!mine") == "hi from alice"
+    assert await h.say("bob", "!cc unlink mine") == "unlinked mine"
+
+
+async def test_cc_edit_reports_reach_and_rejects_broken_bodies(h: Harness) -> None:
+    await h.say("alice", "!cc add hi echo one")
+    broken = await h.run("alice", "!cc edit hi echo a ; b")
+    assert broken.result.code == Code.USAGE and "E_RESERVED_OPERATOR" in (broken.result.message or "")
+    assert await h.say("alice", "!hi") == "one"  # unchanged
+
+    assert await h.say("alice", "!cc edit hi echo two") == "hi is now v2, live in 1 alias, 0 channels"
+    assert await h.say("alice", "!hi") == "two"
+
+
+async def test_cc_grant_is_moderator_only_and_scoped_to_the_command(h: Harness) -> None:
+    await h.say("alice", "!cc add count echo 1 > channel.deaths")
+    await h.say("alice", "!cc share count on")
+    await h.say("mod", "!cc link @alice count")
+    await h.say("mod", "!cc publish count")
+    assert (await h.run("bob", "!count")).result.code == Code.DENIED
+
+    viewer = await h.run("bob", "!cc grant count channel.deaths")
+    assert viewer.result.code == Code.DENIED
+    granted = await h.say("mod", "!cc grant count channel.deaths")
+    assert granted is not None and "after future edits by @alice" in granted
+    assert (await h.run("bob", "!count")).result.ok
+
+    assert await h.say("mod", "!cc revoke count channel.deaths") == "count can no longer write channel.deaths"
+    assert (await h.run("bob", "!count")).result.code == Code.DENIED
+
+
+async def test_cc_unpublish_revokes_grants(h: Harness) -> None:
+    await h.say("alice", "!cc add count echo 1 > channel.deaths")
+    await h.say("alice", "!cc share count on")
+    await h.say("mod", "!cc link @alice count")
+    await h.say("mod", "!cc publish count")
+    await h.say("mod", "!cc grant count channel.deaths")
+    assert await h.say("mod", "!cc unpublish count") is not None
+
+    await h.say("mod", "!cc publish count")  # same command, published again
+    assert (await h.run("bob", "!count")).result.code == Code.DENIED  # the grant did not come back
+
+
+async def test_cc_list_and_info(h: Harness) -> None:
+    await h.say("alice", "!cc add hi echo hi")
+    assert await h.say("alice", "!cc list") == "yours: hi"
+    info = await h.say("alice", "!cc info hi")
+    assert info is not None and "by @alice, v1" in info and "echo hi" in info

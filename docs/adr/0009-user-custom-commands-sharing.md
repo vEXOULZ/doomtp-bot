@@ -1,6 +1,6 @@
 # ADR-0009: User-owned custom commands — aliases, publishing, linking, live edits
 
-**Status:** Proposed (revision 2)
+**Status:** Accepted, revision 2 (implemented; see Action Items) — 2026-09-18
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -138,8 +138,9 @@ The warnings make the trade-off explicit to users at the moment they accept it.
 
 ## Action Items
 
-1. [ ] Add the migrations and `customcmds/service.py`: create, edit, revert, delete, link, publish, disable, grants, resolve. All audited.
-2. [ ] Add the warning strings (chat, API, UI) and the change-notice tracking.
-3. [ ] Build parameter declaration, validation and generated usage text, shared with built-in specs.
-4. [ ] Preflight and filter at save time. Add a cycle check across custom commands.
+1. [x] Add the migrations and `customcmds/service.py`: create, edit, revert, delete, link, publish, disable, grants, resolve. All audited. *(`0004_custom_commands.sql`; write grants are keyed by command id, so republishing under an old name inherits nothing)*
+2. [~] Warning strings are in the chat replies for link, publish and grant; `!cc info` shows "changed since vN". The API and web UI don't exist yet, and `cc_edit_notice` (a posted notice on first run after an edit) isn't built.
+3. [ ] Parameter declaration (`!cc param`), validation and generated usage text. Today a body takes free arguments through `{arg.*}`; declared params are stored but unused.
+4. [~] Bodies are parsed at save time and expanded in preflight, with depth and cycle checks (`E_CC_DEPTH`, `E_CC_CYCLE`). The badword filter doesn't exist yet, so nothing filters names or bodies.
 5. [ ] Add API endpoints `/api/v1/custom-commands` and `/api/v1/channels/{login}/publications` for the public page.
+6. [ ] `!cc run <id>` to bypass resolution, and `!help` listing the custom commands a caller can run here.

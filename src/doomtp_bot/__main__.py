@@ -19,6 +19,8 @@ from doomtp_bot.core.events import Event
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.core.instance_lock import InstanceLock, InstanceLockError
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.customcmds.resolution import CustomCommandLoader
+from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
@@ -49,6 +51,7 @@ async def run(settings: Settings) -> None:
     store = SqliteVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
+    customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
     writer = ChatLogWriter(dbs.chatlog)
     stale = await writer.close_stale_sessions()
     if stale:
@@ -70,7 +73,13 @@ async def run(settings: Settings) -> None:
         )
 
     channels = ChannelManager(policy, twitch, writer, default_prefix=settings.default_prefix)
-    services: dict[str, object] = {"policy": policy, "variable_store": store, "channels": channels}
+    services: dict[str, object] = {
+        "policy": policy,
+        "variable_store": store,
+        "channels": channels,
+        "customcmds": customcmds,
+        "variable_access": access,
+    }
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for)
     runtime = Runtime(
@@ -80,6 +89,7 @@ async def run(settings: Settings) -> None:
         store=store,
         access=access,
         resolve_user=twitch.resolve_user if twitch else None,
+        custom=CustomCommandLoader(customcmds),
         services=services,
     )
 

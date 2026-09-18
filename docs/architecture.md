@@ -372,7 +372,8 @@ Resolution runs in this order, and the first rule that matches decides:
 - A **link** lets another user add someone's published command to their own personal aliases. They can then **republish** it in channels where they have permission. The original owner stays the owner.
 - **Edits and deletes take effect instantly** everywhere. There's no pinning. The link and publish replies carry a **warning** that the owner can change or remove the command at any time. Mods see a change notice after edits.
 - **Commands always run with the *invoker's* permissions and cooldowns**, for the custom command itself and for every command inside it. Publishing can't be used to escalate privileges.
-- **Name resolution** in a channel: built-in commands, then channel publications, then the caller's personal aliases. `!explain` shows which one won.
+- **Name resolution** in a channel: built-in commands, then channel publications, then the caller's personal aliases. `@name` addresses a personal alias directly. `!explain` shows which one won.
+- **Limits:** a body may nest custom commands `MAX_CC_DEPTH (3)` deep, cycles are rejected, and the 8-invocation limit counts every command after expansion (spec §5.2).
 
 ### Variables, briefly
 

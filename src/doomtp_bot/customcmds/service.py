@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -76,9 +76,17 @@ def new_id() -> str:
 class CustomCommandService:
     """Repository plus rules. Parsed bodies are cached per (command id, version)."""
 
-    def __init__(self, conn: aiosqlite.Connection, *, quota: int = QUOTA_PER_USER) -> None:
+    def __init__(
+        self,
+        conn: aiosqlite.Connection,
+        *,
+        quota: int = QUOTA_PER_USER,
+        on_grants_changed: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self.conn = conn
         self.quota = quota
+        # Grants live in the access policy's in-memory snapshot; deleting rows here has to invalidate it.
+        self.on_grants_changed = on_grants_changed
         self._asts: dict[tuple[str, int, str], Node] = {}  # (command id, version, channel prefix)
 
     # ── parsing ─────────────────────────────────────────────────────────────
@@ -153,12 +161,13 @@ class CustomCommandService:
 
     async def linked_by(self, user_id: str) -> list[tuple[str, CustomCommand]]:
         async with self.conn.execute(
-            f"{self._SELECT} JOIN custom_command_links l ON l.command_id = c.id"
-            " WHERE l.user_id = ? ORDER BY l.alias",
+            f"{self._SELECT.replace('SELECT c.*', 'SELECT l.alias AS link_alias, c.*', 1)}"
+            " JOIN custom_command_links l ON l.command_id = c.id"
+            " WHERE l.user_id = ? AND c.status = 'active' ORDER BY l.alias",
             (user_id,),
         ) as cur:
             rows = await cur.fetchall()
-        return [(r["alias"], self._command(r)) for r in rows]
+        return [(r["link_alias"], self._command(r)) for r in rows]
 
     async def publications_in(self, channel_id: str) -> list[tuple[Publication, CustomCommand]]:
         async with self.conn.execute(
@@ -286,7 +295,11 @@ class CustomCommandService:
                 "UPDATE custom_command_publications SET status = 'orphaned' WHERE command_id = ?",
                 (command.id,),
             )
+            await self.conn.execute(
+                "DELETE FROM publication_write_grants WHERE command_id = ?", (command.id,)
+            )
             await self._audit(actor_via, command.owner_user_id, "cc.delete", command.id, command.name, None)
+        await self._grants_changed()
         return affected
 
     async def set_visibility(
@@ -404,6 +417,7 @@ class CustomCommandService:
             await self._audit(
                 actor_via, actor_user_id, "cc.unpublish", row["command_id"], name, None, channel_id=channel_id
             )
+        await self._grants_changed()
         return str(row["command_id"])
 
     async def touch_run(self, publication: Publication, version: int) -> None:
@@ -417,6 +431,10 @@ class CustomCommandService:
             )
 
     # ── internals ───────────────────────────────────────────────────────────
+    async def _grants_changed(self) -> None:
+        if self.on_grants_changed is not None:
+            await self.on_grants_changed()
+
     async def _add_version(self, command_id: str, version: int, body: str) -> None:
         await self.conn.execute(
             "INSERT INTO custom_command_versions (command_id, version, body, syntax_version, created_at)"

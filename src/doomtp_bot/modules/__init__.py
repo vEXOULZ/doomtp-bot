@@ -6,9 +6,9 @@ from doomtp_bot.runtime.registry import CommandRegistry
 
 
 def builtin_registry() -> CommandRegistry:
-    from doomtp_bot.modules import basic, channels, core, core_admin, help, variables
+    from doomtp_bot.modules import basic, channels, core, core_admin, customcmds, help, variables
 
     registry = CommandRegistry()
-    for module in (core, core_admin, channels, help, basic, variables):
+    for module in (core, core_admin, channels, help, basic, variables, customcmds):
         registry.extend(module.COMMANDS)
     return registry
