@@ -23,6 +23,8 @@ from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
+from doomtp_bot.history.backfill import BackfillService
+from doomtp_bot.history.provider import RecentMessagesProvider
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
@@ -60,6 +62,7 @@ async def run(settings: Settings) -> None:
     packs = PackService(dbs.bot, customcmds)
     content_filter = FilterService(dbs.bot)
     await content_filter.reload()
+    history = RecentMessagesProvider(settings.history_provider_url)
     triggers = TriggerService(dbs.bot)
     await triggers.reload()
     activity = ChatActivity()
@@ -142,6 +145,8 @@ async def run(settings: Settings) -> None:
         activity=activity,
     )
 
+    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
+
     async def start_twitch() -> None:
         if twitch is None:
             return
@@ -149,6 +154,10 @@ async def run(settings: Settings) -> None:
             if await twitch.start() and twitch.bot_id and twitch.bot_login:
                 await channels.ensure_home(twitch.bot_id, twitch.bot_login)
                 await channels.subscribe_all()
+                filled = await backfill.run_all()  # coverage gaps since the last run (ADR-0008)
+                if filled:
+                    log.info("history.startup_backfill", gaps=len(filled))
+                backfill.start_keep_warm()
         except Exception:
             log.exception("twitch.start_failed")
 
@@ -202,6 +211,8 @@ async def run(settings: Settings) -> None:
         await server.serve()  # uvicorn owns SIGINT/SIGTERM and returns after a graceful shutdown
     finally:
         await timers.stop()
+        await backfill.stop()
+        await history.close()
         twitch_start.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await twitch_start

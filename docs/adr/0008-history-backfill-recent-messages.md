@@ -1,6 +1,6 @@
 # ADR-0008: Chat log gap backfill via recent-messages
 
-**Status:** Proposed
+**Status:** Accepted (implemented; see Action Items) — 2026-09-18
 **Date:** 2026-09-16
 **Deciders:** Project owner
 
@@ -81,8 +81,9 @@ A covers the common cases (updates, crashes, short outages) cheaply and even cov
 
 ## Action Items
 
-1. [ ] Add an RFC 2812 IRC parser with golden tests using the lines from the API docs (reordered tags, no trailing `:`).
-2. [ ] Build `RecentMessagesProvider`, the gap detector, `backfill_runs`, and the keep-warm scheduler.
-3. [ ] Add the onboarding consent text, the per-channel toggle and an admin UI indicator for partial gaps.
-4. [ ] Contact the service maintainer about the bot integration and the keep-warm interval.
+1. [x] Add an RFC 2812 IRC parser with golden tests using the lines from the API docs (reordered tags, no trailing `:`).
+2. [x] Build `RecentMessagesProvider`, the gap detector, `backfill_runs`, and the keep-warm scheduler. *(gaps are filled once at startup, after the bot connects)*
+3. [~] The per-channel toggle (`channels.history_backfill`) is respected and partial gaps are recorded with their reason. The onboarding consent text and the admin indicator wait on the web UI.
+4. [ ] Contact the service maintainer about the bot integration and the keep-warm interval. **Do this before enabling backfill for real channels.**
 5. [ ] Add a deploy runbook step: record the session end before stopping the bot, and verify backfill afterwards.
+6. [ ] Re-check gaps after an EventSub reconnect, not only at startup.
