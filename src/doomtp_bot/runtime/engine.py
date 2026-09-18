@@ -60,6 +60,12 @@ class RunReport:
 CommitHook = Callable[[ExecContext, list[WriteOp]], Awaitable[None]]
 
 
+class CustomLoader(Protocol):
+    """Loads custom commands for one expression before preflight runs (ADR-0009)."""
+
+    async def resolver_for(self, ctx: ExecContext, node: Node, base: Resolver) -> Resolver: ...
+
+
 class CallbackProvider(Protocol):
     def callback_expr(
         self, ctx: ExecContext, command: str | None, module: str | None, kind: str
@@ -78,6 +84,7 @@ class Runtime:
         resolve_user: UserResolver | None = None,
         on_commit: CommitHook | None = None,
         callbacks: CallbackProvider | None = None,
+        custom: CustomLoader | None = None,
         services: dict[str, Any] | None = None,
         expr_timeout: float = EXPR_TIMEOUT_S,
         max_invocations: int = MAX_INVOCATIONS,
@@ -90,6 +97,7 @@ class Runtime:
         self.resolve_user = resolve_user
         self.on_commit = on_commit
         self.callbacks = callbacks
+        self.custom = custom
         self.services: dict[str, Any] = {"registry": registry, "runtime": self, **(services or {})}
         self.expr_timeout = expr_timeout
         self.max_invocations = max_invocations
@@ -153,7 +161,10 @@ class Runtime:
             ).send
             return self._finish(report, started)
 
-        pre = preflight(node, ctx, self.resolver, self.policy, ctx.variables.access, self.max_invocations)
+        resolver = self.resolver
+        if self.custom is not None:
+            resolver = await self.custom.resolver_for(ctx, node, resolver)
+        pre = preflight(node, ctx, resolver, self.policy, ctx.variables.access, self.max_invocations)
         if not pre.ok:
             assert pre.result is not None
             report = RunReport(
@@ -168,7 +179,7 @@ class Runtime:
             await self._settle(report, ctx)
             return self._finish(report, started)
 
-        scope = Scope(pre.resolved, scope_args)
+        scope = Scope(pre.resolved, scope_args, pre.bodies)
         report = RunReport(text, Result(), "runtime", ast=node)
         try:
             async with asyncio.timeout(self.expr_timeout):
@@ -202,7 +213,7 @@ class Runtime:
         module = None
         if command:
             resolved = self.resolver.resolve_name(ctx, command)
-            module = resolved.command.spec.module if resolved else None
+            module = resolved.spec.module if resolved else None
         expr = self.callbacks.callback_expr(ctx, command, module, report.callback)
         if not expr:
             return
@@ -249,4 +260,4 @@ class Runtime:
         if match is None:
             return False
         resolved = self.resolver.resolve_name(ctx, match.group(2).lower(), personal=bool(match.group(1)))
-        return resolved is not None and self.policy.is_permitted(ctx, resolved.command.spec)
+        return resolved is not None and self.policy.is_permitted(ctx, resolved.spec)

@@ -129,7 +129,7 @@ class PolicyService:
 
     # ── toggles (ADR-0006 §4) ───────────────────────────────────────────────
     def is_enabled(self, channel_id: str, spec: CommandSpec) -> bool:
-        module, command = spec.module, spec.name
+        module, command = spec.module, spec.key
         if not spec.toggleable:
             return True
         toggles, commands = self.snapshot.module_toggles, self.snapshot.command_toggles
@@ -147,7 +147,7 @@ class PolicyService:
 
     def log_level(self, channel_id: str, spec: CommandSpec) -> LogLevel:
         levels = self.snapshot.command_log_levels
-        level = levels.get((channel_id, spec.name)) or levels.get((GLOBAL, spec.name))
+        level = levels.get((channel_id, spec.key)) or levels.get((GLOBAL, spec.key))
         return LogLevel(level) if level else spec.log_level
 
     # ── permission (ADR-0006 §1) ────────────────────────────────────────────
@@ -158,7 +158,7 @@ class PolicyService:
 
     def required_role(self, channel_id: str, spec: CommandSpec) -> tuple[str, tuple[str, ...] | None]:
         rules = self.snapshot.command_rules
-        rule = rules.get((channel_id, spec.name)) or rules.get((GLOBAL, spec.name))
+        rule = rules.get((channel_id, spec.key)) or rules.get((GLOBAL, spec.key))
         required = rule.required_role if rule and rule.required_role else spec.required_role
         allowed = rule.allowed_roles if rule else None
         return required, allowed
@@ -187,8 +187,8 @@ class PolicyService:
     def cooldown_rules(self, channel_id: str, spec: CommandSpec) -> dict[str, Cooldown]:
         """Configured cooldowns per role: spec defaults, then global rules, then this channel's rules."""
         merged: dict[str, Cooldown] = dict(spec.default_cooldowns)
-        merged.update(self.snapshot.cooldown_rules.get((GLOBAL, spec.name), {}))
-        merged.update(self.snapshot.cooldown_rules.get((channel_id, spec.name), {}))
+        merged.update(self.snapshot.cooldown_rules.get((GLOBAL, spec.key), {}))
+        merged.update(self.snapshot.cooldown_rules.get((channel_id, spec.key), {}))
         return merged
 
     def cooldown_rule(self, ctx: ExecContext, spec: CommandSpec) -> tuple[str, Cooldown] | None:
@@ -213,7 +213,7 @@ class PolicyService:
         return None
 
     def _cooldown_key(self, ctx: ExecContext, spec: CommandSpec) -> str:
-        return f"{spec.name}@{ctx.trigger_id}" if ctx.trigger_id else spec.name
+        return f"{spec.key}@{ctx.trigger_id}" if ctx.trigger_id else spec.key
 
     def cooldown_state(self, ctx: ExecContext, spec: CommandSpec) -> CooldownState | None:
         found = self.cooldown_rule(ctx, spec)

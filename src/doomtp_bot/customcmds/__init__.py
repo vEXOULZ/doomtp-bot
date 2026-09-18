@@ -1,1 +1,1 @@
-"""User-owned custom commands: versions, links, publications, live edits, warnings (ADR-0009)."""
+"""User-owned custom commands: create, edit, share, link, publish (ADR-0009)."""

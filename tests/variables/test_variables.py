@@ -162,7 +162,8 @@ def _actor_ctx(h: Harness, setup: str, who: str = "alice", **kw: Any) -> ExecCon
     if setup == "foreign_link":
         return h.ctx(who, Context.BODY, publisher=Publisher("999", "someone"), **kw)
     if setup == "foreign_pub":
-        return h.ctx(who, Context.BODY, publisher=Publisher("999", "someone", publication="pts"), **kw)
+        pub = Publisher("999", "someone", command_id="cc_1", publication="pts")
+        return h.ctx(who, Context.BODY, publisher=pub, **kw)
     if setup == "trigger":
         return h.ctx(who, Context.TRIGGER, trigger_type="redemption", **kw)
     return h.ctx(who, Context.CALLBACK, **kw)
@@ -182,7 +183,7 @@ async def test_channel_writes_follow_channel_var_write_role(h: Harness) -> None:
 
 
 async def test_publication_grants_are_exact(h: Harness) -> None:
-    # Grants reference a publication (FK), so create a minimal custom command + publication first.
+    # Grants reference the command (FK), so create a minimal custom command + publication first.
     await h.dbs.bot.execute(
         "INSERT INTO custom_commands (id, owner_user_id, name, current_version, created_at, updated_at)"
         " VALUES ('cc_1', '999', 'pts', 1, 0, 0)"
@@ -194,14 +195,35 @@ async def test_publication_grants_are_exact(h: Harness) -> None:
     )
     await h.dbs.bot.commit()
     ctx = _actor_ctx(h, "foreign_pub")
-    await h.access.set_grant(CHANNEL_ID, "pts", "channel.chatter.points", True, "200")
+    await h.access.set_grant(CHANNEL_ID, "cc_1", "channel.chatter.points", True, "200")
     assert h.access.can_write(ctx, "channel.chatter", "points") is True
     assert h.access.can_write(ctx, "channel.chatter", "coins") is False
     assert h.access.can_write(_actor_ctx(h, "foreign_link"), "channel.chatter", "points") is False
     with pytest.raises(ValueError):
-        await h.access.set_grant(CHANNEL_ID, "pts", "channel.*", True, "200")
-    await h.access.set_grant(CHANNEL_ID, "pts", "channel.chatter.points", False, "200")
+        await h.access.set_grant(CHANNEL_ID, "cc_1", "channel.*", True, "200")
+    await h.access.set_grant(CHANNEL_ID, "cc_1", "channel.chatter.points", False, "200")
     assert h.access.can_write(ctx, "channel.chatter", "points") is False
+
+
+async def test_grants_do_not_follow_the_published_name(h: Harness) -> None:
+    """Republishing a different command under the same name starts with no grants (ADR-0009)."""
+    await h.dbs.bot.executescript(
+        """
+        INSERT INTO custom_commands (id, owner_user_id, name, current_version, created_at, updated_at)
+             VALUES ('cc_1', '999', 'pts', 1, 0, 0), ('cc_2', '998', 'pts', 1, 0, 0);
+        INSERT INTO custom_command_publications (channel_id, name, command_id, published_by, created_at)
+             VALUES ('100', 'pts', 'cc_1', '200', 0);
+        """
+    )
+    await h.dbs.bot.commit()
+    await h.access.set_grant(CHANNEL_ID, "cc_1", "channel.chatter.points", True, "200")
+    granted = _actor_ctx(h, "foreign_pub")
+    assert h.access.can_write(granted, "channel.chatter", "points") is True
+
+    other = h.ctx(
+        "alice", Context.BODY, publisher=Publisher("998", "other", command_id="cc_2", publication="pts")
+    )
+    assert h.access.can_write(other, "channel.chatter", "points") is False
 
 
 # ── store operator through the runtime ─────────────────────────────────────

@@ -47,17 +47,19 @@ class VariableAccessPolicy:
     def __init__(self, policy: PolicyService, conn: aiosqlite.Connection) -> None:
         self.policy = policy
         self.conn = conn
-        self._grants: frozenset[tuple[str, str, str]] = frozenset()  # (channel, publication, variable)
+        self._grants: frozenset[tuple[str, str, str]] = frozenset()  # (channel, command id, variable)
 
     async def reload(self) -> None:
         async with self.conn.execute(
-            "SELECT channel_id, publication_name, variable FROM publication_write_grants"
+            "SELECT channel_id, command_id, variable FROM publication_write_grants"
         ) as cur:
             self._grants = frozenset((r[0], r[1], r[2]) for r in await cur.fetchall())
 
     def _has_grant(self, ctx: ExecContext, namespace: str, name: str) -> bool:
-        pub = ctx.publisher.publication if ctx.publisher else None
-        return pub is not None and (ctx.channel.id, pub, f"{namespace}.{name}") in self._grants
+        """Grants are per command, not per published name: republishing something else under the same
+        name starts with no grants (ADR-0009)."""
+        pub = ctx.publisher if ctx.publisher is not None and ctx.publisher.publication else None
+        return pub is not None and (ctx.channel.id, pub.command_id, f"{namespace}.{name}") in self._grants
 
     def can_write(self, ctx: ExecContext, namespace: str, name: str) -> bool:
         actor = actor_of(ctx)
@@ -79,7 +81,7 @@ class VariableAccessPolicy:
 
     # ── grant management (issued by channel mods on publications) ───────────
     async def set_grant(
-        self, channel_id: str, publication: str, variable: str, granted: bool, actor_user_id: str | None
+        self, channel_id: str, command_id: str, variable: str, granted: bool, actor_user_id: str | None
     ) -> None:
         if not GRANTABLE_RE.match(variable):
             raise ValueError("grants name exact channel.x or channel.chatter.x variables (no wildcards)")
@@ -87,13 +89,13 @@ class VariableAccessPolicy:
             if granted:
                 await self.conn.execute(
                     "INSERT OR REPLACE INTO publication_write_grants"
-                    " (channel_id, publication_name, variable, granted_by, granted_at) VALUES (?, ?, ?, ?, ?)",
-                    (channel_id, publication, variable, actor_user_id or "system", now_ms()),
+                    " (channel_id, command_id, variable, granted_by, granted_at) VALUES (?, ?, ?, ?, ?)",
+                    (channel_id, command_id, variable, actor_user_id or "system", now_ms()),
                 )
             else:
                 await self.conn.execute(
-                    "DELETE FROM publication_write_grants WHERE channel_id = ? AND publication_name = ? AND variable = ?",
-                    (channel_id, publication, variable),
+                    "DELETE FROM publication_write_grants WHERE channel_id = ? AND command_id = ? AND variable = ?",
+                    (channel_id, command_id, variable),
                 )
             await write_audit(
                 self.conn,
@@ -101,6 +103,6 @@ class VariableAccessPolicy:
                 actor_user_id=actor_user_id,
                 via="chat",
                 channel_id=channel_id,
-                target=f"{publication}:{variable}",
+                target=f"{command_id}:{variable}",
             )
         await self.reload()

@@ -12,7 +12,8 @@ import structlog
 
 from doomtp_bot import __version__
 from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Part, Pipe, Placeholder, Store, Text
-from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, RunCancelled
+from doomtp_bot.lang.parser import Context
+from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, Publisher, RunCancelled
 from doomtp_bot.runtime.namespaces import FieldPath, VarPath, classify
 from doomtp_bot.runtime.result import MAX_DATA_BYTES, Code, CommandError, Result, error_result
 from doomtp_bot.runtime.values import (
@@ -70,12 +71,27 @@ class ScopeArgs:
         return cls(tuple(values), text, tuple(offsets))
 
 
+def _offsets(values: tuple[str, ...]) -> tuple[int, ...]:
+    """Offsets of each value inside `" ".join(values)`, so `{arg.N+raw}` can slice it."""
+    offsets, at = [], 0
+    for value in values:
+        offsets.append(at)
+        at += len(value) + 1
+    return tuple(offsets)
+
+
 class Scope:
     """One expression scope: numbered results and scope arguments (spec §6.4)."""
 
-    def __init__(self, resolved: dict[int, Resolved], args: ScopeArgs | None = None) -> None:
+    def __init__(
+        self,
+        resolved: dict[int, Resolved],
+        args: ScopeArgs | None = None,
+        bodies: dict[str, dict[int, Resolved]] | None = None,
+    ) -> None:
         self.resolved = resolved
         self.args = args or ScopeArgs()
+        self.bodies = bodies or {}  # resolutions inside each custom command body, by command id
         self.results: dict[int, Result] = {}
         self.executed: list[int] = []
 
@@ -125,8 +141,8 @@ class Executor:
         self, inv: Invocation, ctx: ExecContext, scope: Scope, prev: Result | None, stdin: Result | None
     ) -> Result:
         ctx.ensure_not_cancelled()
-        command = scope.resolved[inv.index].command
-        spec = command.spec
+        resolved = scope.resolved[inv.index]
+        spec = resolved.spec
         try:
             values = tuple([await self.expand(arg, ctx, scope, prev) for arg in inv.args])
             params = await self.bind(spec, values, ctx)
@@ -142,7 +158,11 @@ class Executor:
             cmd_ctx = CommandContext(ctx, inv.index, inv.name, prev)
             try:
                 async with asyncio.timeout(self.stage_timeout):
-                    result = await command.handler(cmd_ctx, args, stdin)
+                    if resolved.custom is not None:
+                        result = await self._run_body(resolved, inv, ctx, scope, values, params, stdin)
+                    else:
+                        assert resolved.handler is not None
+                        result = await resolved.handler(cmd_ctx, args, stdin)
                 # 100–255 are runtime-reserved (spec §6.2); commands must not *return* them. A handler can
                 # still raise CommandError(code=126/128) for a denial the runtime owns.
                 if result.code >= 100:
@@ -162,6 +182,47 @@ class Executor:
             scope.executed.append(inv.index)
         scope.results[inv.index] = result
         return result
+
+    async def _run_body(
+        self,
+        resolved: Resolved,
+        inv: Invocation,
+        ctx: ExecContext,
+        scope: Scope,
+        values: tuple[str, ...],
+        params: dict[str, Any],
+        stdin: Result | None,
+    ) -> Result:
+        """Run a custom command's body in its own scope (ADR-0009).
+
+        The body runs **as the invoker** — every inner command was checked against them in preflight —
+        with the owner as `publisher`, which is what the variable rules key off. Both are restored
+        afterwards, so a nested body can't leak its publisher into the expression around it.
+        """
+        target = resolved.custom
+        assert target is not None
+        body_scope = Scope(
+            scope.bodies.get(target.command_id, {}),
+            ScopeArgs(values, " ".join(values), _offsets(values), params),
+            scope.bodies,
+        )
+        publisher, context = ctx.publisher, ctx.context
+        ctx.publisher, ctx.context = (
+            Publisher(
+                id=target.owner_id,
+                login=target.owner_login,
+                command_id=target.command_id,
+                command_name=target.name,
+                alias=inv.name,
+                version=target.version,
+                publication=target.publication,
+            ),
+            Context.BODY,
+        )
+        try:
+            return await self._eval(target.body, ctx, body_scope, prev=stdin, stdin=stdin)
+        finally:
+            ctx.publisher, ctx.context = publisher, context
 
     # ── §5.3 argument binding ───────────────────────────────────────────────
     async def bind(self, spec: CommandSpec, values: tuple[str, ...], ctx: ExecContext) -> dict[str, Any]:
