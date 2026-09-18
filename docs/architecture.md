@@ -374,6 +374,8 @@ Resolution runs in this order, and the first rule that matches decides:
 - **Commands always run with the *invoker's* permissions and cooldowns**, for the custom command itself and for every command inside it. Publishing can't be used to escalate privileges.
 - **Name resolution** in a channel: built-in commands, then channel publications, then the caller's personal aliases. `@name` addresses a personal alias directly. `!explain` shows which one won.
 - **Limits:** a body may nest custom commands `MAX_CC_DEPTH (3)` deep, cycles are rejected, and the 8-invocation limit counts every command after expansion (spec §5.2).
+- **Packs** group a user's commands so they publish and unpublish as one unit, and the pack's name is the module name for `!module` toggles (ADR-0012). A command added to a published pack appears immediately.
+- **Derived commands** are custom commands published to the global scope by a bot owner or admin: available in every channel, still overridable by a channel publication, and never able to shadow a Python built-in (a *primitive*).
 
 ### Variables, briefly
 

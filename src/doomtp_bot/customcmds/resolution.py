@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from doomtp_bot.customcmds.packs import Pack, PackService
 from doomtp_bot.customcmds.params import to_params
 from doomtp_bot.customcmds.service import CustomCommand, CustomCommandService, Publication
 from doomtp_bot.lang.ast import Invocation, Node, invocations
@@ -27,13 +28,19 @@ log = structlog.get_logger(__name__)
 MODULE = "custom"
 
 
-def spec_for(name: str, command: CustomCommand, publication: Publication | None) -> CommandSpec:
+def spec_for(
+    name: str, command: CustomCommand, publication: Publication | None, pack: Pack | None = None
+) -> CommandSpec:
     """A CommandSpec for a custom command. `policy_key` is the command id, so permissions and cooldowns
-    follow the command rather than the name it happens to be published under."""
+    follow the command rather than the name it happens to be published under.
+
+    A command reached through a pack takes the pack's name as its module, so `!module disable <pack>`
+    turns the whole set off in a channel (ADR-0012).
+    """
     summary = command.summary or f"custom command by @{command.owner_login}"
     return CommandSpec(
         name=name,
-        module=MODULE,
+        module=pack.name if pack is not None else MODULE,
         summary=summary,
         description=command.body,
         params=to_params(command.params)
@@ -72,8 +79,15 @@ class PreloadedResolver:
 class CustomCommandLoader:
     """Loads and parses every custom command an expression can reach, then builds a resolver."""
 
-    def __init__(self, service: CustomCommandService, *, max_depth: int = MAX_CC_DEPTH) -> None:
+    def __init__(
+        self,
+        service: CustomCommandService,
+        packs: PackService | None = None,
+        *,
+        max_depth: int = MAX_CC_DEPTH,
+    ) -> None:
         self.service = service
+        self.packs = packs
         self.max_depth = max_depth
 
     async def resolver_for(self, ctx: ExecContext, node: Node, base: Resolver) -> Resolver:
@@ -103,15 +117,20 @@ class CustomCommandLoader:
 
     async def _lookup(self, ctx: ExecContext, key: _Key) -> Resolved | None:
         publication: Publication | None = None
+        pack: Pack | None = None
         source: Source = "personal"
         command: CustomCommand | None = None
-        if key.personal:  # `@name` addresses the invoker's own alias, skipping channel publications
+        if key.personal:  # `@name` addresses the invoker's own alias, skipping every publication
             command = await self._personal(ctx, key.name)
         else:
-            found = await self.service.publication(ctx.channel.id, key.name)
+            found = await self.service.publication_in_scope(ctx.channel.id, key.name)
             if found is not None:
                 publication, command, source = found[0], found[1], "publication"
-            else:
+            elif self.packs is not None:
+                in_pack = await self.packs.find_in_scope(ctx.channel.id, key.name)
+                if in_pack is not None:
+                    command, pack, source = in_pack[0], in_pack[1], "publication"
+            if command is None:
                 command = await self._personal(ctx, key.name)
         if command is None:
             return None
@@ -127,9 +146,9 @@ class CustomCommandLoader:
             name=command.name,
             version=command.version,
             body=body,
-            publication=publication.name if publication else None,
+            publication=publication.name if publication else (command.name if pack else None),
         )
-        return Resolved(spec_for(key.name, command, publication), custom=target, source=source)
+        return Resolved(spec_for(key.name, command, publication, pack), custom=target, source=source)
 
     async def _personal(self, ctx: ExecContext, alias: str) -> CustomCommand | None:
         if ctx.invoker is None:

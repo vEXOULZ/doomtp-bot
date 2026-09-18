@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.customcmds import params
+from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import spec_for
 from doomtp_bot.customcmds.service import (
     CustomCommand,
@@ -19,7 +20,7 @@ from doomtp_bot.customcmds.service import (
 )
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.modules._common import rank, user_arg
-from doomtp_bot.policy.roles import BOT_ADMIN_RANK
+from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
@@ -34,6 +35,7 @@ USAGE = (
     "cc add <name> <expression> | edit <name> <expression> | rm <name> | list | info <name> |"
     " versions <name> | revert <name> <version> | share <name> on|off |"
     " param <name> <pos> name=<n> [type=…] [required=yes] <description> | describe <name> <summary> |"
+    " pack create|add|rm|share|list|info|delete <pack> [commands…] | publish pack <pack> [global] |"
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
 )
@@ -50,6 +52,23 @@ def _policy(ctx: CommandContext) -> PolicyService:
 
 def _access(ctx: CommandContext) -> VariableAccessPolicy:
     return ctx.service("variable_access")  # type: ignore[no-any-return]
+
+
+def _packs(ctx: CommandContext) -> PackService:
+    return ctx.service("packs")  # type: ignore[no-any-return]
+
+
+def _scope(ctx: CommandContext, words: list[str]) -> str:
+    """`global` at the end of a publish makes it a derived command, for bot admins only (ADR-0012)."""
+    if words and words[-1].lower() == "global":
+        if rank(ctx) < BOT_ADMIN_RANK:
+            raise CommandError("only bot admins can publish globally", Code.DENIED)
+        return GLOBAL
+    return ctx.channel.id
+
+
+def _where(scope: str) -> str:
+    return "everywhere" if scope == GLOBAL else "here"
 
 
 def _invoker(ctx: CommandContext) -> tuple[str, str]:
@@ -234,6 +253,78 @@ async def _describe(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"{command.name}: {summary}")
 
 
+async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """`cc pack create|add|rm|list|info|delete <pack> [commands…]`."""
+    _need(v, 2)
+    action, packs, (user_id, _) = v[1].lower(), _packs(ctx), _invoker(ctx)
+    if action == "list":
+        owned = await packs.owned_by(user_id)
+        sizes = [(p, len(await packs.members(p.id))) for p in owned]
+        listing = ", ".join(f"{p.name} ({n})" for p, n in sizes) or "none"
+        return Result.success(f"your packs: {listing}", [p.name for p in owned])
+    _need(v, 3)
+    name = v[2].lower()
+    if action == "create":
+        try:
+            created = await packs.create(owner_user_id=user_id, name=name, summary=" ".join(v[3:]))
+        except CustomCommandError as exc:
+            raise CommandError(str(exc)) from exc
+        return Result.success(
+            f"created pack {created.name}. Add commands with "
+            f"{ctx.channel.prefix}cc pack add {created.name} <command…>"
+        )
+    pack = await packs.by_owner(user_id, name)
+    if pack is None:
+        raise CommandError(f"you have no pack named {name}")
+    if action == "info":
+        members = await packs.members(pack.id)
+        published = [
+            ("everywhere" if p.is_global else "here")
+            for p, k in await packs.publications_in(ctx.channel.id, include_global=True)
+            if k.id == pack.id and p.status == "active"
+        ]
+        where = ", ".join(published) or "not published here"
+        return Result.success(
+            f"{pack.name}: {', '.join(c.name for c in members) or 'empty'} — {where}",
+            {"pack": pack.name, "commands": [c.name for c in members], "published": published},
+        )
+    if action == "delete":
+        await packs.delete(pack)
+        return Result.success(f"deleted pack {pack.name}; it is no longer published anywhere")
+    if action == "share":
+        _need(v, 4)
+        if v[3].lower() not in ("on", "off"):
+            raise CommandError(f"usage: {ctx.channel.prefix}cc pack share <pack> on|off")
+        shareable = v[3].lower() == "on"
+        members = await packs.members(pack.id)
+        for member in members:
+            await _service(ctx).set_visibility(member, shareable)
+        state = "shareable" if shareable else "private"
+        return Result.success(
+            f"{pack.name} and its {len(members)} command(s) are {state}"
+            + (
+                f"; mods can {ctx.channel.prefix}cc publish pack @{ctx.invoker.login if ctx.invoker else ''} {pack.name}"
+                if shareable
+                else ""
+            )
+        )
+    if action not in ("add", "rm"):
+        raise CommandError(f"usage: {USAGE}")
+    _need(v, 4)
+    changed: list[str] = []
+    for command_name in v[3:]:
+        command = await _service(ctx).by_owner(user_id, command_name)
+        if command is None:
+            raise CommandError(f"you don't have a command named {command_name}")
+        if action == "add":
+            await packs.add_member(pack, command)
+            changed.append(command.name)
+        elif await packs.remove_member(pack, command):
+            changed.append(command.name)
+    verb = "added to" if action == "add" else "removed from"
+    return Result.success(f"{', '.join(changed) or 'nothing'} {verb} {pack.name}", changed)
+
+
 async def _share(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 3)
     command = await _own(ctx, v[1])
@@ -282,34 +373,91 @@ async def _unlink(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    """`cc publish <own name|alias> [as <name>]` — a moderator action by default."""
+    """`cc publish <own name|alias> [as <name>] [global]`, or `cc publish pack <name> [global]`."""
     _need(v, 2)
-    if not _may(ctx, "publish_min_role"):
+    scope = _scope(ctx, v)
+    if scope != GLOBAL and not _may(ctx, "publish_min_role"):
         raise CommandError("you can't publish commands here", Code.DENIED)
+    if v[1].lower() == "pack":
+        return await _publish_pack(ctx, v, scope)
     service, (user_id, _) = _service(ctx), _invoker(ctx)
     command = await service.by_owner(user_id, v[1]) or await service.personal(user_id, v[1])
     if command is None:
         raise CommandError(f"you have no command or alias named {v[1]}")
     name = v[3] if len(v) > 3 and v[2].lower() == "as" else command.name
     try:
-        await service.publish(channel_id=ctx.channel.id, name=name, command=command, published_by=user_id)
+        await service.publish(channel_id=scope, name=name, command=command, published_by=user_id)
     except CustomCommandError as exc:
         raise CommandError(str(exc)) from exc
-    text = f'published "{command.name}" (by @{command.owner_login}) as {ctx.channel.prefix}{name}.'
+    text = (
+        f'published "{command.name}" (by @{command.owner_login}) as '
+        f"{ctx.channel.prefix}{name} {_where(scope)}."
+    )
     if command.owner_user_id != user_id:
         text += " " + EDIT_WARNING.format(owner=f"@{command.owner_login}")
     return Result.success(text + f" Mods can {ctx.channel.prefix}cc disable {name}.", {"name": name})
 
 
+async def _resolve_pack(ctx: CommandContext, v: list[str], at: int) -> Any:
+    """`<name>` is the caller's own pack; `@owner <name>` is someone else's, if they shared its commands."""
+    user_id, _ = _invoker(ctx)
+    packs = _packs(ctx)
+    if v[at].startswith("@"):
+        _need(v, at + 2)
+        owner = await user_arg(ctx, v[at])
+        pack = await packs.by_owner(owner["id"], v[at + 1])
+        if pack is None:
+            raise CommandError(f"@{owner['name']} has no pack named {v[at + 1]}")
+        members = await packs.members(pack.id)
+        if not members or not all(c.shareable for c in members):
+            raise CommandError(f"@{owner['name']} hasn't shared every command in {pack.name}")
+        return pack
+    pack = await packs.by_owner(user_id, v[at])
+    if pack is None:
+        raise CommandError(f"you have no pack named {v[at]}")
+    return pack
+
+
+async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result:
+    _need(v, 3)
+    user_id, _ = _invoker(ctx)
+    packs = _packs(ctx)
+    pack = await _resolve_pack(ctx, v, 2)
+    members = await packs.members(pack.id)
+    if not members:
+        raise CommandError(f"{pack.name} has no commands yet")
+    try:
+        await packs.publish(channel_id=scope, pack=pack, published_by=user_id)
+    except CustomCommandError as exc:
+        raise CommandError(str(exc)) from exc
+    names = ", ".join(c.name for c in members)
+    owner_note = ""
+    if pack.owner_user_id != user_id:
+        owners = {c.owner_login for c in members}
+        owner_note = " " + EDIT_WARNING.format(owner="@" + ", @".join(sorted(owners)))
+    return Result.success(
+        f"published pack {pack.name} {_where(scope)} ({names}).{owner_note} "
+        f"⚠ Commands added to the pack later appear {_where(scope)} too. "
+        f"Mods can {ctx.channel.prefix}module disable {pack.name}.",
+        {"pack": pack.name, "commands": [c.name for c in members]},
+    )
+
+
 async def _unpublish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 2)
-    if not _may(ctx, "publish_min_role"):
+    scope = _scope(ctx, v)
+    if scope != GLOBAL and not _may(ctx, "publish_min_role"):
         raise CommandError("you can't unpublish commands here", Code.DENIED)
     user_id, _ = _invoker(ctx)
-    removed = await _service(ctx).unpublish(channel_id=ctx.channel.id, name=v[1], actor_user_id=user_id)
-    if removed is None:
-        raise CommandError(f"{v[1]} isn't published here")
-    return Result.success(f"unpublished {v[1]}; its write grants here were revoked too")
+    if v[1].lower() == "pack":
+        _need(v, 3)
+        pack = await _resolve_pack(ctx, v, 2)
+        if not await _packs(ctx).unpublish(channel_id=scope, pack=pack, actor_user_id=user_id):
+            raise CommandError(f"{pack.name} isn't published {_where(scope)}")
+        return Result.success(f"unpublished pack {pack.name} {_where(scope)}; its write grants went too")
+    if await _service(ctx).unpublish(channel_id=scope, name=v[1], actor_user_id=user_id) is None:
+        raise CommandError(f"{v[1]} isn't published {_where(scope)}")
+    return Result.success(f"unpublished {v[1]} {_where(scope)}; its write grants there were revoked too")
 
 
 async def _set_status(ctx: CommandContext, v: list[str], enabled: bool) -> Result:
@@ -357,6 +505,7 @@ _SUBCOMMANDS = {
     "revert": _revert,
     "share": _share,
     "param": _param,
+    "pack": _pack,
     "describe": _describe,
     "link": _link,
     "unlink": _unlink,

@@ -25,6 +25,7 @@ from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import to_json
 from doomtp_bot.storage.db import transaction
 
@@ -197,6 +198,12 @@ class CustomCommandService:
             (channel_id, name.lower()),
         )
         return (self._publication(row), self._command(row)) if row else None
+
+    async def publication_in_scope(
+        self, channel_id: str, name: str
+    ) -> tuple[Publication, CustomCommand] | None:
+        """This channel's publication, else one published globally (ADR-0012 derived commands)."""
+        return await self.publication(channel_id, name) or await self.publication(GLOBAL, name)
 
     async def personal(self, user_id: str, alias: str) -> CustomCommand | None:
         row = await self._row(

@@ -9,7 +9,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from doomtp_bot.customcmds import params as cc_params
+from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import spec_for
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.result import Code, Result
@@ -33,9 +35,17 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
     if service is None:
         return {}
     specs: dict[str, CommandSpec] = {}
-    for publication, command_ in await service.publications_in(ctx.channel.id):
-        if publication.status == "active" and command_.status == "active":
-            specs[publication.name] = spec_for(publication.name, command_, publication)
+    for scope in (ctx.channel.id, GLOBAL):  # channel publications, then derived commands (ADR-0012)
+        for publication, command_ in await service.publications_in(scope):
+            if publication.status == "active" and command_.status == "active":
+                specs.setdefault(publication.name, spec_for(publication.name, command_, publication))
+    packs: PackService | None = ctx.exec.services.get("packs")
+    if packs is not None:
+        for pack_publication, pack in await packs.publications_in(ctx.channel.id, include_global=True):
+            if pack_publication.status != "active":
+                continue
+            for member in await packs.members(pack.id):
+                specs.setdefault(member.name, spec_for(member.name, member, None, pack))
     if ctx.invoker is not None:
         for alias, command_ in await service.linked_by(ctx.invoker.id):
             specs.setdefault(alias, spec_for(alias, command_, None))

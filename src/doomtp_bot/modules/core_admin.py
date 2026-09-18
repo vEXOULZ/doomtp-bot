@@ -263,6 +263,18 @@ MODULE_USAGE = "module list | enable|disable|reset <module> [global]"
 CMD_USAGE = "cmd enable|disable|reset <command> [global] | log <command> <off|errors|output|invocations|all>"
 
 
+async def _pack_modules(ctx: CommandContext) -> dict[str, CommandSpec]:
+    """Pack names usable with !module here: what this channel published, plus global packs."""
+    packs = ctx.exec.services.get("packs")
+    if packs is None:
+        return {}
+    found: dict[str, CommandSpec] = {}
+    for publication, pack in await packs.publications_in(ctx.channel.id, include_global=True):
+        if publication.status == "active":
+            found[pack.name] = CommandSpec(name="", module=pack.name, summary=pack.summary)
+    return found
+
+
 def _scope(ctx: CommandContext, v: list[str], position: int) -> str:
     if len(v) > position and v[position].lower() == "global":
         if rank(ctx) < BOT_ADMIN_RANK:
@@ -276,6 +288,7 @@ async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy, registry = _policy(ctx), _registry(ctx)
     _need(v, 1, MODULE_USAGE)
     specs = {c.spec.module: c.spec for c in registry.all()}
+    specs.update(await _pack_modules(ctx))  # packs published here toggle like any module (ADR-0012)
     modules = sorted(specs)
     action = v[0].lower()
     if action == "list":

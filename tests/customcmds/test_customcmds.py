@@ -28,6 +28,7 @@ USERS = {
     "alice": {"id": "400", "name": "alice", "display": "Alice"},
     "bob": {"id": "401", "name": "bob", "display": "Bob"},
     "mod": {"id": "300", "name": "mod", "display": "Mod"},
+    "owner": {"id": "1", "name": "owner", "display": "Owner"},
 }
 BADGES = {"mod": {"moderator"}}
 
