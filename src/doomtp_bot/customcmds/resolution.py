@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from doomtp_bot.customcmds.params import to_params
 from doomtp_bot.customcmds.service import CustomCommand, CustomCommandService, Publication
 from doomtp_bot.lang.ast import Invocation, Node, invocations
 from doomtp_bot.lang.errors import ParseError
@@ -35,7 +36,8 @@ def spec_for(name: str, command: CustomCommand, publication: Publication | None)
         module=MODULE,
         summary=summary,
         description=command.body,
-        params=(Param("1+", "arguments", required=False, description="passed to the command body"),),
+        params=to_params(command.params)
+        or (Param("1+", "arguments", required=False, description="passed to the command body"),),
         input=InputMode.OPTIONAL,
         required_role=(publication.required_role if publication else None) or "everyone",
         log_level=LogLevel.INVOCATIONS,

@@ -25,6 +25,7 @@ from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
+from doomtp_bot.runtime.result import to_json
 from doomtp_bot.storage.db import transaction
 
 log = structlog.get_logger(__name__)
@@ -301,6 +302,27 @@ class CustomCommandService:
             await self._audit(actor_via, command.owner_user_id, "cc.delete", command.id, command.name, None)
         await self._grants_changed()
         return affected
+
+    async def set_params(
+        self, command: CustomCommand, rows: list[dict[str, Any]], *, actor_via: str = "chat"
+    ) -> CustomCommand:
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE custom_commands SET params = ?, updated_at = ? WHERE id = ?",
+                (to_json(rows), now_ms(), command.id),
+            )
+            await self._audit(actor_via, command.owner_user_id, "cc.params", command.id, None, rows)
+        updated = await self.by_id(command.id)
+        assert updated is not None
+        return updated
+
+    async def set_summary(self, command: CustomCommand, summary: str, *, actor_via: str = "chat") -> None:
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE custom_commands SET summary = ?, updated_at = ? WHERE id = ?",
+                (summary, now_ms(), command.id),
+            )
+            await self._audit(actor_via, command.owner_user_id, "cc.describe", command.id, None, summary)
 
     async def set_visibility(
         self, command: CustomCommand, shareable: bool, *, actor_via: str = "chat"

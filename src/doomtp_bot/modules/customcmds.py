@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from doomtp_bot.customcmds import params
+from doomtp_bot.customcmds.resolution import spec_for
 from doomtp_bot.customcmds.service import (
     CustomCommand,
     CustomCommandError,
@@ -31,6 +33,7 @@ MODULE = "customcmds"
 USAGE = (
     "cc add <name> <expression> | edit <name> <expression> | rm <name> | list | info <name> |"
     " versions <name> | revert <name> <version> | share <name> on|off |"
+    " param <name> <pos> name=<n> [type=…] [required=yes] <description> | describe <name> <summary> |"
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
 )
@@ -161,9 +164,11 @@ async def _info(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if command is None:
         return Result.failure(Code.NOT_FOUND, f"no command named {name} here")
     links, publications = await service.usage_of(command.id)
+    spec = spec_for(command.name, command, publication)
     text = (
-        f"{command.name} ({command.id}) by @{command.owner_login}, v{command.version}, "
-        f"{links} alias(es), {publications} channel(s): {command.body}"
+        f"{ctx.channel.prefix}{spec.usage()} ({command.id}) by @{command.owner_login}, v{command.version}, "
+        f"{links} alias(es), {publications} channel(s). "
+        f"{params.describe(params.to_params(command.params))}: {command.body}"
     )
     if publication is not None and publication.last_run_version not in (None, command.version):
         text += f" — changed since v{publication.last_run_version} by @{command.owner_login}"
@@ -197,6 +202,36 @@ async def _revert(ctx: CommandContext, v: list[str], args: Args) -> Result:
     except CustomCommandError as exc:
         raise CommandError(str(exc)) from exc
     return Result.success(f"{command.name} reverted to v{v[2]}, now v{updated.version}: {updated.body}")
+
+
+async def _param(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """`cc param <name> <pos> name=<n> [type=…] [required=yes] "<description>"`, or `<pos> remove`."""
+    _need(v, 3)
+    command = await _own(ctx, v[1])
+    position = v[2]
+    if len(v) > 3 and v[3].lower() == "remove":
+        rows = params.remove(command.params, position)
+    else:
+        assignments, description = params.split_declaration(" ".join(v[3:]))
+        try:
+            rows = params.declare(command.params, position, assignments, description)
+        except params.ParamError as exc:
+            raise CommandError(str(exc)) from exc
+    updated = await _service(ctx).set_params(command, rows)
+    declared = params.to_params(updated.params)
+    spec = spec_for(command.name, updated, None)
+    return Result.success(
+        f"{ctx.channel.prefix}{spec.usage()} — {params.describe(declared)}",
+        [dict(r) for r in rows],
+    )
+
+
+async def _describe(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    _need(v, 3)
+    command = await _own(ctx, v[1])
+    summary = " ".join(v[2:])
+    await _service(ctx).set_summary(command, summary)
+    return Result.success(f"{command.name}: {summary}")
 
 
 async def _share(ctx: CommandContext, v: list[str], args: Args) -> Result:
@@ -321,6 +356,8 @@ _SUBCOMMANDS = {
     "versions": _versions,
     "revert": _revert,
     "share": _share,
+    "param": _param,
+    "describe": _describe,
     "link": _link,
     "unlink": _unlink,
     "publish": _publish,

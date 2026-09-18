@@ -355,3 +355,50 @@ async def test_cc_list_and_info(h: Harness) -> None:
     assert await h.say("alice", "!cc list") == "yours: hi"
     info = await h.say("alice", "!cc info hi")
     assert info is not None and "by @alice, v1" in info and "echo hi" in info
+
+
+# ── declared parameters and !help (ADR-0009 action item 3) ─────────────────
+async def test_declared_params_are_validated_and_shown(h: Harness) -> None:
+    await h.say("alice", "!cc add roll random 1-{arg.sides} | echo {chatter.display} rolled {1}")
+    usage = await h.say(
+        "alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "how many sides"'
+    )
+    assert usage == "!roll <sides> — 1 sides: int — how many sides"
+
+    good = await h.run("alice", "!roll 20")
+    assert good.result.ok and good.send is not None and good.send.startswith("Alice rolled ")
+
+    too_big = await h.run("alice", "!roll 500")
+    assert too_big.result.code == Code.USAGE and "sides" in (too_big.result.message or "")
+    missing = await h.run("alice", "!roll")
+    assert missing.result.code == Code.USAGE and "required" in (missing.result.message or "")
+
+    assert await h.say("alice", "!cc param roll 1 remove") == "!roll [arguments…] — takes free arguments"
+
+
+async def test_param_declaration_is_rejected_when_malformed(h: Harness) -> None:
+    await h.say("alice", "!cc add pick echo {arg.choice}")
+    bad_type = await h.run("alice", "!cc param pick 1 name=choice type=colour")
+    assert bad_type.result.code == Code.USAGE and "type must be one of" in (bad_type.result.message or "")
+    gap = await h.run("alice", "!cc param pick 2 name=second")
+    assert gap.result.code == Code.USAGE and "1, 2, 3" in (gap.result.message or "")
+
+
+async def test_help_lists_custom_commands_the_caller_can_run(h: Harness) -> None:
+    await h.say("alice", "!cc add hype echo hyped")
+    await h.say("alice", "!cc describe hype gets the chat hyped")
+    await h.say("mod", "!cc link @alice hype")  # not shared yet: fails, so share first
+    await h.say("alice", "!cc share hype on")
+    await h.say("mod", "!cc link @alice hype")
+    await h.say("mod", "!cc publish hype")
+
+    listing = await h.say("bob", "!help")
+    assert listing is not None and "custom: hype" in listing
+    detail = await h.say("bob", "!help hype")
+    assert (
+        detail
+        == "!hype [arguments…] — gets the chat hyped — 1+ arguments: str (optional) — passed to the command body"
+    )
+
+    alices = await h.say("alice", "!help")
+    assert alices is not None and "custom: hype" in alices  # her own alias
