@@ -21,6 +21,7 @@ from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
+from doomtp_bot.webui.emoji import emojify
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
@@ -114,6 +115,24 @@ async def test_globally_published_commands_join_the_reference(
     await customcmds.publish(channel_id=GLOBAL, name="dice", command=command, published_by="1")
     body = (await client.get("/docs/commands")).text
     assert "dice" in body and "@alice" in body and "published for every channel" in body
+
+
+async def test_the_command_sign_is_drawn_the_same_on_every_platform(client: httpx.AsyncClient) -> None:
+    """The sign is an emoji, so the page draws it as Twemoji rather than leaving it to the reader's font."""
+    body = (await client.get("/docs/commands")).text
+    assert body.count('<img class="emoji"') > 1
+    assert 'alt="🏜"' in body  # copying the sign out of the page still copies the character
+    assert body.count("🏜") == body.count('alt="🏜"')  # no bare emoji left over
+
+    image = await client.get("/static/emoji/1f3dc.svg")
+    assert image.status_code == 200 and image.headers["content-type"].startswith("image/svg")
+
+
+def test_emojifying_still_escapes_everything_else() -> None:
+    assert str(emojify("<b>x</b>")) == "&lt;b&gt;x&lt;/b&gt;"  # untouched text is escaped as usual
+    marked_up = str(emojify("sign: 🏜<script>"))
+    assert "&lt;script&gt;" in marked_up and 'src="/static/emoji/1f3dc.svg"' in marked_up
+    assert str(emojify("🏜️")).count("<img") == 1  # the variation selector is absorbed
 
 
 async def test_the_features_page_documents_every_area(client: httpx.AsyncClient) -> None:

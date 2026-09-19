@@ -25,9 +25,13 @@ from doomtp_bot.lang.parser import (
 from doomtp_bot.policy.roles import BUILTIN_RANKS, GLOBAL
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH, MAX_INVOCATIONS
 from doomtp_bot.runtime.spec import with_sign
+from doomtp_bot.webui import emoji
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# Every value a template prints goes through here, so the command sign is drawn the same everywhere.
+TEMPLATES.env.finalize = emoji.finalize
+TEMPLATES.env.globals["emoji"] = emoji.emojify
 _GRAMMAR_FILE = Path(__file__).resolve().parents[3] / "docs" / "grammar" / "railroad.ebnf"
 # Read once at import: the docs page shows the same grammar CI checks against the spec (ADR-0011).
 GRAMMAR = _GRAMMAR_FILE.read_text(encoding="utf-8") if _GRAMMAR_FILE.is_file() else ""
