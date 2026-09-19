@@ -69,6 +69,6 @@ B beats A because every bot of this kind eventually wants sub, raid and online e
 
 1. [x] Register the Twitch app. Set redirect URI `http://localhost:8080/auth/callback`. *(done 2026-09-17)*
 2. [x] Authorize the bot account (`user:read:chat user:write:chat user:bot`). *(done 2026-09-17; the token is rejected if it belongs to another account)*
-3. [ ] Broadcaster authorization (`channel:bot` and the full-tier scopes) — the `/auth/connect` flow isn't built (ADR-0007 item 5).
+3. [x] Broadcaster authorization (`channel:bot` and the full-tier scopes). *Built 2026-09-19 as `/auth/connect` (ADR-0007 item 5); not yet run against a live channel.*
 4. [ ] Build a reconnect test against the Twitch CLI mock EventSub server. The client is also not restarted yet when it stops.
 5. [x] Add `message_id` dedupe (LRU) in the adapter. *(`TwitchService.emit`, 2000 ids)*
