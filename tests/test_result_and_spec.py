@@ -1,7 +1,10 @@
+import re
+
 import pytest
 
+from doomtp_bot.modules import builtin_registry
 from doomtp_bot.runtime.result import MAX_MESSAGE_CHARS, Code, Result
-from doomtp_bot.runtime.spec import CommandSpec, Param
+from doomtp_bot.runtime.spec import CommandSpec, Example, Param, with_sign
 
 
 def test_result_defaults_to_success() -> None:
@@ -44,3 +47,21 @@ def test_spec_usage_text() -> None:
 def test_spec_rejects_invalid_params(params: tuple[Param, ...]) -> None:
     with pytest.raises(ValueError):
         CommandSpec(name="x", module="m", summary="s", params=params)
+
+
+def test_no_spec_hard_codes_a_command_sign() -> None:
+    """Channels pick their own sign, so spec text writes `{sign}` and never a literal one."""
+    hard_coded = re.compile(r"(?<![\w`])!(?=[a-z])")
+    offenders = []
+    for cmd in builtin_registry().all():
+        spec = cmd.spec
+        texts = [spec.summary, spec.description, *(p.description for p in spec.params)]
+        texts += [e.invocation for e in spec.examples] + [e.output for e in spec.examples]
+        offenders += [(spec.name, t) for t in texts if hard_coded.search(t)]
+    assert not offenders
+
+
+def test_spec_text_is_rendered_with_the_reader_s_sign() -> None:
+    example = Example("{sign}ping", "pong").rendered("?")
+    assert example.invocation == "?ping"
+    assert with_sign("type {sign}join", "\U0001f3dc") == "type \U0001f3dcjoin"

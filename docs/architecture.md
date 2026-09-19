@@ -244,9 +244,9 @@ class Result:
     ],
     input=InputMode.OPTIONAL,                # can receive piped data
     data_schema={"celsius": float, "fahrenheit": float, "condition": str, "location": str},
-    examples=[
-        Example("!weather Lisbon", "Lisbon: 21°C, clear"),
-        Example('!weather Lisbon | echo "it\'s {1.celsius}C now!"', "it's 21C now!"),
+    examples=[                                 # {sign} = the reader's own command sign
+        Example("{sign}weather Lisbon", "Lisbon: 21°C, clear"),
+        Example('{sign}weather Lisbon | echo "it\'s {1.celsius}C now!"', "it's 21C now!"),
     ],
     required_role="everyone",
     default_cooldowns={"everyone": Cooldown(tier_s=10, user_s=30), "moderator": Cooldown(0, 0)},
@@ -257,6 +257,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 ```
 
 - **Usage strings, `!help`, the `/api/v1/commands` JSON and the public docs page are all generated** from these specs.
+- **No spec hard-codes a command sign.** Every channel picks its own, so summary, description, param and example text writes `{sign}` (`runtime.spec.SIGN`) and whoever shows it substitutes the sign that reader types — the channel's in chat, the default on the docs page. Chat messages built by a handler use `ctx.channel.prefix`, or `sign_of(ctx, channel_id)` when they name another channel. A test walks the registry and fails on a literal `!command` in spec text.
 - `reads`, `writes` and `side_effects` are **declarations used for documentation and `!explain`**. They are not enforced yet: today only `!var` writes variables, and it is the documented exception (variable-access-matrix.md §2). Enforcement arrives with the first other built-in that writes.
 - Custom commands carry the same metadata (summary, params, examples), written by their owner.
 - `!help` filters by the **effective policy** for the caller in that channel. `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.

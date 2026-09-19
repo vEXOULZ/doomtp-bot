@@ -87,9 +87,9 @@ def _store(ctx: CommandContext) -> SqliteVariableStore:
         description=USAGE,
         params=(Param("1+", "arguments", description=USAGE),),
         examples=(
-            Example("!var set chatter.location Lisbon", "chatter.location = Lisbon"),
-            Example("!var incr channel.deaths", "channel.deaths = 13"),
-            Example("!var top channel.chatter.points", "1. alice 120, 2. bob 90"),
+            Example("{sign}var set chatter.location Lisbon", "chatter.location = Lisbon"),
+            Example("{sign}var incr channel.deaths", "channel.deaths = 13"),
+            Example("{sign}var top channel.chatter.points", "1. alice 120, 2. bob 90"),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=3)},
         log_level=LogLevel.INVOCATIONS,

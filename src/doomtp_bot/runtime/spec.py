@@ -61,11 +61,27 @@ class Param:
         return self.position.endswith("+")
 
 
+SIGN = "{sign}"
+"""What a spec writes where a command sign belongs.
+
+Every channel picks its own sign (`prefix`), so no spec may hard-code one: summaries, descriptions
+and examples write `{sign}` and whoever shows them substitutes the sign that reader would type.
+"""
+
+
+def with_sign(text: str, prefix: str) -> str:
+    """Spec text as a reader of `prefix` should see it."""
+    return text.replace(SIGN, prefix)
+
+
 @dataclass(frozen=True, slots=True)
 class Example:
     invocation: str
     output: str
     note: str = ""
+
+    def rendered(self, prefix: str) -> Example:
+        return Example(with_sign(self.invocation, prefix), with_sign(self.output, prefix), self.note)
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,6 +24,7 @@ from doomtp_bot.lang.parser import (
 )
 from doomtp_bot.policy.roles import BUILTIN_RANKS, GLOBAL
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH, MAX_INVOCATIONS
+from doomtp_bot.runtime.spec import with_sign
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -98,24 +99,26 @@ async def index(request: Request) -> HTMLResponse:
 async def commands_page(request: Request) -> HTMLResponse:
     """Every command the bot offers everywhere: built-ins, plus globally published ones (ADR-0012)."""
     runtime = _state(request, "runtime")
-    rows = [_builtin_row(c.spec) for c in runtime.registry.all()] if runtime else []
+    rows = [_builtin_row(c.spec, DEFAULT_PREFIX) for c in runtime.registry.all()] if runtime else []
     rows += await _global_custom_rows(request)
     rows.sort(key=lambda row: (row["module"], row["name"]))
     return _page(request, "commands.html", rows=rows, modules=sorted({r["module"] for r in rows}))
 
 
-def _builtin_row(spec: Any) -> dict[str, Any]:
+def _builtin_row(spec: Any, prefix: str) -> dict[str, Any]:
+    """One table row. Spec text writes the command sign as `{sign}`; here it becomes a real one."""
+    summary = with_sign(spec.summary, prefix)
     return {
         "name": spec.name,
         "usage": spec.usage(),
         "module": spec.module,
         "kind": "built-in",
         "role": spec.required_role,
-        "summary": spec.summary,
-        "description": spec.description if spec.description != spec.summary else "",
+        "summary": summary,
+        "description": with_sign(spec.description, prefix) if spec.description != spec.summary else "",
         "aliases": list(spec.aliases),
         "params": list(spec.params),
-        "examples": list(spec.examples),
+        "examples": [example.rendered(prefix) for example in spec.examples],
         "cooldowns": {r: (c.tier_s, c.user_s) for r, c in spec.default_cooldowns.items()},
         "always_on": not spec.toggleable,
         "fixed_policy": spec.fixed_policy,
@@ -123,7 +126,7 @@ def _builtin_row(spec: Any) -> dict[str, Any]:
         "version": 0,
         "body": "",
         # Everything the search box matches on, lowercased once here rather than in the browser.
-        "search": " ".join([spec.name, *spec.aliases, spec.module, spec.summary]).lower(),
+        "search": " ".join([spec.name, *spec.aliases, spec.module, summary]).lower(),
     }
 
 

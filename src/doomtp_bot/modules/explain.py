@@ -30,8 +30,11 @@ FLAGS = {"--run", "--as-body"}
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=10)},
         log_level=LogLevel.INVOCATIONS,
         examples=(
-            Example("!explain !random 1-6 | echo you rolled {1}", "Pipe(random,echo) — 1:random ✓, 2:echo ✓"),
-            Example("!explain --run !ping", "ping[] — 1:ping ✓ — ran: code 0, would send: pong"),
+            Example(
+                "{sign}explain {sign}random 1-6 | echo you rolled {1}",
+                "Pipe(random,echo) — 1:random ✓, 2:echo ✓",
+            ),
+            Example("{sign}explain --run {sign}ping", "ping[] — 1:ping ✓ — ran: code 0, would send: pong"),
         ),
     )
 )

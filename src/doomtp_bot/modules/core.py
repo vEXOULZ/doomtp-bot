@@ -22,8 +22,8 @@ def _spec(**kwargs: object) -> CommandSpec:
     _spec(
         name="true",
         summary="Always succeeds",
-        description="Succeeds without a message and passes the previous data through. `!x || true` makes x optional.",
-        examples=(Example("!shoutout @someone || true", "(nothing if the shoutout fails)"),),
+        description="Succeeds without a message and passes the previous data through. `{sign}x || true` makes x optional.",
+        examples=(Example("{sign}shoutout @someone || true", "(nothing if the shoutout fails)"),),
     )
 )
 async def true_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
@@ -40,7 +40,7 @@ async def false_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         name="default",
         summary="Produce a fallback value",
         params=(Param("1+", "value", required=True, description="The value to produce"),),
-        examples=(Example("( !weather x || default unknown ) > chatter.w", "unknown"),),
+        examples=(Example("( {sign}weather x || default unknown ) > chatter.w", "unknown"),),
     )
 )
 async def default_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
@@ -53,7 +53,7 @@ async def default_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         name="fail",
         summary="Fail with a code and message",
         params=(Param("1+", "message", description="Optional exit code (1–99) followed by a message"),),
-        examples=(Example("!check {arg.1:int} <= 20 || fail 2 max 20 dice", "max 20 dice"),),
+        examples=(Example("{sign}check {arg.1:int} <= 20 || fail 2 max 20 dice", "max 20 dice"),),
     )
 )
 async def fail_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
@@ -70,7 +70,7 @@ async def fail_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         name="echo",
         summary="Say something",
         params=(Param("1+", "text", description="Text to say"),),
-        examples=(Example("!random 1-100 | echo you rolled {1}", "you rolled 42"),),
+        examples=(Example("{sign}random 1-100 | echo you rolled {1}", "you rolled 42"),),
     )
 )
 async def echo_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:

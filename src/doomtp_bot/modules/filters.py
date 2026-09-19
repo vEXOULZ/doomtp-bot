@@ -55,8 +55,8 @@ def _need(values: list[str], count: int) -> None:
         required_role="moderator",
         log_level=LogLevel.INVOCATIONS,
         examples=(
-            Example("!filter add word badword mask", "filtering badword (mask), entry 3"),
-            Example("!filter test you are a badword", "would send: you are a *******"),
+            Example("{sign}filter add word badword mask", "filtering badword (mask), entry 3"),
+            Example("{sign}filter test you are a badword", "would send: you are a *******"),
         ),
     )
 )
@@ -120,7 +120,7 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
 
     _need(values, 2)
     if not values[1].isdigit():
-        raise CommandError("give the entry id from !filter list")
+        raise CommandError(f"give the entry id from {ctx.channel.prefix}filter list")
     entry_id = int(values[1])
     if action == "rm":
         removed = await service.remove(channel_id=scope, entry_id=entry_id, actor_user_id=actor_id)

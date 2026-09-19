@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from doomtp_bot.modules._common import actor, rank, user_arg
+from doomtp_bot.modules._common import actor, rank, sign_of, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, BROADCASTER_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
@@ -18,9 +18,9 @@ MODULE = "core_admin"
         module=MODULE,
         toggleable=False,
         summary="Invite the bot to your channel",
-        description="Type !join in the bot's own chat to add the bot to your channel. Bot admins can name any channel.",
+        description="Type {sign}join in the bot's own chat to add the bot to your channel. Bot admins can name any channel.",
         params=(Param("1", "channel", description="Channel to join (bot admins only)"),),
-        examples=(Example("!join", "joined #yourchannel"),),
+        examples=(Example("{sign}join", "joined #yourchannel"),),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=30)},
     )
 )
@@ -32,14 +32,18 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     if target:
         if rank(ctx) < BOT_ADMIN_RANK:
             return Result.failure(
-                Code.FAIL, "only bot admins can add other channels; ask the broadcaster to type !join"
+                Code.FAIL,
+                "only bot admins can add other channels; ask the broadcaster to type"
+                f" {ctx.channel.prefix}join",
             )
         user = await user_arg(ctx, target)
         channel_id, login = user["id"], user["name"]
     else:
         if ctx.channel.id != twitch.bot_id:
             return Result.failure(
-                Code.FAIL, f"type !join in #{twitch.bot_login}'s chat to add the bot to your channel"
+                Code.FAIL,
+                f"type {sign_of(ctx, twitch.bot_id)}join in #{twitch.bot_login}'s chat"
+                " to add the bot to your channel",
             )
         channel_id, login = ctx.invoker.id, ctx.invoker.login
     if channels.is_active(channel_id):
@@ -57,9 +61,9 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         toggleable=False,
         aliases=("leave",),
         summary="Remove the bot from a channel",
-        description="The broadcaster can type !part in their chat. Bot admins can name any channel.",
+        description="The broadcaster can type {sign}part in their chat. Bot admins can name any channel.",
         params=(Param("1", "channel", description="Channel to leave (bot admins only)"),),
-        examples=(Example("!part", "bye! leaving #yourchannel"),),
+        examples=(Example("{sign}part", "bye! leaving #yourchannel"),),
     )
 )
 async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:

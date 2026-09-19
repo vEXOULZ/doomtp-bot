@@ -15,7 +15,7 @@ from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.result import Code, Result
-from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, Param
+from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, Param, with_sign
 
 if TYPE_CHECKING:
     from doomtp_bot.customcmds.service import CustomCommandService
@@ -60,8 +60,8 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
         summary="List commands you can use, or show how to use one",
         params=(Param("1", "command", description="A command name"),),
         examples=(
-            Example("!help", "commands: ping, random, …"),
-            Example("!help random", "!random [range] — …"),
+            Example("{sign}help", "commands: ping, random, …"),
+            Example("{sign}help random", "{sign}random [range] — …"),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
     )
@@ -77,7 +77,7 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
         if spec is None or not policy.is_permitted(ctx.exec, spec):
             return Result.failure(Code.NOT_FOUND, f"no command named {name}")
-        text = f"{prefix}{spec.usage()} — {spec.summary}"
+        text = f"{prefix}{spec.usage()} — {with_sign(spec.summary, prefix)}"
         if spec.aliases:
             text += f" (aliases: {', '.join(spec.aliases)})"
         if spec.params:

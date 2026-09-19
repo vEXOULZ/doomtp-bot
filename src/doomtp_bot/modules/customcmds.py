@@ -529,8 +529,8 @@ _SUBCOMMANDS = {
         description=USAGE,
         params=(Param("1+", "arguments", description=USAGE),),
         examples=(
-            Example("!cc add hype echo {chatter.display} is hyped!", "created !hype (cc_7f3k2)"),
-            Example("!cc publish hype", 'published "hype" as !hype'),
+            Example("{sign}cc add hype echo {chatter.display} is hyped!", "created {sign}hype (cc_7f3k2)"),
+            Example("{sign}cc publish hype", 'published "hype" as {sign}hype'),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=5)},
         log_level=LogLevel.INVOCATIONS,

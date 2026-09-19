@@ -15,6 +15,7 @@ from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
 from doomtp_bot.lang.errors import HINTS, ParseError, ParseErrorCode
 from doomtp_bot.lang.parser import (
+    DEFAULT_PREFIX,
     MAX_EXPR_CHARS,
     MAX_NAME_CHARS,
     MAX_PLACEHOLDER_NESTING,
@@ -29,6 +30,7 @@ from doomtp_bot.lang.parser import (
 from doomtp_bot.runtime.explain import explain
 from doomtp_bot.runtime.namespaces import CONTEXT_ROOTS, RESERVED_EVERYWHERE
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH, MAX_INVOCATIONS
+from doomtp_bot.runtime.spec import with_sign
 
 router = APIRouter(prefix="/api/v1", tags=["language"])
 
@@ -159,8 +161,8 @@ async def commands(request: Request) -> dict[str, Any]:
                 "name": spec.name,
                 "module": spec.module,
                 "aliases": list(spec.aliases),
-                "summary": spec.summary,
-                "description": spec.description,
+                "summary": with_sign(spec.summary, DEFAULT_PREFIX),
+                "description": with_sign(spec.description, DEFAULT_PREFIX),
                 "usage": spec.usage(),
                 "required_role": spec.required_role,
                 "input": str(spec.input),
@@ -174,7 +176,10 @@ async def commands(request: Request) -> dict[str, Any]:
                     }
                     for p in spec.params
                 ],
-                "examples": [{"invocation": e.invocation, "output": e.output} for e in spec.examples],
+                "examples": [
+                    {"invocation": e.invocation, "output": e.output}
+                    for e in (ex.rendered(DEFAULT_PREFIX) for ex in spec.examples)
+                ],
                 "default_cooldowns": {
                     role: {"tier_s": c.tier_s, "user_s": c.user_s}
                     for role, c in spec.default_cooldowns.items()
