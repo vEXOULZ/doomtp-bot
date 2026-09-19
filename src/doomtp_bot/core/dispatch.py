@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from doomtp_bot.core.channels import ChannelManager
     from doomtp_bot.core.outbox import Outbox
     from doomtp_bot.core.streams import StreamStatus
+    from doomtp_bot.moderation.automod import AutoMod
     from doomtp_bot.moderation.index import ModerationIndex
     from doomtp_bot.policy.service import PolicyService
     from doomtp_bot.runtime.engine import RunReport, Runtime
@@ -72,6 +73,7 @@ class Dispatcher:
         trigger_runner: TriggerRunner | None = None,
         activity: ChatActivity | None = None,
         streams: StreamStatus | None = None,
+        automod: AutoMod | None = None,
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -84,6 +86,7 @@ class Dispatcher:
         self.trigger_runner = trigger_runner
         self.activity = activity
         self.streams = streams
+        self.automod = automod
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -121,6 +124,11 @@ class Dispatcher:
             b.set_id for b in msg.badges
         }:
             return
+        if self.automod is not None:  # architecture §9.3: incoming chat the filter would block
+            verdict = self.automod.verdict(msg)
+            if verdict is not None:
+                self._spawn(self.automod.enforce(msg, verdict), f"automod-{msg.message_id}")
+                return  # a message that is being deleted doesn't get to run a command
         if not is_command:
             self._spawn(self._listeners(msg), f"listen-{msg.message_id}")  # architecture §7
             return

@@ -7,6 +7,7 @@ from doomtp_bot.runtime.registry import CommandRegistry
 
 def builtin_registry() -> CommandRegistry:
     from doomtp_bot.modules import (
+        automod,
         basic,
         channels,
         core,
@@ -29,6 +30,7 @@ def builtin_registry() -> CommandRegistry:
         variables,
         customcmds,
         filters,
+        automod,
         triggers,
         explain,
     ):

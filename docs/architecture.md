@@ -467,7 +467,7 @@ A **race window** remains: a mod can act after the message has already been sent
 - **Where the filter applies:**
   1. **All bot output**, in the Outbox, after placeholder substitution. This is mandatory.
   2. **Content users store:** custom command names, bodies and metadata, variable values and trigger text. It rejects or censors the content at save time, per channel policy.
-  3. Optionally, **incoming chat** through an `automod` module (delete or timeout). This requires the moderator tier and is off by default.
+  3. Optionally, **incoming chat** (`moderation/automod.py`). `!automod delete|timeout [seconds]|off`, per channel, off by default and inert without the `moderate` capability. Only `block` entries count — the rewriting actions are about what the bot says, not about the chatter — and anyone at moderator rank or above is exempt. The verdict is computed synchronously in the Dispatcher (settings, capability, rank, then the matcher) and the delete and timeout calls are spawned, so one blocked message never holds up the next one. A blocked message doesn't get to run its command. Twitch echoes the delete back as an ordinary `message_delete` event, so the chat log and the moderation index record it like a human mod's.
 - **Logs keep original incoming text.** `outbound_msgs` stores both the pre-filter and the sent text, plus which filter entries matched.
 
 ---

@@ -28,6 +28,7 @@ from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
 from doomtp_bot.history.provider import RecentMessagesProvider
 from doomtp_bot.log import configure_logging
+from doomtp_bot.moderation.automod import AutoMod
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.roles import MODERATOR_RANK
@@ -151,6 +152,9 @@ async def run(settings: Settings) -> None:
         trigger_runner=trigger_runner,
         activity=activity,
         streams=streams,
+        automod=(
+            AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None
+        ),
     )
 
     backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)

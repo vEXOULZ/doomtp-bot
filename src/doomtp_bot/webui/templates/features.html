@@ -191,6 +191,17 @@ punctuation still mean what they say.</p>
 store</strong> — custom command names and bodies, variable values and trigger expressions are rejected
 rather than saved. Bot admins keep a global list that applies in every channel.</p>
 
+<h3>Acting on incoming chat</h3>
+<pre>{{ p }}automod                 # what it does today
+{{ p }}automod delete          # delete messages a `block` entry matches
+{{ p }}automod timeout 600     # …and time the chatter out for ten minutes
+{{ p }}automod test some text  # what would happen, without doing it
+{{ p }}automod off</pre>
+<p>This is off in every channel until a moderator turns it on, and it needs the bot to be a moderator
+there. Only <code>block</code> entries count: <code>mask</code>, <code>replace</code> and
+<code>tag</code> change what the <em>bot</em> says and never cost a chatter their message. Moderators
+and the broadcaster are never actioned — quoting a word to talk about it is part of moderating.</p>
+
 <h2 id="moderation">Moderation-aware replies</h2>
 <p>If the message that triggered a command is deleted, or its author is timed out or banned while the bot
 is still working, the run is cancelled and nothing is sent. The check runs before each command, before any

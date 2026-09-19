@@ -204,6 +204,36 @@ class TwitchService:
             return SendResult(sent.id or None, f"twitch_rejected:{sent.dropped_code}")
         return SendResult(sent.id)
 
+    async def delete_message(self, channel_id: str, message_id: str) -> bool:
+        """Delete one message as the bot. Needs the moderator tier (architecture §9.3)."""
+        if self.client is None or self.bot_id is None:
+            return False
+        try:
+            await self.client.create_partialuser(channel_id).delete_chat_messages(
+                moderator=self.bot_id, message_id=message_id, token_for=self.bot_id
+            )
+        except Exception as exc:
+            log.warning("twitch.delete_failed", channel=channel_id, error=repr(exc))
+            return False
+        return True
+
+    async def timeout_user(self, channel_id: str, user_id: str, seconds: int, reason: str) -> bool:
+        """Time a chatter out as the bot. The reason is shown to them, so it stays generic."""
+        if self.client is None or self.bot_id is None:
+            return False
+        try:
+            await self.client.create_partialuser(channel_id).timeout_user(
+                moderator=self.bot_id,
+                user=user_id,
+                duration=seconds,
+                reason=reason,
+                token_for=self.bot_id,
+            )
+        except Exception as exc:
+            log.warning("twitch.timeout_failed", channel=channel_id, user=user_id, error=repr(exc))
+            return False
+        return True
+
     async def fetch_live(self, channel_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
         """Helix `Get Streams` for up to 100 channels (ADR-0007). Raises if the request fails."""
         if self.client is None:

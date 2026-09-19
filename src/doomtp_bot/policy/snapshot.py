@@ -28,6 +28,8 @@ class ChannelSettings:
     history_backfill: bool = False
     quiet_errors: bool = False
     timezone: str = "UTC"
+    automod_action: str = "off"  # off | delete | timeout (architecture §9.3)
+    automod_timeout_s: int = 600
     channel_var_write_role: str = "moderator"
     grant_min_role: str = "moderator"
     publish_min_role: str = "moderator"
@@ -99,6 +101,8 @@ async def load_snapshot(conn: aiosqlite.Connection) -> PolicySnapshot:
                 history_backfill=bool(r["history_backfill"]),
                 quiet_errors=bool(r["quiet_errors"]),
                 timezone=r["timezone"],
+                automod_action=r["automod_action"],
+                automod_timeout_s=r["automod_timeout_s"],
                 channel_var_write_role=r["channel_var_write_role"],
                 grant_min_role=r["grant_min_role"],
                 publish_min_role=r["publish_min_role"],
