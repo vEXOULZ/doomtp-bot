@@ -1,10 +1,23 @@
 {% extends "base.html" %}
 {% set p = default_prefix %}
 {% block title %}Language — doomtp-bot{% endblock %}
+{% block scripts %}<script src="/static/editor/editor.js" defer></script>{% endblock %}
 {% block content %}
 <h1>Language reference</h1>
 <p class="muted">Version {{ syntax_version }}. The bot's parser is the only authority on what is valid;
 this page and <code>/api/v1/language</code> come from it.</p>
+
+<h2 id="try">Try one</h2>
+<p>Type an expression and the bot tells you what it makes of it: colours as you type, the exact error a
+chat user would get, and &mdash; once it parses &mdash; which command each name resolves to, what it would
+store and what it would say. Nothing runs, and nothing is sent to chat.</p>
+{# `| e` keeps the sign a character: everything else on the site prints it as a Twemoji image. #}
+<dtb-editor context="line" prefix="{{ default_prefix | e }}" explain
+            hint="{{ default_prefix | e }}random 1-6 | echo you rolled {1}">
+  <textarea name="expr" rows="3" spellcheck="false">{{ default_prefix | e }}random 1-6 | echo you rolled {1}</textarea>
+</dtb-editor>
+<p class="muted">Without JavaScript this is an ordinary text box: the answers come from the bot either
+way, through <code>/api/v1/parse</code> and <code>/api/v1/explain</code>.</p>
 
 <h2>Shape of a line</h2>
 <pre>{{ p }}command argument "an argument with spaces" | other {1} &amp;&amp; third &gt; channel.saved</pre>

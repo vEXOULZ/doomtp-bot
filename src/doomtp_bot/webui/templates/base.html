@@ -80,6 +80,15 @@ footer { border-top: 1px solid var(--line); margin-top: 3rem; padding: 1rem 1.5r
 table.inner { margin: .4rem 0; }
 table.inner th, table.inner td { padding: .25rem .5rem; font-size: .9rem; }
 @media (max-width: 40rem) { .toc { columns: 1; } }
+/* The expression editor (ADR-0011). Its own colours come from these same variables, in theme.js. */
+.dtb-editor .cm-editor { max-height: 18rem; }
+.dtb-report { white-space: pre-wrap; margin: .6rem 0; padding: .6rem .8rem; border-radius: .4rem;
+  background: var(--panel); border: 1px solid var(--line); font-size: .9rem;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+button.dtb-explain { margin-top: .6rem; }
+dtb-editor textarea { width: 100%; font: inherit; font-family: ui-monospace, Consolas, monospace;
+  padding: .6rem; border-radius: .4rem; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); }
 </style>
 </head>
 <body>
@@ -102,6 +111,7 @@ table.inner th, table.inner td { padding: .25rem .5rem; font-size: .9rem; }
 <main>
 {% block content %}{% endblock %}
 </main>
+{% block scripts %}{% endblock %}
 <footer>
   {{ emoji("🏜") }} doomtp-bot {{ version }} · command language {{ syntax_version }} ·
   default command sign <code>{{ default_prefix }}</code> ·

@@ -17,7 +17,7 @@ Two parsers in two languages (Python and JavaScript) tend to drift apart. The sp
    - `POST /api/v1/parse` returns tokens, the AST and errors (below).
    - `POST /api/v1/explain` returns the full explain report (spec §9).
    - `GET /api/v1/language` returns the syntax version, operators, registered roots, context availability (§7.2), types, raw-tail commands, reserved variable names and limits. This drives autocomplete and hover docs.
-3. **The browser editor is CodeMirror 6 with a small Lezer grammar used only for highlighting.**
+3. **The browser editor is CodeMirror 6, with its own lexer used only for highlighting.**
    - It gives instant local colours while typing.
    - It is **not** authoritative: it never decides validity.
    - It ignores context-sensitive rules (raw tails, the prefix), and at worst colours a raw tail as ordinary words.
@@ -102,6 +102,6 @@ POST /api/v1/parse
 1. [ ] Build `lang/parser.py` as a PEG recursive-descent parser mirroring spec Appendix C, with labeled-failure throws and the parameter hooks.
 2. [ ] Move Appendix A to `tests/lang/corpus.yaml` and add pytest runners for AST, error code and column.
 3. [ ] Add `/api/v1/parse`, `/api/v1/explain` and `/api/v1/language`, with a token stream produced by the parser.
-4. [ ] Web: a CodeMirror 6 editor component, a Lezer highlight grammar, a debounced diagnostics linter and autocomplete from `/language`.
-5. [ ] Web tests: Lezer token classes against the corpus lexing cases.
+4. [x] Web: a CodeMirror 6 editor component, a highlight lexer, a debounced diagnostics linter and autocomplete from `/language`. *Built 2026-09-19: `web-editor/` bundles `<dtb-editor>` to `webui/static/editor/editor.js` (committed, since the image has no Node), and the language page carries it as a playground. **Deviation:** the highlighter is a hand-written lexer feeding CodeMirror decorations, not a Lezer grammar. Lezer builds a syntax tree, and nothing here needs one — the server owns every structural question — so a generated grammar would have added a build step and a second description of the syntax for colours alone. The token classes, the corpus tests and the 'never decides validity' rule are unchanged.*
+5. [x] Web tests: token classes against the corpus lexing cases. *Built 2026-09-19: `web-editor/test/tokens.test.js` asserts classes and spans, and every corpus case with an expected AST has to lex cleanly — nothing the server accepts may be underlined here.*
 6. [ ] Docs build: railroad diagrams from `docs/grammar/railroad.ebnf`, plus the CI diff check against spec Appendix D.

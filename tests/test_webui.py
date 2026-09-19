@@ -162,6 +162,19 @@ async def test_the_language_page_lists_operators_and_the_grammar(client: httpx.A
     assert "Grammar" in body  # the checked copy of spec Appendix D
 
 
+async def test_the_language_page_carries_the_expression_editor(client: httpx.AsyncClient) -> None:
+    """ADR-0011: the editor upgrades a plain textarea, so the page works either way."""
+    body = (await client.get("/docs/language")).text
+    assert "<dtb-editor" in body and 'context="line"' in body
+    assert "<textarea" in body  # what someone without JavaScript gets
+    assert '<script src="/static/editor/editor.js"' in body
+
+    bundle = await client.get("/static/editor/editor.js")
+    assert bundle.status_code == 200
+    assert bundle.headers["content-type"].startswith(("text/javascript", "application/javascript"))
+    assert "dtb-editor" in bundle.text  # the built bundle is committed, and is the one being served
+
+
 async def test_a_channel_page_lists_what_is_published(
     client: httpx.AsyncClient, services: dict[str, object]
 ) -> None:

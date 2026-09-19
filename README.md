@@ -123,14 +123,15 @@ the backups sit on the same disk as the originals, so they survive mistakes, not
 
 ```
 src/doomtp_bot/
-  api/          FastAPI app (health now; parse/explain/language/v1 next)
-  core/         events, event bus, health registry, single-instance lock
+  api/          FastAPI app: health, OAuth, the language API and /api/v1
+  core/         dispatch, channels, outbox, health, capabilities, stream status
   lang/         AST, parse errors, PEG recursive-descent parser
-  runtime/      Result, command specs (resolver/preflight/executor next)
+  runtime/      Result, command specs, resolver, preflight, executor, explain
   storage/      SQLite connections + migrations for bot.db and chatlog.db
+  webui/        server-rendered pages, the admin UI and the static files they serve
   twitch/ history/ chatlog/ moderation/ policy/ customcmds/
-  variables/ triggers/ filters/ audit/ modules/   (packages reserved per architecture)
+  variables/ triggers/ filters/ audit/ modules/
 tests/          pytest; tests/lang/corpus.yaml is the shared parser conformance corpus
-web-editor/     CodeMirror/Lezer expression editor (planned)
+web-editor/     the CodeMirror expression editor — npm, and the only Node in the repo
 docs/           architecture, spec, ADRs, grammar
 ```

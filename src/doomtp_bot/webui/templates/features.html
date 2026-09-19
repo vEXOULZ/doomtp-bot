@@ -240,6 +240,9 @@ Whether a channel is live comes from Twitch once a minute, which is what <code>o
 <h2 id="explain">Explaining an expression</h2>
 <pre>{{ p }}explain {{ p }}random 1-6 | echo you rolled {1}
 {{ p }}explain --run {{ p }}ping</pre>
+<p>The same report is on the <a href="/docs/language#try">language page</a>, in an editor that colours
+what you type, underlines the exact error a chat user would get, and completes command names,
+placeholders and types from the bot itself. Nothing there runs or is sent to chat.</p>
 <p>Shows how each name resolved (built-in, published, or your alias, with the author and version), your
 rank against what each command requires, both cooldowns with the time remaining, which placeholders exist
 in that context, and the first check that would fail. <code>--run</code> also evaluates it, with variable

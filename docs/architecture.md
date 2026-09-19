@@ -517,9 +517,10 @@ A **race window** remains: a mod can act after the message has already been sent
 
 **UI technology:**
 - **Pages** are server-rendered **Jinja2** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages. *(Built with plain forms so far: HTMX would be a CDN dependency or a vendored file, and nothing yet needs partial updates. Add it when a page does.)*
-- **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component with a small **Lezer** grammar for local highlighting. It gets diagnostics from `/api/v1/parse`, autocomplete from `/api/v1/language` and previews from `/api/v1/explain`.
-  - It ships as a single static JS bundle, built in CI (esbuild) and served from `/static`.
-  - It's embedded in the HTMX pages as a web component, so only this component needs Node tooling.
+- **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component whose own lexer (`web-editor/src/tokens.js`) only colours text; diagnostics come from `/api/v1/parse`, autocomplete from `/api/v1/language` and `/api/v1/commands`, and the preview from `/api/v1/explain`.
+  - It ships as a single static bundle (esbuild), **committed** at `webui/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
+  - It is a web component, `<dtb-editor>`, that upgrades the `<textarea>` it wraps — so a page works without JavaScript and an ordinary form post still carries the same field. Only this component needs Node tooling.
+  - It's on the language page as a playground today; the pages that edit bodies and triggers can use the same element.
 - **Public docs pages** include railroad diagrams generated at build time from `docs/grammar/railroad.ebnf` (spec Appendix D).
 - If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes.
 
@@ -554,9 +555,10 @@ src/doomtp_bot/
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
 │                                                                          ·  weather, quotes, logsearch…
 ├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
-└─ api/         app.py keys.py routes/ (health auth language data)         ✔  ·  the CodeMirror editor bundle
+└─ api/         app.py keys.py routes/ (health auth language data)         ✔
+                webui/static/editor/editor.js                              ✔ the built editor bundle, committed
 
-web-editor/                  # the only Node-tooled part: CodeMirror 6 + Lezer highlight grammar → static bundle
+web-editor/                  # the only Node-tooled part: CodeMirror 6 → one static bundle (ADR-0011)
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)
 docs/grammar/railroad.ebnf   # spec Appendix D, CI-checked copy for railroad diagrams
 ```
