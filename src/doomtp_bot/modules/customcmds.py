@@ -19,15 +19,18 @@ from doomtp_bot.customcmds.service import (
     Publication,
 )
 from doomtp_bot.lang.errors import ParseError
+from doomtp_bot.lang.parser import Context
 from doomtp_bot.modules._common import rank, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
-from doomtp_bot.runtime.context import Args, CommandContext
+from doomtp_bot.runtime.context import Args, CommandContext, Publisher
+from doomtp_bot.runtime.executor import ScopeArgs, UsageError
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
 
 if TYPE_CHECKING:
     from doomtp_bot.policy.service import PolicyService
+    from doomtp_bot.runtime.engine import Runtime
     from doomtp_bot.variables.access import VariableAccessPolicy
 
 MODULE = "customcmds"
@@ -35,6 +38,7 @@ USAGE = (
     "cc add <name> <expression> | edit <name> <expression> | rm <name> | list | info <name> |"
     " versions <name> | revert <name> <version> | share <name> on|off |"
     " param <name> <pos> name=<n> [type=…] [required=yes] <description> | describe <name> <summary> |"
+    " run <id> [args…] |"
     " pack create|add|rm|share|list|info|delete <pack> [commands…] | publish pack <pack> [global] |"
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
@@ -501,6 +505,66 @@ async def _grant(ctx: CommandContext, v: list[str], granted: bool) -> Result:
     )
 
 
+async def _run(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """`cc run <id> [args…]` runs a command by its id, skipping name resolution (ADR-0009 §5).
+
+    The owner's escape hatch: try a command that is published nowhere, or one whose name a built-in
+    has taken. A *shared* command runs for anybody this way — the same door `cc link @owner <name>`
+    opens — and a private one stays private.
+
+    Typed in chat only. A body that could reach `cc run` would recurse past the depth and cycle
+    checks preflight does for names, and `{sign}cc run` inside a body is not a thing anyone needs.
+    """
+    _need(v, 2)
+    if ctx.exec.context is not Context.LINE:
+        raise CommandError("cc run only works typed in chat")
+    user_id, _ = _invoker(ctx)
+    command = await _service(ctx).by_id(v[1])
+    if command is None:
+        raise CommandError(f"no command with id {v[1]}")
+    if command.owner_user_id != user_id and not command.shareable:
+        raise CommandError(f"{command.id} isn't shared", Code.DENIED)
+
+    runtime: Runtime = ctx.service("runtime")
+    values = tuple(v[2:])
+    body_ctx = runtime.make_context(
+        channel=ctx.channel,
+        invoker=ctx.invoker,
+        context=Context.BODY,
+        trigger_type=ctx.exec.trigger_type,
+        message_id=ctx.exec.message_id,
+        run_as_rank=ctx.exec.run_as_rank,
+        dry_run=ctx.exec.dry_run,
+        is_cancelled=ctx.exec.is_cancelled,
+        rng=ctx.exec.rng,
+        clock=ctx.exec.clock,
+        bot=ctx.exec.bot,
+    )
+    spec = spec_for(command.name, command, None)
+    try:
+        params = await runtime.executor.bind(spec, values, body_ctx)
+    except UsageError as exc:
+        raise CommandError(f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}") from exc
+    report = await runtime.run(
+        command.body,
+        body_ctx,
+        scope_args=ScopeArgs.of(values, params),
+        publisher=Publisher(
+            id=command.owner_user_id,
+            login=command.owner_login,
+            command_id=command.id,
+            command_name=command.name,
+            alias=command.name,
+            version=command.version,
+        ),
+    )
+    if report is None:  # Body context parses everything, or fails loudly
+        raise CommandError(f"{command.id} has an empty body")
+    if report.result.code >= 100:  # timed out, denied, cancelled: the runtime owns those codes
+        raise CommandError(report.result.message or f"{command.id} didn't finish", report.result.code)
+    return report.result
+
+
 _SUBCOMMANDS = {
     "add": _add,
     "edit": _edit,
@@ -514,6 +578,7 @@ _SUBCOMMANDS = {
     "param": _param,
     "pack": _pack,
     "describe": _describe,
+    "run": _run,
     "link": _link,
     "unlink": _unlink,
     "publish": _publish,
@@ -531,6 +596,11 @@ _SUBCOMMANDS = {
         examples=(
             Example("{sign}cc add hype echo {chatter.display} is hyped!", "created {sign}hype (cc_7f3k2)"),
             Example("{sign}cc publish hype", 'published "hype" as {sign}hype'),
+            Example(
+                "{sign}cc run cc_7f3k2 world",
+                "hello world",
+                note="runs a command by id, whatever it is published as",
+            ),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=5)},
         log_level=LogLevel.INVOCATIONS,

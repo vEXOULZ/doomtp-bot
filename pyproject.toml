@@ -52,6 +52,11 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM"]
 ignore = ["E501"]  # line length is enforced by `ruff format`; long docstrings/comments are allowed
 
+[tool.ruff.format]
+# ruff formats fenced Python in Markdown; docs/ shows illustrative, hand-aligned code that isn't ours to
+# reflow (and doesn't have to compile), so the formatter stays out of it.
+exclude = ["*.md"]
+
 [tool.mypy]
 python_version = "3.11"
 packages = ["doomtp_bot"]

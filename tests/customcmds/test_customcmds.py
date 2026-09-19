@@ -358,6 +358,53 @@ async def test_cc_list_and_info(h: Harness) -> None:
     assert info is not None and "by @alice, v1" in info and "echo hi" in info
 
 
+# ── running by id (ADR-0009 action item 6) ─────────────────────────────────
+async def test_cc_run_reaches_a_command_by_id(h: Harness) -> None:
+    """The owner's escape hatch: no publication, no alias, and the name is a built-in's."""
+    await h.say("alice", "!cc add ping echo pong from {publisher.name} to {arg.1 ?? nobody}")
+    assert await h.say("alice", "!ping") == "pong"  # the built-in still wins by name
+    command = await h.service.by_owner(USERS["alice"]["id"], "ping")
+    assert command is not None
+
+    assert await h.say("alice", f"!cc run {command.id} bob") == "pong from alice to bob"
+    assert await h.say("alice", f"!cc run {command.id}") == "pong from alice to nobody"
+
+
+async def test_cc_run_refuses_a_private_command_and_an_unknown_id(h: Harness) -> None:
+    await h.say("alice", "!cc add secret echo the password is hunter2")
+    command = await h.service.by_owner(USERS["alice"]["id"], "secret")
+    assert command is not None
+
+    private = await h.run("bob", f"!cc run {command.id}")
+    assert (private.result.code, private.send) == (Code.DENIED, None)
+
+    await h.say("alice", "!cc share secret on")  # shared: the same door cc link opens
+    assert await h.say("bob", f"!cc run {command.id}") == "the password is hunter2"
+
+    unknown = await h.run("bob", "!cc run cc_nope")
+    assert unknown.result.code == Code.USAGE and "no command with id" in (unknown.result.message or "")
+
+
+async def test_cc_run_validates_declared_params_and_runs_as_the_invoker(h: Harness) -> None:
+    await h.say("alice", "!cc add roll echo {chatter.display} rolled {arg.sides}")
+    await h.say("alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "sides"')
+    await h.say("alice", "!cc share roll on")
+    command = await h.service.by_owner(USERS["alice"]["id"], "roll")
+    assert command is not None
+
+    assert await h.say("bob", f"!cc run {command.id} 20") == "Bob rolled 20"
+    too_big = await h.run("bob", f"!cc run {command.id} 500")
+    assert too_big.result.code == Code.USAGE and "sides" in (too_big.result.message or "")
+
+
+async def test_a_body_cannot_call_cc_run(h: Harness) -> None:
+    """Otherwise a body could recurse past the depth and cycle checks preflight does for names."""
+    inner = await h.add("alice", "inner", "echo inner")
+    await h.say("alice", f"!cc add outer cc run {inner.id}")
+    report = await h.run("alice", "!outer")
+    assert report.result.code == Code.USAGE and "typed in chat" in (report.result.message or "")
+
+
 # ── declared parameters and !help (ADR-0009 action item 3) ─────────────────
 async def test_declared_params_are_validated_and_shown(h: Harness) -> None:
     await h.say("alice", "!cc add roll random 1-{arg.sides} | echo {chatter.display} rolled {1}")

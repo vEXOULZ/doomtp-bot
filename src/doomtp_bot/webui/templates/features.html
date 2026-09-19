@@ -109,6 +109,9 @@ anyone new powers.</p>
 <p>Names resolve in this order: <strong>built-in → published in this channel → a pack published here →
 published globally → your personal alias</strong>. <code>{{ p }}@name</code> addresses your own alias
 directly, and a built-in can never be shadowed.</p>
+<p>When a name won't reach it — nothing is published yet, or a built-in has the name — run it by its id:
+<code>{{ p }}cc run cc_7f3k2 arg1 arg2</code>. That works for your own commands and for any shared one,
+and only when you type it in chat, never from inside another command.</p>
 
 <h2 id="packs">Packs and derived commands</h2>
 <p>A <strong>pack</strong> is a set of commands that belong together — a game, a toolkit — published and

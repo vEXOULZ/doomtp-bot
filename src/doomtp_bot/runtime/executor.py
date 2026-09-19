@@ -70,6 +70,11 @@ class ScopeArgs:
             offsets.append(start)
         return cls(tuple(values), text, tuple(offsets))
 
+    @classmethod
+    def of(cls, values: tuple[str, ...], params: dict[str, Any] | None = None) -> ScopeArgs:
+        """Arguments already split into words, as a custom command's own arguments arrive."""
+        return cls(values, " ".join(values), _offsets(values), params or {})
+
 
 def _offsets(values: tuple[str, ...]) -> tuple[int, ...]:
     """Offsets of each value inside `" ".join(values)`, so `{arg.N+raw}` can slice it."""
@@ -150,7 +155,7 @@ class Executor:
             result = error_result(
                 "E_MISSING_VALUE", f"missing value: {exc.reference}", reference=exc.reference
             )
-        except _UsageError as exc:
+        except UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
             if not ctx.dry_run:  # !explain --run must not use up a cooldown (spec §9)
@@ -203,9 +208,7 @@ class Executor:
         target = resolved.custom
         assert target is not None
         body_scope = Scope(
-            scope.bodies.get(target.command_id, {}),
-            ScopeArgs(values, " ".join(values), _offsets(values), params),
-            scope.bodies,
+            scope.bodies.get(target.command_id, {}), ScopeArgs.of(values, params), scope.bodies
         )
         publisher, context = ctx.publisher, ctx.context
         ctx.publisher, ctx.context = (
@@ -230,7 +233,7 @@ class Executor:
         bound: dict[str, Any] = {}
         has_variadic = any(p.variadic for p in spec.params)
         if not has_variadic and len(values) > len(spec.params):
-            raise _UsageError("too many arguments" if spec.params else "takes no arguments")
+            raise UsageError("too many arguments" if spec.params else "takes no arguments")
         for p in spec.params:
             i = p.index - 1
             raw: str | None
@@ -240,7 +243,7 @@ class Executor:
                 raw = values[i] if i < len(values) else None
             if raw is None or (p.variadic and raw == ""):
                 if p.required:
-                    raise _UsageError(f"{p.name} is required")
+                    raise UsageError(f"{p.name} is required")
                 bound[p.name] = p.default
                 continue
             try:
@@ -254,7 +257,7 @@ class Executor:
                     max_len=p.max_len,
                 )
             except ConversionError as exc:
-                raise _UsageError(f"{p.name}: {exc}") from exc
+                raise UsageError(f"{p.name}: {exc}") from exc
         return bound
 
     # ── §7.3 expansion ──────────────────────────────────────────────────────
@@ -401,5 +404,5 @@ class Executor:
         }
 
 
-class _UsageError(Exception):
-    pass
+class UsageError(Exception):
+    """Arguments that don't fit the spec. Callers of `bind` turn it into a usage failure."""
