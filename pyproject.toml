@@ -39,6 +39,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/doomtp_bot"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# The language page shows the grammar (ADR-0011), and `docs/` is not installed: ship a copy with it.
+"docs/grammar/railroad.ebnf" = "doomtp_bot/webui/static/railroad.ebnf"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

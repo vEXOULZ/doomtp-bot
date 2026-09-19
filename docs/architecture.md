@@ -572,6 +572,12 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **Docker Compose:**
   - `doomtp-bot`: non-root, read-only root filesystem, `/data` volume, LAN-bound port.
   - `datasette`: optional, read-only on `chatlog.db`.
+- **What the image holds:** the locked dependency set and the installed package — templates, static files,
+  the built editor bundle and the copy of the grammar the language page shows (force-included into the
+  wheel, since `docs/` isn't installed). There is no Node in the image, which is why `web-editor/`'s
+  output is committed rather than built there. *Built and run from a clean tree on 2026-09-19: migrations
+  apply, `/readyz` is ok with Twitch reported as disabled, and the language page serves both the grammar
+  and the editor.*
 - **Self-hosted history, optional:** for independence from the public recent-messages service, run a `recent-messages2` container on a separate compose stack. It needs TimescaleDB. Don't restart it together with the bot during updates. Point `HISTORY_PROVIDER_URL` at it.
 - **Updates:** before stopping, the bot writes `log_sessions.end_reason='update'`. On start, it backfills the gap.
 - **Backups:** run nightly `sqlite3 .backup` for both database files. `bot.db` is critical because it holds custom commands, variables and roles.

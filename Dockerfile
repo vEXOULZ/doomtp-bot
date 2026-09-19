@@ -9,6 +9,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
+# The language page shows the grammar, and the wheel force-includes it (pyproject) — so it has to be here.
+COPY docs/grammar/railroad.ebnf ./docs/grammar/railroad.ebnf
 RUN uv sync --locked --no-dev --no-editable
 
 # ── Runtime ───────────────────────────────────────────────────────────────────

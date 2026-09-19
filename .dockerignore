@@ -4,6 +4,7 @@ data
 secrets
 .env
 docs
+!docs/grammar/railroad.ebnf
 tests
 web-editor/node_modules
 **/__pycache__

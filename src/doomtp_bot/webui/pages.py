@@ -34,7 +34,13 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # Every value a template prints goes through here, so the command sign is drawn the same everywhere.
 TEMPLATES.env.finalize = emoji.finalize
 TEMPLATES.env.globals["emoji"] = emoji.emojify
-_GRAMMAR_FILE = Path(__file__).resolve().parents[3] / "docs" / "grammar" / "railroad.ebnf"
+# The wheel carries a copy beside the static files (see pyproject), because `docs/` isn't installed;
+# in a source checkout the repository's own copy is the one being edited, so it wins.
+_GRAMMAR_FILES = (
+    Path(__file__).resolve().parents[3] / "docs" / "grammar" / "railroad.ebnf",
+    Path(__file__).parent / "static" / "railroad.ebnf",
+)
+_GRAMMAR_FILE = next((f for f in _GRAMMAR_FILES if f.is_file()), _GRAMMAR_FILES[0])
 # Read once at import: the docs page shows the same grammar CI checks against the spec (ADR-0011).
 GRAMMAR = _GRAMMAR_FILE.read_text(encoding="utf-8") if _GRAMMAR_FILE.is_file() else ""
 router = APIRouter(tags=["web"])
