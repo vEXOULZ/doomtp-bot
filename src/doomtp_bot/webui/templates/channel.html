@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_commands.html" import command_table %}
 {% block title %}#{{ channel.login }} — doomtp-bot{% endblock %}
 {% block content %}
 <h1>#{{ channel.login }}</h1>
@@ -10,39 +11,19 @@
 <p class="muted">Type <code>{{ channel.prefix }}help</code> in chat for the commands you personally can
 run here. The <a href="/docs/commands">command reference</a> lists every built-in.</p>
 
-<h2>Published custom commands</h2>
-{% if publications %}
-<table>
-  <tr><th>Command</th><th>By</th><th>Version</th><th>What it does</th></tr>
-  {% for publication, command in publications %}
-  <tr>
-    <td><code>{{ channel.prefix }}{{ publication.name }}</code></td>
-    <td>@{{ command.owner_login }}</td>
-    <td>v{{ command.version }}</td>
-    <td>{{ command.summary or command.body }}</td>
-  </tr>
-  {% endfor %}
-</table>
-<p class="muted">These are community commands. Their authors can edit them at any time, and the change
-applies here immediately — moderators can switch one off with
-<code>{{ channel.prefix }}cc disable &lt;name&gt;</code>.</p>
+<h2>Custom commands published here</h2>
+{% if rows %}
+{{ command_table(rows, channel.prefix) }}
+<p class="muted">These are community commands, grouped by the pack they came from. Their authors can
+edit them at any time and the change applies here immediately — moderators can switch one off with
+<code>{{ channel.prefix }}cc disable &lt;name&gt;</code>, or a whole pack with
+<code>{{ channel.prefix }}module disable &lt;pack&gt;</code>.</p>
+{% if packs %}
+<p>Packs published here:
+{% for pack in packs %}<code>{{ pack.name }}</code>{% if pack.summary %} — {{ pack.summary }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}
 {% else %}
 <p class="muted">Nothing published here yet. A moderator can offer one with
 <code>{{ channel.prefix }}cc publish &lt;name&gt;</code>.</p>
-{% endif %}
-
-<h2>Packs</h2>
-{% if packs %}
-{% for pack, members in packs %}
-<div class="card">
-  <h3 style="margin-top:0"><code>{{ pack.name }}</code></h3>
-  {% if pack.summary %}<p>{{ pack.summary }}</p>{% endif %}
-  <p>{% for member in members %}<code>{{ channel.prefix }}{{ member.name }}</code>{% if not loop.last %} · {% endif %}{% endfor %}</p>
-  <p class="muted">Published as a set. Moderators can turn the whole pack off with
-  <code>{{ channel.prefix }}module disable {{ pack.name }}</code>.</p>
-</div>
-{% endfor %}
-{% else %}
-<p class="muted">No packs published here.</p>
 {% endif %}
 {% endblock %}

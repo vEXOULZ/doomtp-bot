@@ -1,0 +1,97 @@
+{#
+  One searchable, compact command table, shared by the command reference and the channel pages.
+  Every command takes a single line; clicking it opens the full detail pane underneath.
+  It is a grid rather than a <table> so a row can be a <details> and its pane can span every column.
+#}
+{% macro command_table(rows, prefix, what='commands') %}
+<div class="cmdblock">
+  <div class="filters">
+    <input type="search" class="cmdsearch" autocomplete="off"
+           placeholder="Search by name, module, author or text…">
+    <span class="muted count">{{ rows|length }} {{ what }}</span>
+  </div>
+
+  <div class="cmdtable">
+    <div class="head">
+      <span>Command</span><span>Module</span><span>Needs</span><span>What it does</span>
+    </div>
+    {% for row in rows %}
+    <details data-search="{{ row.search }}">
+      <summary>
+        <span class="name"><code>{{ prefix }}{{ row.usage }}</code></span>
+        <span class="muted">{{ row.module }}</span>
+        <span class="muted">{{ row.role }}</span>
+        <span>{{ row.summary }}</span>
+      </summary>
+      <div class="detail">
+        {% if row.description %}<p>{{ row.description }}</p>{% endif %}
+        {% if row.kind != 'built-in' %}
+        <p class="muted">A custom command by <strong>@{{ row.owner }}</strong> (v{{ row.version }}){%
+          if row.kind == 'derived' %}, published for every channel{% endif %}. Its author can change it
+          at any time.</p>
+        <pre>{{ row.body }}</pre>
+        {% endif %}
+        <p>
+          <span class="pill">needs {{ row.role }}</span>
+          {% if row.aliases %}<span class="pill">also {{ row.aliases|join(', ') }}</span>{% endif %}
+          {% if row.always_on %}<span class="pill">always on</span>{% endif %}
+          {% if row.fixed_policy %}<span class="pill">no cooldown, no role</span>{% endif %}
+          {% for role, cd in row.cooldowns.items() %}
+            <span class="pill">{{ role }}: {{ cd[0] }}s shared / {{ cd[1] }}s personal</span>
+          {% endfor %}
+        </p>
+        {% if row.params %}
+        <table class="inner">
+          <tr><th>Argument</th><th>Type</th><th>Required</th><th>Meaning</th></tr>
+          {% for param in row.params %}
+          <tr>
+            <td><code>{{ param.name }}</code> <span class="muted">({{ param.position }})</span></td>
+            <td>{{ param.type }}{% if param.choices %}: {{ param.choices|join(', ') }}{% endif %}</td>
+            <td>{{ 'yes' if param.required else 'no' }}</td>
+            <td>{{ param.description }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+        {% if row.examples %}
+        <pre>{% for example in row.examples %}{{ example.invocation }}{% if example.output %}
+  → {{ example.output }}{% endif %}
+{% endfor %}</pre>
+        {% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  <p class="muted empty" hidden>Nothing matches that.</p>
+
+<script>
+// Filter rows as you type; every term has to match. Without JavaScript the list simply shows everything.
+(function () {
+  const block = document.currentScript.parentElement;
+  const input = block.querySelector(".cmdsearch");
+  const rows = Array.from(block.querySelectorAll(".cmdtable > details"));
+  const count = block.querySelector(".count");
+  const empty = block.querySelector(".empty");
+  const noun = count.textContent.trim().split(" ").pop();
+
+  function apply() {
+    const terms = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const row of rows) {
+      const match = terms.every((term) => row.dataset.search.includes(term));
+      row.hidden = !match;
+      if (match) shown++;
+    }
+    count.textContent = shown + " " + (shown === 1 ? noun.replace(/s$/, "") : noun);
+    empty.hidden = shown !== 0;
+  }
+
+  input.addEventListener("input", apply);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { input.value = ""; apply(); }
+  });
+  apply();
+})();
+</script>
+</div>
+{% endmacro %}

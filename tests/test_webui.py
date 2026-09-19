@@ -15,6 +15,7 @@ from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
@@ -90,6 +91,31 @@ async def test_the_command_page_is_generated_from_the_specs(client: httpx.AsyncC
     assert "shared /" in body or "shared" in body  # cooldown defaults are shown
 
 
+async def test_the_command_page_is_one_searchable_row_per_command(
+    client: httpx.AsyncClient, services: dict[str, object]
+) -> None:
+    runtime: Runtime = services["runtime"]  # type: ignore[assignment]
+    body = (await client.get("/docs/commands")).text
+    assert body.count("<details data-search=") == len(runtime.registry.all())
+    assert 'class="cmdsearch"' in body
+    # The search box matches on the name, the aliases, the module and the summary, lowercased.
+    spec = runtime.registry.get("help").spec
+    row = [line for line in body.splitlines() if "data-search" in line and f'"{spec.name}' in line]
+    assert row and spec.module in row[0] and spec.summary.lower() in row[0]
+
+
+async def test_globally_published_commands_join_the_reference(
+    client: httpx.AsyncClient, services: dict[str, object]
+) -> None:
+    customcmds: CustomCommandService = services["customcmds"]  # type: ignore[assignment]
+    command = await customcmds.create(
+        owner_user_id="400", owner_login="alice", name="dice", body="random 1 6"
+    )
+    await customcmds.publish(channel_id=GLOBAL, name="dice", command=command, published_by="1")
+    body = (await client.get("/docs/commands")).text
+    assert "dice" in body and "@alice" in body and "published for every channel" in body
+
+
 async def test_the_features_page_documents_every_area(client: httpx.AsyncClient) -> None:
     body = (await client.get("/docs/features")).text
     for heading in (
@@ -127,6 +153,7 @@ async def test_a_channel_page_lists_what_is_published(
     await customcmds.publish(channel_id=CHANNEL_ID, name="hype", command=command, published_by="300")
     body = (await client.get(f"/channels/{CHANNEL_LOGIN}")).text
     assert "hype" in body and "@alice" in body
+    assert body.count("<details data-search=") == 1  # the same compact, searchable table
 
     assert (await client.get("/channels/nobody")).status_code == 404
 

@@ -503,7 +503,7 @@ A **race window** remains: a mod can act after the message has already been sent
 | `GET /api/v1/language` | Early | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
 | `/api/v1/...` channels, roles, toggles, cooldowns, filters, triggers, variables, custom commands, messages search, audit log, command runs | Later | API key or session auth. All writes go through the same services and the audit log. |
 | `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. |
-| `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. |
+| `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. The command reference and the channel pages share one compact table: a line per command, a `<details>` pane for arguments, cooldowns and examples, and a search box that filters client-side over a precomputed `data-search` string (so it needs no request per keystroke, and the page still lists everything without JavaScript). |
 
 **UI technology:**
 - **Pages** are server-rendered **Jinja2** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages. *(Built with plain forms so far: HTMX would be a CDN dependency or a vendored file, and nothing yet needs partial updates. Add it when a page does.)*

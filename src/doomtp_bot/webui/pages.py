@@ -96,12 +96,77 @@ async def index(request: Request) -> HTMLResponse:
 
 @router.get("/docs/commands", response_class=HTMLResponse)
 async def commands_page(request: Request) -> HTMLResponse:
+    """Every command the bot offers everywhere: built-ins, plus globally published ones (ADR-0012)."""
     runtime = _state(request, "runtime")
-    specs = [c.spec for c in runtime.registry.all()] if runtime else []
-    by_module: dict[str, list[Any]] = {}
-    for spec in specs:
-        by_module.setdefault(spec.module, []).append(spec)
-    return _page(request, "commands.html", by_module=dict(sorted(by_module.items())))
+    rows = [_builtin_row(c.spec) for c in runtime.registry.all()] if runtime else []
+    rows += await _global_custom_rows(request)
+    rows.sort(key=lambda row: (row["module"], row["name"]))
+    return _page(request, "commands.html", rows=rows, modules=sorted({r["module"] for r in rows}))
+
+
+def _builtin_row(spec: Any) -> dict[str, Any]:
+    return {
+        "name": spec.name,
+        "usage": spec.usage(),
+        "module": spec.module,
+        "kind": "built-in",
+        "role": spec.required_role,
+        "summary": spec.summary,
+        "description": spec.description if spec.description != spec.summary else "",
+        "aliases": list(spec.aliases),
+        "params": list(spec.params),
+        "examples": list(spec.examples),
+        "cooldowns": {r: (c.tier_s, c.user_s) for r, c in spec.default_cooldowns.items()},
+        "always_on": not spec.toggleable,
+        "fixed_policy": spec.fixed_policy,
+        "owner": "",
+        "version": 0,
+        "body": "",
+        # Everything the search box matches on, lowercased once here rather than in the browser.
+        "search": " ".join([spec.name, *spec.aliases, spec.module, spec.summary]).lower(),
+    }
+
+
+def _custom_row(name: str, command: Any, module: str, kind: str) -> dict[str, Any]:
+    from doomtp_bot.customcmds.params import to_params
+
+    summary = command.summary or f"custom command by @{command.owner_login}"
+    return {
+        "name": name,
+        "usage": name,
+        "module": module,
+        "kind": kind,
+        "role": "everyone",
+        "summary": summary,
+        "description": "",
+        "aliases": [],
+        "params": list(to_params(command.params)),
+        "examples": [],
+        "cooldowns": {},
+        "always_on": False,
+        "fixed_policy": False,
+        "owner": command.owner_login,
+        "version": command.version,
+        "body": command.body,
+        "search": " ".join([name, module, summary, command.owner_login, command.body]).lower(),
+    }
+
+
+async def _global_custom_rows(request: Request) -> list[dict[str, Any]]:
+    """Derived commands: published to the global scope, so they work in every channel (ADR-0012)."""
+    customcmds, packs = _state(request, "customcmds"), _state(request, "packs")
+    rows: list[dict[str, Any]] = []
+    if customcmds is not None:
+        for publication, command in await customcmds.publications_in(GLOBAL):
+            if publication.status == "active" and command.status == "active":
+                rows.append(_custom_row(publication.name, command, "custom", "derived"))
+    if packs is not None:
+        for publication, pack in await packs.publications_in(GLOBAL):
+            if publication.status != "active":
+                continue
+            for member in await packs.members(pack.id):
+                rows.append(_custom_row(member.name, member, pack.name, "derived"))
+    return rows
 
 
 @router.get("/docs/language", response_class=HTMLResponse)
@@ -127,19 +192,21 @@ async def features_page(request: Request) -> HTMLResponse:
 async def channel_page(request: Request, login: str) -> HTMLResponse:
     settings = _channel_or_404(request, login)
     customcmds, packs = _state(request, "customcmds"), _state(request, "packs")
-    publications = await customcmds.publications_in(settings.channel_id) if customcmds else []
+    rows: list[dict[str, Any]] = []
+    if customcmds is not None:
+        for publication, command in await customcmds.publications_in(settings.channel_id):
+            if publication.status == "active" and command.status == "active":
+                rows.append(_custom_row(publication.name, command, "custom", "published"))
     published_packs = []
     if packs is not None:
         for publication, pack in await packs.publications_in(settings.channel_id, include_global=True):
-            if publication.status == "active":
-                published_packs.append((pack, await packs.members(pack.id)))
-    return _page(
-        request,
-        "channel.html",
-        channel=settings,
-        publications=[(p, c) for p, c in publications if p.status == "active" and c.status == "active"],
-        packs=published_packs,
-    )
+            if publication.status != "active":
+                continue
+            members = await packs.members(pack.id)
+            published_packs.append(pack)
+            rows += [_custom_row(m.name, m, pack.name, "published") for m in members]
+    rows.sort(key=lambda row: (row["module"], row["name"]))
+    return _page(request, "channel.html", channel=settings, rows=rows, packs=published_packs)
 
 
 # ── admin ───────────────────────────────────────────────────────────────────

@@ -47,6 +47,37 @@ input[type=password], input[type=text] { font: inherit; padding: .4rem .6rem; bo
 footer { border-top: 1px solid var(--line); margin-top: 3rem; padding: 1rem 1.5rem;
          color: var(--muted); font-size: .85rem; }
 .toc { columns: 2; column-gap: 2rem; }
+.filters { display: flex; gap: .8rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
+.filters input[type=search] { flex: 1 1 22rem; font: inherit; padding: .45rem .7rem;
+  border-radius: .3rem; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.cmdtable { --cols: minmax(13rem, 30%) 8rem 7rem minmax(12rem, 1fr); margin: .5rem 0 1rem; }
+.cmdtable .head, .cmdtable summary { display: grid; grid-template-columns: var(--cols);
+  gap: .7rem; padding: .3rem .4rem; border-bottom: 1px solid var(--line); align-items: baseline; }
+.cmdtable .head { color: var(--muted); font-weight: 600; font-size: .85rem;
+  text-transform: uppercase; letter-spacing: .04em; }
+.cmdtable summary { cursor: pointer; list-style: none; }
+.cmdtable summary::-webkit-details-marker { display: none; }
+.cmdtable summary:hover { background: var(--panel); }
+.cmdtable .name { white-space: nowrap; min-width: 0; overflow-x: auto; }
+.cmdtable .name::before { content: "▸"; color: var(--muted); margin-right: .4rem;
+  display: inline-block; transition: transform .1s; }
+.cmdtable details[open] .name::before { transform: rotate(90deg); }
+.cmdtable .detail { padding: .5rem .4rem 1rem 1.8rem; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.detail p { margin: .4rem 0; }
+.detail pre { margin: .5rem 0; }
+.detail table.inner { max-width: 46rem; }
+@media (max-width: 48rem) {
+  /* Too narrow for columns: the command and its summary stack, the rest is in the detail pane. */
+  .cmdtable { --cols: 1fr; }
+  .cmdtable .head { display: none; }
+  .cmdtable summary { gap: .1rem; padding: .45rem .4rem; }
+  .cmdtable summary span:nth-child(2), .cmdtable summary span:nth-child(3) { display: none; }
+  .cmdtable summary span:nth-child(4) { color: var(--muted); font-size: .9rem; padding-left: 1.1rem; }
+  .cmdtable .detail { padding-left: 1rem; }
+}
+table.inner { margin: .4rem 0; }
+table.inner th, table.inner td { padding: .25rem .5rem; font-size: .9rem; }
 @media (max-width: 40rem) { .toc { columns: 1; } }
 </style>
 </head>
