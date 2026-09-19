@@ -5,11 +5,13 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
 
 from doomtp_bot.core.events import ChatNotification
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
@@ -138,7 +140,7 @@ async def test_a_broken_expression_is_never_stored(h: Harness) -> None:
 
 async def test_unsupported_types_are_stored_with_a_warning(h: Harness) -> None:
     reply = await h.say("mod", "!trigger add follow echo thanks for following")
-    assert reply is not None and "need channel authorization the bot lacks" in reply
+    assert reply is not None and "grants followers" in reply  # stored, but the bot isn't a mod here
 
 
 async def test_triggers_run_at_the_creators_rank(h: Harness) -> None:
@@ -186,11 +188,11 @@ async def test_match_conditions_filter_events(h: Harness) -> None:
 
 
 async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Databases) -> None:
-    """The whole path: a chat line and a raid notification reach their triggers."""
+    """The whole path: a chat line, a raid notification and a stream going live reach their triggers."""
     from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.channels import ChannelManager
     from doomtp_bot.core.dispatch import Dispatcher
-    from doomtp_bot.core.events import ChatMessage
+    from doomtp_bot.core.events import ChatMessage, StreamStatusChanged
     from doomtp_bot.moderation.index import ModerationIndex
 
     policy = PolicyService(dbs.bot, clock=TickingClock())
@@ -209,9 +211,17 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
     await triggers.add(
         channel_id=CHANNEL_ID, type_="raid", expr="echo raid!", run_as_rank=0, created_by="300"
     )
+    await triggers.add(
+        channel_id=CHANNEL_ID,
+        type_="stream_online",
+        expr="echo live: {event.title}",
+        run_as_rank=0,
+        created_by="300",
+    )
     sender = FakeSender()
     outbox = Outbox(sender, None)
     writer = ChatLogWriter(dbs.chatlog)
+    streams = StreamStatus()
     runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
     channels = ChannelManager(policy, None, writer)
     dispatcher = Dispatcher(
@@ -224,6 +234,7 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         triggers=triggers,
         trigger_runner=TriggerRunner(runtime=runtime, policy=policy, outbox=outbox),
         activity=ChatActivity(),
+        streams=streams,
     )
 
     await dispatcher.handle(
@@ -242,15 +253,26 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
     await dispatcher.handle(
         ChatNotification("n1", CHANNEL_ID, "500", "raid", {"user": {"name": "raider"}}, sent_at=2)
     )
+    streams.streams[CHANNEL_ID] = {"title": "bot night"}  # what the poller just saw
+    await dispatcher.handle(StreamStatusChanged(CHANNEL_ID, True, at=3))
     await dispatcher.drain()
     await writer.stop()
-    assert sorted(sender.sent) == ["heard hello", "raid!"]
+    assert sorted(sender.sent) == ["heard hello", "live: bot night", "raid!"]
 
 
 # ── timers ─────────────────────────────────────────────────────────────────
-async def timer_scheduler(h: Harness) -> TimerScheduler:
+async def timer_scheduler(
+    h: Harness, *, streams: StreamStatus | None = None, wall: str = "2026-09-18T18:00"
+) -> TimerScheduler:
+    moment = datetime.fromisoformat(wall).replace(tzinfo=UTC)
     return TimerScheduler(
-        triggers=h.triggers, runner=h.runner, policy=h.policy, activity=h.activity, clock=h.clock
+        triggers=h.triggers,
+        runner=h.runner,
+        policy=h.policy,
+        activity=h.activity,
+        clock=h.clock,
+        streams=streams,
+        wall=lambda: moment,
     )
 
 
@@ -286,9 +308,58 @@ async def test_a_timer_can_require_recent_chat(h: Harness) -> None:
 
 async def test_a_timer_can_require_the_stream_to_be_live(h: Harness) -> None:
     await h.say("mod", "!timer add 60s only_live echo live only")
-    scheduler = await timer_scheduler(h)
+    streams = StreamStatus()
+    scheduler = await timer_scheduler(h, streams=streams)
     h.clock.now = 120
-    assert await scheduler.tick() == []  # stream status needs the poller (ADR-0007), so: not live
+    assert await scheduler.tick() == []  # offline: the channel is left alone
+
+    streams.streams[CHANNEL_ID] = {"title": "live now"}
+    h.clock.now = 200
+    assert len(await scheduler.tick()) == 1
+    assert h.sender.sent == ["live only"]
+
+
+# ── crons ──────────────────────────────────────────────────────────────────
+async def test_a_cron_fires_at_the_minute_it_names(h: Harness) -> None:
+    reply = await h.say("mod", "!timer cron 0 18 * * fri => echo the stream starts now")
+    assert reply is not None and "fri at 18:00" in reply and "UTC" in reply
+
+    early = await timer_scheduler(h, wall="2026-09-18T17:59")
+    assert await early.tick() == []
+
+    on_time = await timer_scheduler(h, wall="2026-09-18T18:00")
+    assert len(await on_time.tick()) == 1
+    assert await on_time.tick() == []  # the same minute never fires twice
+    assert h.sender.sent == ["the stream starts now"]
+
+    wrong_day = await timer_scheduler(h, wall="2026-09-19T18:00")
+    assert await wrong_day.tick() == []
+
+
+async def test_a_cron_uses_the_channels_timezone(h: Harness) -> None:
+    await h.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "timezone", "America/Sao_Paulo", Actor(None, "x"))
+    )
+    await h.say("mod", "!timer cron 0 18 * * * => echo boa noite")
+
+    # 18:00 in São Paulo is 21:00 UTC, so the UTC evening is still the local afternoon.
+    afternoon = await timer_scheduler(h, wall="2026-09-18T18:00")
+    assert await afternoon.tick() == []
+    evening = await timer_scheduler(h, wall="2026-09-18T21:00")
+    assert len(await evening.tick()) == 1
+
+
+async def test_a_bad_cron_is_refused_with_a_usable_message(h: Harness) -> None:
+    reply = await h.say("mod", "!timer cron 0 18 * * => echo nope")
+    assert reply is not None and "5 fields" in reply
+    assert await h.say("mod", "!timer cron 0 18 * * xyz => echo nope") is not None
+    assert h.triggers.crons() == []
+
+
+async def test_crons_are_listed_with_the_timers(h: Harness) -> None:
+    await h.say("mod", "!timer cron 30 9 * * mon-fri => echo good morning")
+    listing = await h.say("mod", "!timer list")
+    assert listing is not None and "good morning" in listing
 
 
 async def test_timers_are_listed_and_removed_separately_from_triggers(h: Harness) -> None:

@@ -15,7 +15,9 @@ from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
+from doomtp_bot.triggers.cron import describe as describe_cron
 from doomtp_bot.triggers.service import (
+    REQUIRED_CAPABILITY,
     SUPPORTED_NOW,
     TRIGGER_TYPES,
     TriggerError,
@@ -34,7 +36,8 @@ TRIGGER_USAGE = (
     " listen <regex> => <expression> | rm <id> | on|off <id>"
 )
 TIMER_USAGE = (
-    "timer list | add <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression> | rm <id> | on|off <id>"
+    "timer list | add <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression>"
+    " | cron <m h dom mon dow> => <expression> | rm <id> | on|off <id>"
 )
 
 
@@ -63,6 +66,8 @@ def _describe(trigger: Trigger) -> str:
     what = trigger.regex if trigger.type == "listener" else trigger.type
     if trigger.type == "timer":
         what = f"every {trigger.every_s}s"
+    if trigger.type == "cron":
+        what = describe_cron(trigger.cron)
     return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'} → {trigger.expr}"
 
 
@@ -158,8 +163,18 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         )
     except TriggerError as exc:
         raise CommandError(str(exc)) from exc
-    note = "" if type_ in SUPPORTED_NOW else f" ⚠ {type_} events need channel authorization the bot lacks"
-    return Result.success(f"added {type_} trigger {created.id}{note}", {"id": created.id})
+    return Result.success(f"added {type_} trigger {created.id}{_warning(ctx, type_)}", {"id": created.id})
+
+
+def _warning(ctx: CommandContext, type_: str) -> str:
+    """Say up front when a trigger is stored but can't fire here yet (ADR-0007)."""
+    if type_ not in SUPPORTED_NOW:
+        return f" ⚠ the bot can't receive {type_} events yet"
+    needed = REQUIRED_CAPABILITY.get(type_)
+    if needed and needed not in ctx.channel.capabilities:
+        how = "mod the bot" if needed == "followers" else "the broadcaster has to connect the channel"
+        return f" ⚠ it stays quiet until this channel grants {needed}: {how}"
+    return ""
 
 
 @command(
@@ -171,18 +186,23 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         params=(Param("1+", "arguments", description=TIMER_USAGE),),
         required_role="moderator",
         log_level=LogLevel.INVOCATIONS,
-        examples=(Example("{sign}timer add 15m min_lines=10 echo remember to hydrate", ""),),
+        examples=(
+            Example("{sign}timer add 15m min_lines=10 echo remember to hydrate", ""),
+            Example("{sign}timer cron 0 18 * * fri => echo the stream starts now", ""),
+        ),
     ),
-    raw_tail_subcommands=(("add", 3),),
+    raw_tail_subcommands=(("add", 3), ("cron", 2)),
 )
 async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     values = list(args.values)
     _need(values, 1, TIMER_USAGE)
     action = values[0].lower()
     if action == "list":
-        return await _listing(ctx, ("timer",))
+        return await _listing(ctx, ("timer", "cron"))
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, TIMER_USAGE)
+    if action == "cron":
+        return await _add_cron(ctx, args, values)
     if action != "add":
         raise CommandError(f"usage: {TIMER_USAGE}")
 
@@ -223,6 +243,32 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         raise CommandError(str(exc)) from exc
     every = schedule["every_s"]
     return Result.success(f"timer {created.id} every {every}s", {"id": created.id, "every_s": every})
+
+
+async def _add_cron(ctx: CommandContext, args: Args, values: list[str]) -> Result:
+    """`timer cron 0 18 * * fri => echo we live at six`, in the channel's timezone."""
+    raw = (args.raw_tail or " ".join(values[1:])).strip()
+    schedule_text, separator, expr = raw.partition(f" {LISTEN_SEPARATOR} ")
+    if not separator or not expr.strip():
+        raise CommandError(f"usage: {TIMER_USAGE}")
+    expr = expr.strip()
+    _check_expression(ctx, expr, Context.TRIGGER)
+    try:
+        created = await _service(ctx).add(
+            channel_id=ctx.channel.id,
+            type_="cron",
+            expr=expr,
+            schedule={"cron": schedule_text.strip()},
+            run_as_rank=rank(ctx),
+            created_by=ctx.invoker.id if ctx.invoker else None,
+        )
+    except TriggerError as exc:
+        raise CommandError(str(exc)) from exc
+    when = describe_cron(created.cron)
+    return Result.success(
+        f"cron {created.id}: {when} ({ctx.channel.timezone})",
+        {"id": created.id, "cron": created.cron, "timezone": ctx.channel.timezone},
+    )
 
 
 COMMANDS: tuple[Command, ...] = (trigger_cmd, timer_cmd)

@@ -87,6 +87,25 @@ def _plain(value: Any, depth: int = 0) -> Any:
     return str(value)
 
 
+def follow(payload: Any) -> ChatNotification:
+    """twitchio.ChannelFollow → ChatNotification(type="follow"). Moderator tier only (ADR-0007)."""
+    user = payload.user
+    at = _ms(getattr(payload, "followed_at", None))
+    return ChatNotification(
+        id=f"follow:{user.id}:{at}",
+        channel_id=payload.broadcaster.id,
+        user_id=user.id,
+        type="follow",
+        payload={
+            "system_message": f"{user.display_name or user.name} followed",
+            "text": "",
+            "user": {"id": user.id, "name": user.name, "display": user.display_name or user.name},
+            "followed_at": at,
+        },
+        sent_at=at,
+    )
+
+
 def chat_notification(payload: Any) -> ChatNotification:
     """twitchio.ChatNotification → ChatNotification (payload keeps the notice-specific details)."""
     notice = payload.notice_type

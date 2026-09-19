@@ -403,10 +403,11 @@ Resolution runs in this order, and the first rule that matches decides:
 ```sql
 triggers(id INTEGER PRIMARY KEY, channel_id TEXT, type TEXT,
          -- redemption | raid | sub | resub | gift_sub | cheer | follow | stream_online |
-         -- stream_offline | timer | listener
+         -- stream_offline | timer | cron | listener
          match TEXT,        -- JSON: {reward_id}, {min_viewers}, {regex}, {min_bits}, …
-         schedule TEXT,     -- timers: {"every": "15m", "jitter": "2m", "only_live": true,
+         schedule TEXT,     -- timers: {"every_s": 900, "jitter_s": 120, "only_live": true,
                             --          "min_chat_lines": 5}
+                            -- crons:  {"cron": "0 18 * * fri"} in the channel's timezone
          expr TEXT,         -- pipeline expression
          run_as_rank INTEGER,   -- capped at the rank of the mod who created it
          enabled INTEGER, log_level TEXT, created_by TEXT)
@@ -420,7 +421,9 @@ triggers(id INTEGER PRIMARY KEY, channel_id TEXT, type TEXT,
 - Every trigger passes through the same runtime, including preflight, cooldowns (keyed by trigger), the moderation index (for listeners and redemptions) and the Outbox.
 - Some trigger types need capabilities. Redemptions need the full tier, and follows need moderator status (ADR-0007).
 
-**Built so far:** `!trigger listen <regex> => <expression>`, `!trigger add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, each with `list`, `rm` and `on`/`off`. Listeners and the notification events the basic tier receives (raid, sub, resub, gift sub) run end to end; the other event types are stored with a warning that the bot can't receive them yet. Timers tick every 5s against a per-channel line counter; `only_live` waits on the stream poller (ADR-0007). Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
+- **Crons** are timers told *when* instead of *how often*: the five standard fields (`minute hour day month weekday`, with `*`, lists, ranges, steps and names) evaluated in the channel's `timezone`. The scheduler keeps both clocks — monotonic for intervals, so correcting the machine's clock can't skip a timer, and wall clock for crons, which is the whole point of them. A matching minute fires once, and the minute is marked handled even when `only_live` holds it back, so a cron waits for its next time instead of firing late.
+
+**Built so far:** `!trigger listen <regex> => <expression>`, `!trigger add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron <m h dom mon dow> => <expression>`, each with `list`, `rm` and `on`/`off`. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
 
 ---
 
@@ -477,7 +480,8 @@ A **race window** remains: a mod can act after the message has already been sent
 | **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why) and the `automod` module |
 | **full** | The broadcaster completes OAuth at `/auth/connect` | Everything in moderator, plus channel point redemptions, subscription and cheer event details, the chat bot badge (`channel:bot`) and other broadcaster-scoped features |
 
-- The **CapabilityProbe** runs at join, hourly, and whenever a 401 or 403 comes back. It updates `channels.capabilities`.
+- The **CapabilityProbe** runs at join and hourly, and updates `channels.capabilities` and `channels.tier`. It measures mod status by *asking for* the moderator-only `channel.follow` subscription: no endpoint tells the bot's own token whether it is a mod without a scope the broadcaster would have to grant anyway, and that subscription is what a follow trigger needs in any case. What the broadcaster granted (redemptions, subs, bits) is never taken away by a probe — only the broadcaster flow (ADR-0007 item 5) sets it.
+- **Stream status** is Helix `Get Streams` for every joined channel, batched 100 per request, once a minute (`core/streams.py`). A failed request keeps the last answer rather than declaring everybody offline. Transitions become `StreamStatusChanged`, which fires the `stream_online`/`stream_offline` triggers and feeds `only_live`. Live state is memory-only: it is stale the moment the process stops, and the first poll after a restart rebuilds it.
 - Modules and triggers declare what they `require`. Unmet requirements disable a feature with a visible reason instead of an error.
 - **Etiquette:**
   - Join only when a broadcaster, mod or bot owner asks.

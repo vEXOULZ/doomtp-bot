@@ -152,7 +152,8 @@ edits — which the reply says when you grant it.</p>
 <h2 id="triggers">Triggers, listeners and timers</h2>
 <pre>{{ p }}trigger add raid echo welcome {event.user.name} and {event.viewers} raiders!
 {{ p }}trigger listen \bhello\b =&gt; echo hi {chatter.display}
-{{ p }}timer add 15m min_lines=10 jitter=2m echo remember to hydrate</pre>
+{{ p }}timer add 15m min_lines=10 jitter=2m echo remember to hydrate
+{{ p }}timer cron 0 18 * * fri =&gt; echo the stream starts now</pre>
 <ul>
   <li><strong>Triggers</strong> run on channel events. The payload is in <code>{event.*}</code>, and the
       chatter is the event's user — the raider, the subscriber.</li>
@@ -160,13 +161,18 @@ edits — which the reply says when you grant it.</p>
       <code>{match.1}</code> and <code>{match.name}</code>.</li>
   <li><strong>Timers</strong> run on a clock. <code>jitter=</code> spreads them out,
       <code>min_lines=</code> keeps them quiet in a quiet channel, and <code>only_live</code> waits for the
-      stream.</li>
+      stream to be live.</li>
+  <li><strong>Crons</strong> run at named times instead of intervals: <code>minute hour day month
+      weekday</code>, in the channel's own timezone. <code>0 18 * * fri</code> is Friday at six,
+      <code>*/15 * * * *</code> is every quarter hour, <code>30 9 * * mon-fri</code> is weekday mornings.
+      They take the same <code>only_live</code> and <code>min_lines</code> conditions.</li>
 </ul>
 <p>All three run at the rank of the moderator who created them, never higher, and go through the same
 checks as a typed command.</p>
-<p class="muted">Raids, subs, resubs and gift subs work today. Channel point redemptions, follows and
-cheers need the broadcaster to connect the bot for the full tier; a trigger for those can be created now
-and starts working when that happens.</p>
+<p class="muted">Raids, subs, resubs, gift subs and the stream going on or off air work in every
+channel. Follows need the bot to be a moderator; channel point redemptions and cheers need the
+broadcaster to connect the channel. A trigger for those can still be created — adding it says which
+permission is missing, and it starts working the moment the channel grants it.</p>
 
 <h2 id="filter">Word filter</h2>
 <pre>{{ p }}filter add word badword           # masks it: ****
@@ -202,10 +208,14 @@ run commands</strong> — they only go to the log.</p>
 replying in theirs — no authorization needed for that. More becomes possible as trust grows:</p>
 <table>
   <tr><th>Tier</th><th>What unlocks it</th><th>What it adds</th></tr>
-  <tr><td>basic</td><td>nothing — just <code>{{ p }}join</code></td><td>reading chat, replying, commands, timers</td></tr>
+  <tr><td>basic</td><td>nothing — just <code>{{ p }}join</code></td><td>reading chat, replying, commands, timers, crons, stream on/off</td></tr>
   <tr><td>moderator</td><td>the broadcaster mods the bot</td><td>follow events, moderation detail, higher send limits, no slow mode</td></tr>
   <tr><td>full</td><td>the broadcaster connects the bot</td><td>channel point redemptions, sub and cheer events, the chat bot badge</td></tr>
 </table>
+<p>The bot works out which tier it has by itself: it checks when it joins and again every hour, and
+that answer is what <code>{{ p }}help</code>, <code>{{ p }}explain</code> and the admin pages report.
+Whether a channel is live comes from Twitch once a minute, which is what <code>only_live</code> and the
+<code>stream_online</code> trigger read.</p>
 <p><code>{{ p }}part</code> removes the bot; it stops listening and sending immediately.</p>
 
 <h2 id="explain">Explaining an expression</h2>

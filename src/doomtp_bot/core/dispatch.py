@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -13,6 +13,7 @@ from doomtp_bot.core.events import (
     ChatNotification,
     Event,
     MessageDeleted,
+    StreamStatusChanged,
     UserMessagesCleared,
 )
 from doomtp_bot.lang.ast import invocations
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.channels import ChannelManager
     from doomtp_bot.core.outbox import Outbox
+    from doomtp_bot.core.streams import StreamStatus
     from doomtp_bot.moderation.index import ModerationIndex
     from doomtp_bot.policy.service import PolicyService
     from doomtp_bot.runtime.engine import RunReport, Runtime
@@ -69,6 +71,7 @@ class Dispatcher:
         triggers: TriggerService | None = None,
         trigger_runner: TriggerRunner | None = None,
         activity: ChatActivity | None = None,
+        streams: StreamStatus | None = None,
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -80,6 +83,7 @@ class Dispatcher:
         self.triggers = triggers
         self.trigger_runner = trigger_runner
         self.activity = activity
+        self.streams = streams
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -95,6 +99,9 @@ class Dispatcher:
                 self.moderation.record(event)
                 if self.channels.is_active(event.channel_id):
                     await self.writer.moderation(event)
+            case StreamStatusChanged():
+                if self.channels.is_active(event.channel_id):
+                    self._spawn(self._stream_triggers(event), f"stream-{event.channel_id}")
 
     async def _message(self, msg: ChatMessage) -> None:
         if not self.channels.is_active(msg.channel_id):
@@ -145,6 +152,21 @@ class Dispatcher:
                     message_id=msg.message_id,
                 )
 
+    async def _stream_triggers(self, event: StreamStatusChanged) -> None:
+        """The Helix poller saw the stream go up or down (ADR-0007)."""
+        if self.triggers is None or self.trigger_runner is None:
+            return
+        type_ = "stream_online" if event.live else "stream_offline"
+        settings = self.policy.channel_settings(event.channel_id)
+        login = settings.login if settings else event.channel_id
+        payload: dict[str, Any] = {"live": event.live, "channel": {"login": login}}
+        if self.streams is not None:
+            payload.update(self.streams.info(event.channel_id))
+        found = self.triggers.event_triggers(event.channel_id, type_, payload)
+        async with self._slots:
+            for trigger in found:
+                await self.trigger_runner.run(trigger, channel_login=login, event=payload)
+
     async def _notification_triggers(self, event: ChatNotification) -> None:
         """Subs, resubs, gift subs, raids and announcements (architecture §7)."""
         if self.triggers is None or self.trigger_runner is None:
@@ -153,7 +175,7 @@ class Dispatcher:
         if not found:
             return
         settings = self.policy.channel_settings(event.channel_id)
-        user = event.payload.get("user") or {}
+        user = event.payload.get("user") or event.payload.get("chatter") or {}
         async with self._slots:
             for trigger in found:
                 await self.trigger_runner.run(
@@ -161,7 +183,11 @@ class Dispatcher:
                     channel_login=settings.login if settings else event.channel_id,
                     event=event.payload,
                     user=(
-                        (event.user_id, str(user.get("name", "")), str(user.get("display", "")))
+                        (
+                            event.user_id,
+                            str(user.get("name") or user.get("login") or ""),
+                            str(user.get("display") or user.get("name") or ""),
+                        )
                         if event.user_id
                         else None
                     ),

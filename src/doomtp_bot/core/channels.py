@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 import structlog
@@ -42,11 +43,13 @@ class ChannelManager:
         sessions: SessionLog,
         *,
         default_prefix: str = DEFAULT_PREFIX,
+        on_joined: Callable[[str], Awaitable[object]] | None = None,
     ) -> None:
         self.policy = policy
         self.subscriber = subscriber
         self.sessions = sessions
         self.default_prefix = default_prefix
+        self.on_joined = on_joined  # the capability probe, once the channel is subscribed (ADR-0007)
 
     def active_channels(self) -> list[ChannelSettings]:
         return [c for c in self.policy.snapshot.channels.values() if _is_joined(c)]
@@ -97,4 +100,9 @@ class ChannelManager:
         failed = await self.subscriber.subscribe_channel(channel_id)
         if not failed:
             await self.sessions.start_session(channel_id)
+            if self.on_joined is not None:
+                try:
+                    await self.on_joined(channel_id)
+                except Exception:  # probing is best-effort; a joined channel still works
+                    log.exception("channel.on_joined_failed", channel_id=channel_id)
         return failed

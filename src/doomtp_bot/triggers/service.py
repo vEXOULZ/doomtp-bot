@@ -17,9 +17,11 @@ import structlog
 
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
+from doomtp_bot.core import capabilities
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.runtime.spec import LogLevel
 from doomtp_bot.storage.db import transaction
+from doomtp_bot.triggers.cron import Cron, CronError, parse_cron
 
 log = structlog.get_logger(__name__)
 
@@ -34,14 +36,37 @@ TriggerType = Literal[
     "stream_online",
     "stream_offline",
     "timer",
+    "cron",
     "listener",
 ]
 TRIGGER_TYPES: tuple[TriggerType, ...] = (
     "redemption", "raid", "sub", "resub", "gift_sub", "cheer", "follow",
-    "stream_online", "stream_offline", "timer", "listener",
+    "stream_online", "stream_offline", "timer", "cron", "listener",
 )  # fmt: skip
 # Types the bot can actually receive today; the rest need capabilities it doesn't have yet (ADR-0007).
-SUPPORTED_NOW: frozenset[str] = frozenset({"raid", "sub", "resub", "gift_sub", "listener", "timer"})
+# `follow` needs the moderator tier and `stream_*` come from the Helix poller, so both are listed here
+# and refused per channel by the capability check rather than globally.
+SUPPORTED_NOW: frozenset[str] = frozenset(
+    {
+        "raid",
+        "sub",
+        "resub",
+        "gift_sub",
+        "listener",
+        "timer",
+        "cron",
+        "stream_online",
+        "stream_offline",
+        "follow",
+    }  # fmt: skip
+)
+# Event types that only work where the channel granted the bot something (ADR-0007). The rest — raids,
+# subs, resubs, gift subs — arrive as chat notifications, which every joined channel has.
+REQUIRED_CAPABILITY: dict[str, str] = {
+    "follow": capabilities.FOLLOWERS,
+    "redemption": capabilities.REDEMPTIONS,
+    "cheer": capabilities.BITS,
+}
 MAX_REGEX_CHARS = 200
 MAX_TIMER_EVERY_S = 24 * 3600
 MIN_TIMER_EVERY_S = 60
@@ -71,6 +96,10 @@ class Trigger:
     @property
     def every_s(self) -> int:
         return int(self.schedule.get("every_s", 0))
+
+    @property
+    def cron(self) -> str:
+        return str(self.schedule.get("cron", ""))
 
 
 def parse_every(text: str) -> int:
@@ -113,10 +142,12 @@ class TriggerService:
         self.conn = conn
         self._by_channel: dict[str, list[Trigger]] = {}
         self._listeners: dict[int, re.Pattern[str]] = {}
+        self._crons: dict[int, Cron] = {}
 
     async def reload(self) -> None:
         by_channel: dict[str, list[Trigger]] = {}
         listeners: dict[int, re.Pattern[str]] = {}
+        crons: dict[int, Cron] = {}
         async with self.conn.execute("SELECT * FROM triggers ORDER BY id") as cur:
             for row in await cur.fetchall():
                 trigger = Trigger(
@@ -137,7 +168,12 @@ class TriggerService:
                         listeners[trigger.id] = compile_listener(trigger.regex)
                     except TriggerError:
                         log.warning("trigger.bad_listener", trigger=trigger.id)
-        self._by_channel, self._listeners = by_channel, listeners
+                if trigger.type == "cron" and trigger.enabled:
+                    try:
+                        crons[trigger.id] = parse_cron(trigger.cron)
+                    except CronError:
+                        log.warning("trigger.bad_cron", trigger=trigger.id)
+        self._by_channel, self._listeners, self._crons = by_channel, listeners, crons
 
     def in_channel(self, channel_id: str) -> list[Trigger]:
         return list(self._by_channel.get(channel_id, ()))
@@ -147,6 +183,18 @@ class TriggerService:
 
     def timers(self) -> list[Trigger]:
         return [t for group in self._by_channel.values() for t in group if t.type == "timer" and t.enabled]
+
+    def crons(self) -> list[Trigger]:
+        """Cron triggers with a schedule that parsed — the scheduler walks these every tick."""
+        return [
+            t
+            for group in self._by_channel.values()
+            for t in group
+            if t.type == "cron" and t.enabled and t.id in self._crons
+        ]
+
+    def cron_for(self, trigger_id: int) -> Cron | None:
+        return self._crons.get(trigger_id)
 
     def listeners_matching(self, channel_id: str, text: str) -> list[tuple[Trigger, dict[str, Any]]]:
         """Listeners whose regex matches, with their capture fields (architecture §7)."""
@@ -198,6 +246,11 @@ class TriggerService:
             compile_listener(str((match or {}).get("regex", "")))
         if type_ == "timer" and not (schedule or {}).get("every_s"):
             raise TriggerError("a timer needs an interval, e.g. every 15m")
+        if type_ == "cron":
+            try:
+                parse_cron(str((schedule or {}).get("cron", "")))
+            except CronError as exc:
+                raise TriggerError(str(exc)) from exc
         async with transaction(self.conn):
             cur = await self.conn.execute(
                 "INSERT INTO triggers (channel_id, type, match, schedule, expr, syntax_version,"

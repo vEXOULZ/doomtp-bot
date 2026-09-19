@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import structlog
@@ -34,6 +34,12 @@ CHAT_SUBSCRIPTIONS: tuple[type[Any], ...] = (
     eventsub.ChatClearSubscription,
     eventsub.ChatClearUserMessagesSubscription,
 )
+
+
+def _already_subscribed(exc: Exception) -> bool:
+    """TwitchIO raises on a duplicate subscription; that still means the bot is allowed to have it."""
+    text = repr(exc).lower()
+    return "409" in text or "conflict" in text or "already" in text
 
 
 class _BotClient(twitchio.Client):
@@ -73,6 +79,9 @@ class _BotClient(twitchio.Client):
 
     async def event_chat_clear_user(self, payload: Any) -> None:
         await self.service.emit(None, mapping.user_messages_cleared(payload))
+
+    async def event_follow(self, payload: Any) -> None:
+        await self.service.emit(None, mapping.follow(payload))
 
 
 class TwitchService:
@@ -194,6 +203,42 @@ class TwitchService:
         if not sent.sent:
             return SendResult(sent.id or None, f"twitch_rejected:{sent.dropped_code}")
         return SendResult(sent.id)
+
+    async def fetch_live(self, channel_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Helix `Get Streams` for up to 100 channels (ADR-0007). Raises if the request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        live: dict[str, dict[str, Any]] = {}
+        async for stream in self.client.fetch_streams(user_ids=list(channel_ids), type="live"):
+            live[str(stream.user.id)] = {
+                "title": stream.title or "",
+                "game": stream.game_name or "",
+                "viewers": int(stream.viewer_count or 0),
+                "started_at": stream.started_at.isoformat() if stream.started_at else "",
+            }
+        return live
+
+    async def try_moderator_subscription(self, channel_id: str) -> bool:
+        """Subscribe to `channel.follow`, which only a moderator may. Success *is* the mod check.
+
+        The subscription is kept: follow triggers need it, and it costs one slot in the channels where
+        the bot is a mod (ADR-0007 CapabilityProbe).
+        """
+        if self.client is None or self.bot_id is None:
+            return False
+        try:
+            await self.client.subscribe_websocket(
+                eventsub.ChannelFollowSubscription(
+                    broadcaster_user_id=channel_id, moderator_user_id=self.bot_id
+                ),
+                token_for=self.bot_id,
+            )
+        except Exception as exc:
+            if _already_subscribed(exc):
+                return True
+            log.debug("twitch.not_moderator", channel=channel_id, error=repr(exc))
+            return False
+        return True
 
     async def resolve_user(self, login: str) -> dict[str, str] | None:
         login = login.lower().lstrip("@")

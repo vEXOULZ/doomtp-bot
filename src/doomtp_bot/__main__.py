@@ -13,12 +13,14 @@ from doomtp_bot import __version__
 from doomtp_bot.api.app import create_app
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
+from doomtp_bot.core.capabilities import CapabilityProbe
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Event
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.core.instance_lock import InstanceLock, InstanceLockError
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.core.streams import StreamPoller, StreamStatus
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
@@ -86,7 +88,10 @@ async def run(settings: Settings) -> None:
             client_id=settings.twitch_client_id, client_secret=secret, tokens=TokenStore(dbs.bot), sink=sink
         )
 
+    streams = StreamStatus()
     channels = ChannelManager(policy, twitch, writer, default_prefix=settings.default_prefix)
+    probe = CapabilityProbe(policy=policy, channels=channels, prober=twitch)
+    channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
     services: dict[str, object] = {
         "policy": policy,
         "variable_store": store,
@@ -132,7 +137,9 @@ async def run(settings: Settings) -> None:
         content_filter=content_filter.apply,
     )
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox)
-    timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity)
+    timers = TimerScheduler(
+        triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams
+    )
     dispatcher = Dispatcher(
         runtime=runtime,
         policy=policy,
@@ -143,9 +150,15 @@ async def run(settings: Settings) -> None:
         triggers=triggers,
         trigger_runner=trigger_runner,
         activity=activity,
+        streams=streams,
     )
 
     backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
+    poller = (
+        StreamPoller(source=twitch, channels=channels, status=streams, sink=dispatcher.handle)
+        if twitch is not None
+        else None
+    )
 
     async def start_twitch() -> None:
         if twitch is None:
@@ -154,6 +167,11 @@ async def run(settings: Settings) -> None:
             if await twitch.start() and twitch.bot_id and twitch.bot_login:
                 await channels.ensure_home(twitch.bot_id, twitch.bot_login)
                 await channels.subscribe_all()
+                await probe.probe_all()  # tier per channel, before anything checks a capability
+                probe.start()
+                if poller is not None:
+                    await poller.poll()
+                    poller.start()
                 filled = await backfill.run_all()  # coverage gaps since the last run (ADR-0008)
                 if filled:
                     log.info("history.startup_backfill", gaps=len(filled))
@@ -224,6 +242,9 @@ async def run(settings: Settings) -> None:
         await server.serve()  # uvicorn owns SIGINT/SIGTERM and returns after a graceful shutdown
     finally:
         await timers.stop()
+        await probe.stop()
+        if poller is not None:
+            await poller.stop()
         await backfill.stop()
         await history.close()
         twitch_start.cancel()
