@@ -106,6 +106,53 @@ def follow(payload: Any) -> ChatNotification:
     )
 
 
+def redemption(payload: Any) -> ChatNotification:
+    """twitchio.ChannelPointsRedemptionAdd → ChatNotification(type="redemption"). Full tier (ADR-0007)."""
+    user, reward = payload.user, payload.reward
+    at = _ms(getattr(payload, "redeemed_at", None))
+    text = payload.user_input or ""
+    return ChatNotification(
+        id=f"redemption:{payload.id}",
+        channel_id=payload.broadcaster.id,
+        user_id=user.id,
+        type="redemption",
+        payload={
+            "system_message": f"{user.display_name or user.name} redeemed {reward.title}",
+            "text": text,
+            "input": text,  # {event.input} is the redemption's own text (architecture §7)
+            "user": {"id": user.id, "name": user.name, "display": user.display_name or user.name},
+            "reward": {"id": reward.id, "title": reward.title, "cost": reward.cost},
+            "status": getattr(payload, "status", ""),
+        },
+        sent_at=at,
+    )
+
+
+def cheer(payload: Any) -> ChatNotification:
+    """twitchio.ChannelCheer → ChatNotification(type="cheer"). Full tier (ADR-0007)."""
+    anonymous = bool(getattr(payload, "anonymous", False))
+    user = None if anonymous else payload.user
+    at = _ms(getattr(payload, "timestamp", None))
+    bits = int(getattr(payload, "bits", 0) or 0)
+    who = "someone" if user is None else (user.display_name or user.name)
+    return ChatNotification(
+        id=f"cheer:{payload.broadcaster.id}:{at}:{bits}",
+        channel_id=payload.broadcaster.id,
+        user_id=None if user is None else user.id,
+        type="cheer",
+        payload={
+            "system_message": f"{who} cheered {bits} bits",
+            "text": payload.message or "",
+            "bits": bits,
+            "anonymous": anonymous,
+            "user": None
+            if user is None
+            else {"id": user.id, "name": user.name, "display": user.display_name or user.name},
+        },
+        sent_at=at,
+    )
+
+
 def chat_notification(payload: Any) -> ChatNotification:
     """twitchio.ChatNotification → ChatNotification (payload keeps the notice-specific details)."""
     notice = payload.notice_type

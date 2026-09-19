@@ -13,6 +13,11 @@ from doomtp_bot.storage.db import transaction
 BOT_IDENTITY = "bot"
 
 
+def broadcaster_identity(user_id: str) -> str:
+    """A broadcaster's own token, stored per channel (ADR-0007, full tier)."""
+    return f"broadcaster:{user_id}"
+
+
 @dataclass(frozen=True, slots=True)
 class StoredToken:
     identity: str
@@ -28,20 +33,20 @@ class TokenStore:
     def __init__(self, conn: aiosqlite.Connection) -> None:
         self.conn = conn
 
+    async def broadcasters(self) -> list[StoredToken]:
+        """Every broadcaster token, to hand to the Twitch client when it starts."""
+        async with self.conn.execute("SELECT * FROM oauth_tokens WHERE identity LIKE 'broadcaster:%'") as cur:
+            return [_token(row) for row in await cur.fetchall()]
+
+    async def forget(self, identity: str) -> bool:
+        async with transaction(self.conn):
+            cur = await self.conn.execute("DELETE FROM oauth_tokens WHERE identity = ?", (identity,))
+        return bool(cur.rowcount)
+
     async def get(self, identity: str = BOT_IDENTITY) -> StoredToken | None:
         async with self.conn.execute("SELECT * FROM oauth_tokens WHERE identity = ?", (identity,)) as cur:
             row = await cur.fetchone()
-        if row is None:
-            return None
-        return StoredToken(
-            row["identity"],
-            row["user_id"],
-            row["login"],
-            row["access_token"],
-            row["refresh_token"],
-            tuple(json.loads(row["scopes"])),
-            row["expires_at"],
-        )
+        return _token(row) if row is not None else None
 
     async def save(
         self,
@@ -84,3 +89,15 @@ class TokenStore:
                 "UPDATE oauth_tokens SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ? WHERE user_id = ?",
                 (access_token, refresh_token, now + expires_in * 1000, now, user_id),
             )
+
+
+def _token(row: aiosqlite.Row) -> StoredToken:
+    return StoredToken(
+        row["identity"],
+        row["user_id"],
+        row["login"],
+        row["access_token"],
+        row["refresh_token"],
+        tuple(json.loads(row["scopes"])),
+        row["expires_at"],
+    )

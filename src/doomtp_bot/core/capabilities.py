@@ -36,7 +36,19 @@ BITS = "bits"  # cheer events with details
 
 MODERATOR_CAPABILITIES = frozenset({FOLLOWERS, MODERATE})
 FULL_CAPABILITIES = frozenset({REDEMPTIONS, SUBS, BITS})
+# What each broadcaster scope buys, once they have connected their channel (ADR-0007 item 5).
+CAPABILITY_SCOPES = {
+    REDEMPTIONS: ("channel:read:redemptions", "channel:manage:redemptions"),
+    SUBS: ("channel:read:subscriptions",),
+    BITS: ("bits:read",),
+}
 INTERVAL_S = 3600.0  # hourly, per ADR-0007
+
+
+def granted_by(scopes: tuple[str, ...] | list[str] | set[str]) -> frozenset[str]:
+    """The capabilities a broadcaster's granted scopes add. Partial grants are normal, and fine."""
+    held = set(scopes)
+    return frozenset(capability for capability, wanted in CAPABILITY_SCOPES.items() if held & set(wanted))
 
 
 def tier_for(capabilities: frozenset[str] | set[str]) -> str:
@@ -106,6 +118,22 @@ class CapabilityProbe:
             capabilities |= set(settings.capabilities) & FULL_CAPABILITIES
         await self._store(channel_id, frozenset(capabilities))
         return frozenset(capabilities)
+
+    async def grant(self, channel_id: str, capabilities: frozenset[str]) -> frozenset[str]:
+        """Add what a broadcaster just granted, keeping whatever the probe already found."""
+        settings = self.policy.channel_settings(channel_id)
+        held = set(settings.capabilities) if settings is not None else {CHAT}
+        merged = frozenset(held | set(capabilities) | {CHAT})
+        await self._store(channel_id, merged)
+        return merged
+
+    async def revoke_full(self, channel_id: str) -> frozenset[str]:
+        """Drop the broadcaster-granted capabilities — when they disconnect, or Twitch stops accepting
+        their token. What the bot earned by being a moderator is untouched."""
+        settings = self.policy.channel_settings(channel_id)
+        kept = frozenset(set(settings.capabilities) - FULL_CAPABILITIES) if settings else frozenset({CHAT})
+        await self._store(channel_id, kept)
+        return kept
 
     async def _store(self, channel_id: str, capabilities: frozenset[str]) -> None:
         settings = self.policy.channel_settings(channel_id)

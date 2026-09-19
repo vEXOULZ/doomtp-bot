@@ -226,6 +226,11 @@ replying in theirs — no authorization needed for that. More becomes possible a
   <tr><td>moderator</td><td>the broadcaster mods the bot</td><td>follow events, moderation detail, higher send limits, no slow mode</td></tr>
   <tr><td>full</td><td>the broadcaster connects the bot</td><td>channel point redemptions, sub and cheer events, the chat bot badge</td></tr>
 </table>
+<p>The first two need nothing from the bot's owner. The third is a link the broadcaster follows once
+&mdash; <code>/auth/connect</code> on this site &mdash; where Twitch asks whether they want to give the bot
+their channel point redemptions, subscriptions and cheers. They can grant some and refuse the rest: what
+they grant is what turns on, and the rest keeps saying why it is off. It is taken back the same way, from
+<em>Connections</em> in their Twitch settings.</p>
 <p>The bot works out which tier it has by itself: it checks when it joins and again every hour, and
 that answer is what <code>{{ p }}help</code>, <code>{{ p }}explain</code> and the admin pages report.
 Whether a channel is live comes from Twitch once a minute, which is what <code>only_live</code> and the

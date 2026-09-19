@@ -12,13 +12,20 @@ import httpx
 import pytest
 
 from doomtp_bot.api.app import create_app
+from doomtp_bot.core.capabilities import granted_by
 from doomtp_bot.core.events import ChatMessage, Event
 from doomtp_bot.core.health import HealthRegistry
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.twitch import mapping
-from doomtp_bot.twitch.auth import BOT_SCOPES, AuthorizedAccount, OAuthError, TwitchAuth
+from doomtp_bot.twitch.auth import (
+    BOT_SCOPES,
+    BROADCASTER_SCOPES,
+    AuthorizedAccount,
+    OAuthError,
+    TwitchAuth,
+)
 from doomtp_bot.twitch.client import TwitchService
-from doomtp_bot.twitch.tokens import TokenStore
+from doomtp_bot.twitch.tokens import TokenStore, broadcaster_identity
 
 WHEN = datetime(2026, 9, 16, 12, 0, 0, tzinfo=UTC)
 
@@ -107,13 +114,14 @@ class FakeOAuthHttp:
     def __init__(self, scopes: list[str] | None = None) -> None:
         self.scopes = scopes if scopes is not None else list(BOT_SCOPES)
         self.codes: list[str] = []
+        self.user = {"user_id": "999", "login": "doomtp_bot"}
 
     async def exchange_code(self, code: str, redirect_uri: str) -> dict[str, Any]:
         self.codes.append(code)
         return {"access_token": "at", "refresh_token": "rt", "expires_in": 14000, "scope": self.scopes}
 
     async def validate(self, access_token: str) -> dict[str, Any]:
-        return {"user_id": "999", "login": "doomtp_bot", "scopes": self.scopes}
+        return {**self.user, "scopes": self.scopes}
 
 
 async def test_oauth_flow_stores_token_and_notifies(dbs: Databases) -> None:
@@ -179,3 +187,85 @@ async def test_auth_routes(dbs: Databases) -> None:
         transport=httpx.ASGITransport(app=unconfigured), base_url="http://test"
     ) as client:
         assert (await client.get("/auth/login")).status_code == 503
+
+
+# ── the broadcaster connect flow (ADR-0007 item 5) ─────────────────────────
+def test_map_redemption_and_cheer() -> None:
+    redeemed = mapping.redemption(
+        NS(id="r1", broadcaster=user("100", "doomtp"), user=user("400", "alice"), redeemed_at=WHEN,
+           user_input="a song please", status="unfulfilled",
+           reward=NS(id="rw1", title="Song request", cost=500))
+    )  # fmt: skip
+    assert (redeemed.type, redeemed.user_id) == ("redemption", "400")
+    assert redeemed.payload["reward"] == {"id": "rw1", "title": "Song request", "cost": 500}
+    assert redeemed.payload["input"] == "a song please"
+
+    cheered = mapping.cheer(
+        NS(broadcaster=user("100", "doomtp"), user=user("400", "alice"), anonymous=False, bits=300,
+           message="cheer300 nice", timestamp=WHEN)
+    )  # fmt: skip
+    assert (cheered.type, cheered.payload["bits"]) == ("cheer", 300)
+    assert cheered.payload["user"]["name"] == "alice"
+
+    anonymous = mapping.cheer(
+        NS(broadcaster=user("100", "doomtp"), user=None, anonymous=True, bits=100, message="", timestamp=WHEN)
+    )
+    assert anonymous.user_id is None and anonymous.payload["user"] is None
+    assert "someone cheered 100 bits" in anonymous.payload["system_message"]
+
+
+async def test_a_broadcaster_connects_their_own_channel(dbs: Databases) -> None:
+    connected: list[AuthorizedAccount] = []
+
+    async def on_connected(account: AuthorizedAccount) -> None:
+        connected.append(account)
+
+    tokens = TokenStore(dbs.bot)
+    http = FakeOAuthHttp(list(BROADCASTER_SCOPES))
+    http.user = {"user_id": "100", "login": "doomtp"}
+    auth = TwitchAuth(client_id="cid", redirect_uri="r", tokens=tokens, http=http,
+                      on_broadcaster_authorized=on_connected, expected_bot_id="999")  # fmt: skip
+
+    query = parse_qs(urlsplit(auth.connect_url()).query)
+    assert set(query["scope"][0].split(" ")) == set(BROADCASTER_SCOPES)
+
+    account = await auth.complete("code", query["state"][0])
+    assert (account.flow, account.login) == ("broadcaster", "doomtp")
+    assert connected == [account]
+    stored = await tokens.get(broadcaster_identity("100"))
+    assert stored is not None and stored.access_token == "at"
+    assert await tokens.get() is None  # the bot's own token is untouched
+    assert [t.login for t in await tokens.broadcasters()] == ["doomtp"]
+    assert await tokens.forget(broadcaster_identity("100")) is True
+
+
+async def test_a_broadcaster_who_grants_nothing_changes_nothing(dbs: Databases) -> None:
+    tokens = TokenStore(dbs.bot)
+    http = FakeOAuthHttp(["user:read:email"])
+    http.user = {"user_id": "100", "login": "doomtp"}
+    auth = TwitchAuth(client_id="cid", redirect_uri="r", tokens=tokens, http=http)
+    state = parse_qs(urlsplit(auth.connect_url()).query)["state"][0]
+    with pytest.raises(OAuthError, match="nothing was granted"):
+        await auth.complete("code", state)
+    assert await tokens.broadcasters() == []
+
+
+def test_scopes_become_capabilities() -> None:
+    assert granted_by(BROADCASTER_SCOPES) == frozenset({"redemptions", "subs", "bits"})
+    assert granted_by(["bits:read"]) == frozenset({"bits"})
+    assert granted_by(["channel:manage:redemptions"]) == frozenset({"redemptions"})
+    assert granted_by(["channel:bot"]) == frozenset()  # the badge buys no events by itself
+
+
+async def test_the_connect_route_redirects_and_reports_what_was_granted(dbs: Databases) -> None:
+    http = FakeOAuthHttp(list(BROADCASTER_SCOPES))
+    http.user = {"user_id": "100", "login": "doomtp"}
+    auth = TwitchAuth(client_id="cid", redirect_uri="r", tokens=TokenStore(dbs.bot), http=http)
+    app = create_app(HealthRegistry(), auth)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        connect = await client.get("/auth/connect")
+        assert connect.status_code == 302
+        state = parse_qs(urlsplit(connect.headers["location"]).query)["state"][0]
+        done = await client.get("/auth/callback", params={"code": "c", "state": state})
+        assert done.status_code == 200 and "Channel connected" in done.text
+        assert "channel:read:redemptions" in done.text

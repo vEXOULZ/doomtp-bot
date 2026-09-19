@@ -213,6 +213,14 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
     )
     await triggers.add(
         channel_id=CHANNEL_ID,
+        type_="redemption",
+        expr="echo {event.user.display} wants {event.reward.title}: {event.input}",
+        match={"reward_id": "rw1"},
+        run_as_rank=0,
+        created_by="300",
+    )
+    await triggers.add(
+        channel_id=CHANNEL_ID,
         type_="stream_online",
         expr="echo live: {event.title}",
         run_as_rank=0,
@@ -255,9 +263,32 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
     )
     streams.streams[CHANNEL_ID] = {"title": "bot night"}  # what the poller just saw
     await dispatcher.handle(StreamStatusChanged(CHANNEL_ID, True, at=3))
+    # A channel point redemption, once the broadcaster has connected (ADR-0007 item 5), plus one for a
+    # reward this trigger isn't watching.
+    redeemed = {
+        "user": {"id": "400", "name": "alice", "display": "Alice"},
+        "input": "a song",
+        "reward": {"id": "rw1", "title": "Song request", "cost": 500},
+    }
+    await dispatcher.handle(ChatNotification("n2", CHANNEL_ID, "400", "redemption", redeemed, sent_at=4))
+    await dispatcher.handle(
+        ChatNotification(
+            "n3",
+            CHANNEL_ID,
+            "400",
+            "redemption",
+            {**redeemed, "reward": {"id": "rw2", "title": "Hydrate", "cost": 50}},
+            sent_at=5,
+        )
+    )
     await dispatcher.drain()
     await writer.stop()
-    assert sorted(sender.sent) == ["heard hello", "live: bot night", "raid!"]
+    assert sorted(sender.sent) == [
+        "Alice wants Song request: a song",
+        "heard hello",
+        "live: bot night",
+        "raid!",
+    ]
 
 
 # ── timers ─────────────────────────────────────────────────────────────────

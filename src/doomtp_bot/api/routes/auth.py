@@ -1,4 +1,9 @@
-"""/auth/login and /auth/callback: one-time bot authorization (architecture §3.1). LAN-only."""
+"""`/auth/*`: the bot's one-time authorization, and a broadcaster connecting their channel.
+
+`/auth/login` is for whoever runs the bot (architecture §3.1, LAN-only). `/auth/connect` is the link a
+broadcaster follows to give the bot their channel's events — the full tier of ADR-0007. Both return to
+`/auth/callback`, which tells them apart by the `state` Twitch hands back.
+"""
 
 from __future__ import annotations
 
@@ -35,6 +40,17 @@ async def login(request: Request) -> Response:
     return RedirectResponse(auth.login_url(), status_code=302)
 
 
+@router.get("/connect")
+async def connect(request: Request) -> Response:
+    """The link a broadcaster follows to grant their own channel (ADR-0007 full tier)."""
+    auth = _auth(request)
+    if auth is None:
+        return _page(
+            "Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503
+        )
+    return RedirectResponse(auth.connect_url(), status_code=302)
+
+
 @router.get("/callback")
 async def callback(
     request: Request, code: str | None = None, state: str | None = None, error: str | None = None
@@ -49,6 +65,14 @@ async def callback(
     except OAuthError as exc:
         return _page(
             "Authorization failed", html.escape(str(exc)) + " — <a href='/auth/login'>try again</a>", 400
+        )
+    if account.flow == "broadcaster":
+        granted = ", ".join(sorted(account.scopes)) or "nothing"
+        return _page(
+            "Channel connected",
+            f"Thanks, <b>{html.escape(account.login)}</b>. The bot now has: {html.escape(granted)}."
+            " Channel point redemptions and cheers can trigger commands from here on."
+            " You can take this back at any time from Twitch's <i>Connections</i> settings.",
         )
     return _page(
         "Bot authorized",

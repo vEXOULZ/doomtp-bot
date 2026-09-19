@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from doomtp_bot.core.capabilities import CapabilityProbe, tier_for
+from doomtp_bot.core.capabilities import CapabilityProbe, granted_by, tier_for
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.events import StreamStatusChanged
 from doomtp_bot.core.streams import StreamPoller, StreamStatus
@@ -151,6 +151,22 @@ async def test_the_probe_leaves_what_the_broadcaster_granted_alone(h: Harness) -
 
     assert "redemptions" in await probe.probe(CHANNEL_ID)
     assert h.policy.channel_settings(CHANNEL_ID).tier == "full"  # type: ignore[union-attr]
+
+
+async def test_a_broadcaster_grant_adds_to_what_the_probe_found(h: Harness) -> None:
+    """The connect flow (ADR-0007 item 5): granted scopes become capabilities the probe won't undo."""
+    h.helix.moderator_in = {CHANNEL_ID}
+    probe = CapabilityProbe(policy=h.policy, channels=h.channels, prober=h.helix)
+    await probe.probe(CHANNEL_ID)
+
+    granted = await probe.grant(CHANNEL_ID, granted_by(["channel:read:redemptions", "bits:read"]))
+    assert granted == frozenset({"chat", "moderate", "followers", "redemptions", "bits"})
+    assert h.policy.channel_settings(CHANNEL_ID).tier == "full"  # type: ignore[union-attr]
+    assert await probe.probe(CHANNEL_ID) == granted  # the hourly probe leaves the grant alone
+
+    kept = await probe.revoke_full(CHANNEL_ID)
+    assert kept == frozenset({"chat", "moderate", "followers"})  # being a mod isn't theirs to take back
+    assert h.policy.channel_settings(CHANNEL_ID).tier == "moderator"  # type: ignore[union-attr]
 
 
 async def test_joining_a_channel_probes_it(h: Harness) -> None:

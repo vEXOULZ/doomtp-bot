@@ -14,7 +14,7 @@ from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
-from doomtp_bot.core.capabilities import CapabilityProbe
+from doomtp_bot.core.capabilities import CapabilityProbe, granted_by
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Event
@@ -32,6 +32,7 @@ from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.automod import AutoMod
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
+from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import MODERATOR_RANK
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
@@ -41,7 +42,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
 from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHttp
 from doomtp_bot.twitch.client import TwitchService
-from doomtp_bot.twitch.tokens import TokenStore
+from doomtp_bot.twitch.tokens import TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import SqliteVariableStore
 
@@ -173,6 +174,7 @@ async def run(settings: Settings) -> None:
                 await channels.ensure_home(twitch.bot_id, twitch.bot_login)
                 await channels.subscribe_all()
                 await probe.probe_all()  # tier per channel, before anything checks a capability
+                await restore_broadcasters()  # full-tier events, where a broadcaster connected
                 probe.start()
                 if poller is not None:
                     await poller.poll()
@@ -183,6 +185,36 @@ async def run(settings: Settings) -> None:
                 backfill.start_keep_warm()
         except Exception:
             log.exception("twitch.start_failed")
+
+    async def restore_broadcasters() -> None:
+        """Give the client the broadcaster tokens we hold, and re-subscribe their events (ADR-0007)."""
+        if twitch is None:
+            return
+        for stored in await twitch.tokens.broadcasters():
+            if not stored.refresh_token:
+                continue
+            if not await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token):
+                continue
+            settings_of = policy.channel_settings(stored.user_id)
+            if settings_of is not None:
+                await twitch.subscribe_broadcaster(stored.user_id, set(settings_of.capabilities))
+
+    async def on_broadcaster_authorized(account: AuthorizedAccount) -> None:
+        """A broadcaster connected their channel: join it, grant what they gave, subscribe (ADR-0007)."""
+        if twitch is None:
+            return
+        await channels.join(account.user_id, account.login, Actor(None, "web"))
+        capabilities = await probe.grant(account.user_id, granted_by(account.scopes))
+        stored = await twitch.tokens.get(broadcaster_identity(account.user_id))
+        if stored is not None and stored.refresh_token:
+            await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token)
+        failed = await twitch.subscribe_broadcaster(account.user_id, set(capabilities))
+        log.info(
+            "twitch.broadcaster_connected",
+            channel=account.login,
+            has=sorted(capabilities),
+            failed=failed,
+        )
 
     async def on_bot_authorized(account: AuthorizedAccount) -> None:
         log.info("twitch.authorized", bot=account.login, scopes=list(account.scopes))
@@ -196,6 +228,7 @@ async def run(settings: Settings) -> None:
             tokens=twitch.tokens,
             http=TwitchOAuthHttp(settings.twitch_client_id, secret),
             on_bot_authorized=on_bot_authorized,
+            on_broadcaster_authorized=on_broadcaster_authorized,
             expected_bot_id=settings.twitch_bot_id,
         )
 

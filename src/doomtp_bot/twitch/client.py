@@ -34,6 +34,12 @@ CHAT_SUBSCRIPTIONS: tuple[type[Any], ...] = (
     eventsub.ChatClearSubscription,
     eventsub.ChatClearUserMessagesSubscription,
 )
+# Full tier only: these run on the *broadcaster's* token, so they exist only where one was granted
+# (ADR-0007 item 5). Each is keyed by the capability its scope buys.
+BROADCASTER_SUBSCRIPTIONS: tuple[tuple[str, type[Any]], ...] = (
+    ("redemptions", eventsub.ChannelPointsRedeemAddSubscription),
+    ("bits", eventsub.ChannelCheerSubscription),
+)
 
 
 def _already_subscribed(exc: Exception) -> bool:
@@ -82,6 +88,12 @@ class _BotClient(twitchio.Client):
 
     async def event_follow(self, payload: Any) -> None:
         await self.service.emit(None, mapping.follow(payload))
+
+    async def event_custom_redemption_add(self, payload: Any) -> None:
+        await self.service.emit(payload.id, mapping.redemption(payload))
+
+    async def event_cheer(self, payload: Any) -> None:
+        await self.service.emit(None, mapping.cheer(payload))
 
 
 class TwitchService:
@@ -177,6 +189,41 @@ class TwitchService:
                 )
         if not failed:
             self._subscribed.add(channel_id)
+        return failed
+
+    async def use_broadcaster_token(self, access_token: str, refresh_token: str) -> bool:
+        """Hand a broadcaster's token to the client so its own events can be subscribed to."""
+        if self.client is None:
+            return False
+        try:
+            await self.client.add_token(access_token, refresh_token)
+        except Exception as exc:
+            log.warning("twitch.broadcaster_token_rejected", error=repr(exc))
+            return False
+        return True
+
+    async def subscribe_broadcaster(self, channel_id: str, capabilities: set[str]) -> list[str]:
+        """Subscribe to the full-tier events this channel granted. Returns what failed."""
+        if self.client is None:
+            return [sub.type for capability, sub in BROADCASTER_SUBSCRIPTIONS if capability in capabilities]
+        failed: list[str] = []
+        for capability, subscription in BROADCASTER_SUBSCRIPTIONS:
+            if capability not in capabilities:
+                continue
+            try:
+                await self.client.subscribe_websocket(
+                    subscription(broadcaster_user_id=channel_id), token_for=channel_id
+                )
+            except Exception as exc:
+                if _already_subscribed(exc):
+                    continue
+                failed.append(subscription.type)
+                log.warning(
+                    "twitch.broadcaster_subscribe_failed",
+                    channel=channel_id,
+                    type=subscription.type,
+                    error=repr(exc),
+                )
         return failed
 
     async def unsubscribe_channel(self, channel_id: str) -> None:

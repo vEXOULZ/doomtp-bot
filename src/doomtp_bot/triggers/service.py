@@ -43,25 +43,9 @@ TRIGGER_TYPES: tuple[TriggerType, ...] = (
     "redemption", "raid", "sub", "resub", "gift_sub", "cheer", "follow",
     "stream_online", "stream_offline", "timer", "cron", "listener",
 )  # fmt: skip
-# Types the bot can actually receive today; the rest need capabilities it doesn't have yet (ADR-0007).
-# `follow` needs the moderator tier and `stream_*` come from the Helix poller, so both are listed here
-# and refused per channel by the capability check rather than globally.
-SUPPORTED_NOW: frozenset[str] = frozenset(
-    {
-        "raid",
-        "sub",
-        "resub",
-        "gift_sub",
-        "listener",
-        "timer",
-        "cron",
-        "stream_online",
-        "stream_offline",
-        "follow",
-    }  # fmt: skip
-)
-# Event types that only work where the channel granted the bot something (ADR-0007). The rest — raids,
-# subs, resubs, gift subs — arrive as chat notifications, which every joined channel has.
+# Event types that only work where the channel granted the bot something (ADR-0007): `follow` needs the
+# bot to be a moderator, the other two need the broadcaster to have connected their channel. The rest —
+# raids, subs, resubs, gift subs — arrive as chat notifications, which every joined channel has.
 REQUIRED_CAPABILITY: dict[str, str] = {
     "follow": capabilities.FOLLOWERS,
     "redemption": capabilities.REDEMPTIONS,

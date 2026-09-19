@@ -18,7 +18,6 @@ from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 from doomtp_bot.triggers.cron import describe as describe_cron
 from doomtp_bot.triggers.service import (
     REQUIRED_CAPABILITY,
-    SUPPORTED_NOW,
     TRIGGER_TYPES,
     TriggerError,
     compile_listener,
@@ -168,8 +167,6 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
 
 def _warning(ctx: CommandContext, type_: str) -> str:
     """Say up front when a trigger is stored but can't fire here yet (ADR-0007)."""
-    if type_ not in SUPPORTED_NOW:
-        return f" ⚠ the bot can't receive {type_} events yet"
     needed = REQUIRED_CAPABILITY.get(type_)
     if needed and needed not in ctx.channel.capabilities:
         how = "mod the bot" if needed == "followers" else "the broadcaster has to connect the channel"
