@@ -6,6 +6,7 @@ can't drift from the code. Admin pages need the local admin password and are LAN
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from doomtp_bot import __version__
+from doomtp_bot.api.keys import ApiKeyError
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.parser import (
     DEFAULT_PREFIX,
@@ -244,7 +246,7 @@ async def logout(request: Request) -> RedirectResponse:
 
 
 @router.get("/admin", response_class=HTMLResponse)
-async def admin_home(request: Request) -> HTMLResponse:
+async def admin_home(request: Request, new_key: str = "") -> HTMLResponse:
     _require_admin(request)
     health = _state(request, "health")
     _, components = await health.snapshot() if health else (None, {})
@@ -254,7 +256,56 @@ async def admin_home(request: Request) -> HTMLResponse:
         components=components,
         channels=_channels(request),
         audit=await _audit_rows(request),
+        api_keys=await _key_rows(request),
+        new_key=new_key,
     )
+
+
+async def _key_rows(request: Request) -> list[dict[str, Any]]:
+    keys = _state(request, "api_keys")
+    if keys is None:
+        return []
+    return [
+        {
+            "id": key.id,
+            "name": key.name,
+            "scopes": ", ".join(sorted(key.scopes)),
+            "created": _when(key.created_at),
+            "last_used": _when(key.last_used_at) if key.last_used_at else "never",
+        }
+        for key in await keys.list()
+    ]
+
+
+def _when(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M")
+
+
+@router.post("/admin/keys", response_class=HTMLResponse)
+async def admin_create_key(
+    request: Request, name: str = Form(...), scopes: str = Form("read"), csrf: str = Form("")
+) -> HTMLResponse:
+    """Create an API key and show it once. It is never redirected through a URL, where it would be logged."""
+    _require_csrf(request, csrf)
+    keys = _state(request, "api_keys")
+    if keys is None:
+        raise HTTPException(status_code=503, detail="API keys aren't available")
+    try:
+        _, secret = await keys.create(name=name, scopes=tuple(s for s in scopes.split(",") if s))
+    except ApiKeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await admin_home(request, new_key=secret)
+
+
+@router.post("/admin/keys/revoke")
+async def admin_revoke_key(
+    request: Request, key_id: int = Form(...), csrf: str = Form("")
+) -> RedirectResponse:
+    _require_csrf(request, csrf)
+    keys = _state(request, "api_keys")
+    if keys is not None:
+        await keys.revoke(key_id)
+    return RedirectResponse("/admin", status_code=303)
 
 
 @router.get("/admin/channels/{login}", response_class=HTMLResponse)

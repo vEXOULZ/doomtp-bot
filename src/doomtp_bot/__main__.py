@@ -11,6 +11,7 @@ import uvicorn
 
 from doomtp_bot import __version__
 from doomtp_bot.api.app import create_app
+from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
 from doomtp_bot.core.capabilities import CapabilityProbe
@@ -233,6 +234,11 @@ async def run(settings: Settings) -> None:
             "triggers": triggers,
             "filters": content_filter,
             "health": health,
+            "channels": channels,
+            "twitch": twitch,
+            "variable_store": store,
+            "chatlog_db": dbs.chatlog,
+            "api_keys": ApiKeyService(dbs.bot),
         },
         admin_password=settings.admin_password_value(),
     )

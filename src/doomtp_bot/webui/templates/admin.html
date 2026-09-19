@@ -31,6 +31,41 @@
   {% endfor %}
 </table>
 
+<h2>API keys</h2>
+<p class="muted">Keys for <code>/api/v1</code>. A <code>read</code> key sees configuration and logs; a
+<code>write</code> key also changes them. The key itself is shown once, here, and only its hash is
+stored — if it is lost, revoke it and make another.</p>
+{% if new_key %}
+<p class="pill on">New key <code>{{ new_key }}</code> — copy it now, it is not shown again.</p>
+{% endif %}
+<table>
+  <tr><th>Name</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr>
+  {% for key in api_keys %}
+  <tr>
+    <td>{{ key.name }}</td>
+    <td>{{ key.scopes }}</td>
+    <td class="muted">{{ key.created }}</td>
+    <td class="muted">{{ key.last_used }}</td>
+    <td>
+      <form method="post" action="/admin/keys/revoke" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="key_id" value="{{ key.id }}">
+        <button type="submit">revoke</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<form method="post" action="/admin/keys" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="text" name="name" placeholder="what it is for" required>
+  <select name="scopes">
+    <option value="read">read</option>
+    <option value="read,write">read and write</option>
+  </select>
+  <button type="submit">create key</button>
+</form>
+
 <h2>Recent configuration changes</h2>
 <p class="muted">Every change to roles, permissions, cooldowns, toggles, filters, triggers and custom
 commands is recorded here, whoever made it and however.</p>

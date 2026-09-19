@@ -506,7 +506,10 @@ A **race window** remains: a mod can act after the message has already been sent
 | `POST /api/v1/parse` | Early | Tokens, AST, errors and warnings from the authoritative parser (ADR-0011). Powers editor diagnostics. |
 | `POST /api/v1/explain` | Early | Same output as `!explain`, with an optional `as_user` for admins |
 | `GET /api/v1/language` | Early | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
-| `/api/v1/...` channels, roles, toggles, cooldowns, filters, triggers, variables, custom commands, messages search, audit log, command runs | Later | API key or session auth. All writes go through the same services and the audit log. |
+| `GET /api/v1/channels/{login}/commands`, `/publications`, `GET /api/v1/custom-commands` | **Now** | Public, like the pages that already show them |
+| `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables, message search, command runs, `/api/v1/audit` | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
+
+**API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked on the admin page, and the key is shown once, on the page that creates it, never through a redirect where it would land in logs and history. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
 | `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. |
 | `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. The command reference and the channel pages share one compact table: a line per command, a `<details>` pane for arguments, cooldowns and examples, and a search box that filters client-side over a precomputed `data-search` string (so it needs no request per keystroke, and the page still lists everything without JavaScript). |
 
@@ -530,26 +533,26 @@ Built (✔) and planned (·):
 src/doomtp_bot/
 ├─ __main__.py  config.py  clock.py                                        ✔ wiring, settings, now_ms
 ├─ core/        events.py dispatch.py channels.py outbox.py health.py      ✔ dispatch calls each step directly
-│               instance_lock.py                                           ·  capabilities.py (ADR-0007 probe)
+│               instance_lock.py capabilities.py streams.py                ✔ ADR-0007 probe and stream poller
 ├─ twitch/      client.py mapping.py auth.py tokens.py    # only place importing twitchio  ✔
-│                                                                          ·  probe.py, streams poller
-├─ history/     provider.py recent_messages.py irc_parse.py                ·  ADR-0008
+├─ history/     provider.py backfill.py irc_parse.py                       ✔ ADR-0008
 ├─ chatlog/     writer.py                                                  ✔  ·  queries.py
-├─ moderation/  index.py                                                   ✔
+├─ moderation/  index.py automod.py                                        ✔
 ├─ lang/        parser.py (PEG, spec App. C) ast.py errors.py              ✔ syntax (versioned)
 ├─ runtime/     engine.py resolver.py preflight.py executor.py result.py   ✔
-│               context.py values.py variables.py namespaces.py output.py policy.py spec.py registry.py
-│                                                                          ·  explain.py
+│               context.py values.py variables.py namespaces.py output.py policy.py spec.py registry.py explain.py
 ├─ policy/      service.py repository.py snapshot.py roles.py cooldowns.py ✔ one service, not a file per concern
-├─ customcmds/  service.py resolution.py versions.py                       ·  ADR-0009
+├─ customcmds/  service.py resolution.py packs.py params.py                ✔ ADR-0009, ADR-0012
 ├─ variables/   store.py access.py                                         ✔
-├─ triggers/    service.py timers.py listeners.py                          ·  architecture §7
-├─ filters/     normalize.py matcher.py service.py                         ·  architecture §9
+├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
+├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ audit/       log.py                                                     ✔
 ├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔  ·  repos/
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
-│               variables.py _common.py                                    ·  weather, quotes, logsearch, automod…
-└─ api/         app.py routes/ (health auth)                               ✔  ·  commands parse explain language v1 web
+│               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
+│                                                                          ·  weather, quotes, logsearch…
+├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
+└─ api/         app.py keys.py routes/ (health auth language data)         ✔  ·  the CodeMirror editor bundle
 
 web-editor/                  # the only Node-tooled part: CodeMirror 6 + Lezer highlight grammar → static bundle
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from doomtp_bot import __version__
-from doomtp_bot.api.routes import auth, health, language
+from doomtp_bot.api.routes import auth, data, health, language
 from doomtp_bot.core.health import HealthRegistry
 from doomtp_bot.twitch.auth import TwitchAuth
 from doomtp_bot.webui import pages
@@ -36,6 +36,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(language.router)
+    app.include_router(data.router)
     app.include_router(pages.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
