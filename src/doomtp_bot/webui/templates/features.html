@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% set p = default_prefix %}
+{% block title %}Features — doomtp-bot{% endblock %}
+{% block content %}
+<h1>Features</h1>
+<p class="muted">What the bot does, how each part behaves, and where the limits are. Examples use
+<code>{{ p }}</code> as the command sign; your channel may use another.</p>
+
+<div class="card toc">
+  <a href="#commands">Commands and pipelines</a><br>
+  <a href="#permissions">Roles and permissions</a><br>
+  <a href="#cooldowns">Cooldowns</a><br>
+  <a href="#toggles">Turning things on and off</a><br>
+  <a href="#custom">Custom commands</a><br>
+  <a href="#packs">Packs and derived commands</a><br>
+  <a href="#variables">Variables</a><br>
+  <a href="#triggers">Triggers, listeners and timers</a><br>
+  <a href="#filter">Word filter</a><br>
+  <a href="#moderation">Moderation-aware replies</a><br>
+  <a href="#logging">Chat log and history</a><br>
+  <a href="#channels">Channels and onboarding</a><br>
+  <a href="#explain">Explaining an expression</a><br>
+  <a href="#api">API and admin</a>
+</div>
+
+<h2 id="commands">Commands and pipelines</h2>
+<p>A command is one step. Operators join steps into a line, and only the <em>last</em> result is sent to
+chat.</p>
+<table>
+  <tr><th>Operator</th><th>Meaning</th><th>Example</th></tr>
+  <tr><td><code>|</code></td><td>Pipe: the left result becomes the right command's input. Stops if the left fails.</td>
+      <td><code>{{ p }}random 1-6 | echo you rolled {1}</code></td></tr>
+  <tr><td><code>&amp;&amp;</code></td><td>Run the right side only if the left succeeded.</td>
+      <td><code>{{ p }}var incr channel.deaths &amp;&amp; echo oof</code></td></tr>
+  <tr><td><code>||</code></td><td>Run the right side only if the left failed. This is how you handle errors.</td>
+      <td><code>{{ p }}weather {arg.1} || echo no idea</code></td></tr>
+  <tr><td><code>( )</code></td><td>Grouping, so an operator applies to a whole section.</td>
+      <td><code>( {{ p }}a || default 5 ) &gt; channel.x</code></td></tr>
+  <tr><td><code>&gt;</code> and <code>&gt;&gt;</code></td><td>Store the result in a variable; <code>&gt;&gt;</code> appends. Only on success.</td>
+      <td><code>{{ p }}random 1-100 &gt; chatter.luck</code></td></tr>
+</table>
+<p><strong>Results carry three things:</strong> an exit code, a message (what chat sees) and data
+(structured values other commands can read as <code>{1}</code>, <code>{1.celsius}</code>). Failure codes
+are documented in the <a href="/docs/language">language reference</a>.</p>
+<p>A line runs at most <strong>{{ 8 }} commands</strong>, and nothing runs at all if any part of it
+fails a check first — a line either goes through as a whole or does nothing.</p>
+
+<h2 id="permissions">Roles and permissions</h2>
+<p>Roles are ranked. A command requires a role, and anyone whose rank reaches it may run the command.</p>
+<table>
+  <tr><th>Role</th><th>Rank</th><th>Comes from</th></tr>
+  {% for name, rank in roles %}
+  <tr><td><code>{{ name }}</code></td><td>{{ rank }}</td>
+      <td>{% if name in ("broadcaster", "moderator", "vip", "subscriber") %}Twitch badges{%
+             elif name == "everyone" %}everyone in chat{%
+             elif name in ("bot_admin", "bot_owner") %}the bot's own admin list{%
+             else %}custom, created per channel{% endif %}</td></tr>
+  {% endfor %}
+</table>
+<p>Channels can add their own roles between 1 and 99 — <code>{{ p }}role create ambassador 40</code> —
+and grant them with <code>{{ p }}role add ambassador @someone [duration]</code>. A role above moderator
+(a lead moderator, say) is just a higher rank.</p>
+<p>Change what a command needs with <code>{{ p }}perm set &lt;command&gt; &lt;role&gt;</code>, or allow
+exactly one role regardless of rank with <code>{{ p }}perm allow</code>.</p>
+<p class="muted">A denial is silent. The bot doesn't announce that you can't use something; a channel can
+configure an <code>on_denied</code> callback if it wants a reply.</p>
+
+<h2 id="cooldowns">Cooldowns</h2>
+<p>Every command has <strong>two</strong> cooldowns, and both must be clear before it runs:</p>
+<ul>
+  <li><strong>Shared</strong> — one bucket for everyone at the same role tier.</li>
+  <li><strong>Personal</strong> — your own bucket.</li>
+</ul>
+<pre>{{ p }}cooldown set random everyone 10 30   # 10s shared, 30s personal
+{{ p }}cooldown show random</pre>
+<p>The tier that applies is the highest-ranked rule your rank reaches, so a moderator can be exempt while
+viewers wait. Being on cooldown is silent, with an optional <code>on_cooldown</code> callback.</p>
+
+<h2 id="toggles">Turning things on and off</h2>
+<p>Commands are grouped into modules. A channel can switch a whole module or a single command:</p>
+<pre>{{ p }}module list
+{{ p }}module disable games
+{{ p }}cmd disable roll
+{{ p }}cmd log roll invocations     # how much of its use is written to the log</pre>
+<p>Bot admins can add <code>global</code> to any of those to set the default everywhere. A globally
+disabled command can't be re-enabled by a channel — that's the kill switch. A disabled command answers
+exactly like an unknown one, so it doesn't leak that it exists.</p>
+
+<h2 id="custom">Custom commands</h2>
+<p>Anyone can build a command out of the pieces above:</p>
+<pre>{{ p }}cc add hype echo {chatter.display} is hyped!
+{{ p }}cc param hype 1 name=target type=user "who to hype"
+{{ p }}cc describe hype gets the chat hyped
+{{ p }}cc publish hype          # a moderator offers it to the channel</pre>
+<table>
+  <tr><th>What</th><th>How</th></tr>
+  <tr><td>Use your own</td><td>Immediately, anywhere the bot is — it's your personal alias.</td></tr>
+  <tr><td>Share</td><td><code>{{ p }}cc share hype on</code>, then others <code>{{ p }}cc link @you hype</code></td></tr>
+  <tr><td>Offer to a channel</td><td><code>{{ p }}cc publish</code> (moderator by default)</td></tr>
+  <tr><td>Change it</td><td><code>{{ p }}cc edit</code>, <code>{{ p }}cc revert</code>, <code>{{ p }}cc versions</code></td></tr>
+  <tr><td>Stop it</td><td>Mods: <code>{{ p }}cc disable</code> / <code>{{ p }}cc unpublish</code>. Owner: <code>{{ p }}cc rm</code></td></tr>
+</table>
+<p><strong>Edits are live.</strong> When you edit a command, every channel and every person using it gets
+the new version immediately. There is no pinning and no approval step, so linking or publishing someone
+else's command always answers with a warning saying exactly that.</p>
+<p><strong>A custom command runs as whoever typed it.</strong> Commands inside it are checked against
+their permissions, their cooldowns and their rank — never the author's. Publishing something can't hand
+anyone new powers.</p>
+<p>Names resolve in this order: <strong>built-in → published in this channel → a pack published here →
+published globally → your personal alias</strong>. <code>{{ p }}@name</code> addresses your own alias
+directly, and a built-in can never be shadowed.</p>
+
+<h2 id="packs">Packs and derived commands</h2>
+<p>A <strong>pack</strong> is a set of commands that belong together — a game, a toolkit — published and
+unpublished as one unit:</p>
+<pre>{{ p }}cc pack create blackjack
+{{ p }}cc pack add blackjack hit stand deal
+{{ p }}cc publish pack blackjack
+{{ p }}module disable blackjack     # the pack name is its module name</pre>
+<p>Commands added to a pack later appear in every channel that published it, for the same reason edits are
+live: a channel accepted <em>the pack</em>, and the owner decides what's in it. Publishing refuses, and
+changes nothing, if one of the names is already taken in that channel.</p>
+<p>A <strong>derived command</strong> is a custom command published globally by a bot admin, so it works in
+every channel without being published one by one. Built-ins (written in Python) are <em>primitive</em>;
+derived commands are written in this language and can be fixed live. A channel can always override a
+derived command with its own, or switch it off.</p>
+
+<h2 id="variables">Variables</h2>
+<p>Values the bot remembers, in seven namespaces:</p>
+<table>
+  <tr><th>Namespace</th><th>Belongs to</th></tr>
+  <tr><td><code>chatter.x</code></td><td>you, everywhere the bot is</td></tr>
+  <tr><td><code>channel.x</code></td><td>the channel</td></tr>
+  <tr><td><code>channel.chatter.x</code></td><td>you, in this channel</td></tr>
+  <tr><td><code>publisher.x</code></td><td>the custom command's author</td></tr>
+  <tr><td><code>publisher.chatter.x</code></td><td>you, for that author's commands</td></tr>
+  <tr><td><code>publisher.channel.x</code></td><td>that author, in this channel</td></tr>
+  <tr><td><code>publisher.channel.chatter.x</code></td><td>you, for that author, in this channel</td></tr>
+</table>
+<pre>{{ p }}var set chatter.location Lisbon
+{{ p }}var incr channel.deaths
+{{ p }}var top channel.chatter.points
+{{ p }}echo 1 &gt; channel.deaths</pre>
+<p><strong>Who may write what</strong> is the safety boundary for shared commands. Your own commands may
+write your spaces; a published command written by someone else may write <em>their</em> spaces, and may
+only touch the channel's if a moderator granted exactly that variable:</p>
+<pre>{{ p }}cc grant points channel.chatter.points   # and {{ p }}cc revoke to take it back</pre>
+<p>A grant follows the command, not the name it was published under, and it survives the author's future
+edits — which the reply says when you grant it.</p>
+<p class="muted">All variables are readable by anyone. Don't store anything private in them.</p>
+
+<h2 id="triggers">Triggers, listeners and timers</h2>
+<pre>{{ p }}trigger add raid echo welcome {event.user.name} and {event.viewers} raiders!
+{{ p }}trigger listen \bhello\b =&gt; echo hi {chatter.display}
+{{ p }}timer add 15m min_lines=10 jitter=2m echo remember to hydrate</pre>
+<ul>
+  <li><strong>Triggers</strong> run on channel events. The payload is in <code>{event.*}</code>, and the
+      chatter is the event's user — the raider, the subscriber.</li>
+  <li><strong>Listeners</strong> run on ordinary chat lines matching a regular expression, with captures in
+      <code>{match.1}</code> and <code>{match.name}</code>.</li>
+  <li><strong>Timers</strong> run on a clock. <code>jitter=</code> spreads them out,
+      <code>min_lines=</code> keeps them quiet in a quiet channel, and <code>only_live</code> waits for the
+      stream.</li>
+</ul>
+<p>All three run at the rank of the moderator who created them, never higher, and go through the same
+checks as a typed command.</p>
+<p class="muted">Raids, subs, resubs and gift subs work today. Channel point redemptions, follows and
+cheers need the broadcaster to connect the bot for the full tier; a trigger for those can be created now
+and starts working when that happens.</p>
+
+<h2 id="filter">Word filter</h2>
+<pre>{{ p }}filter add word badword           # masks it: ****
+{{ p }}filter add word slur tag insult   # replaces it with [insult]
+{{ p }}filter add regex \d{9,} block     # blocks the whole message
+{{ p }}filter add allow scunthorpe       # an exception, for the obvious reason
+{{ p }}filter test some text here</pre>
+<p>Matching ignores the usual tricks: case, accents, zero-width characters, full-width letters,
+leetspeak (<code>b4d</code>), repeated letters (<code>baaaad</code>) and separators
+(<code>b a d</code>, <code>b.a.d</code>). Regular expressions match the text as typed, so digits and
+punctuation still mean what they say.</p>
+<p>The filter applies to <strong>everything the bot says</strong>, and to <strong>what people
+store</strong> — custom command names and bodies, variable values and trigger expressions are rejected
+rather than saved. Bot admins keep a global list that applies in every channel.</p>
+
+<h2 id="moderation">Moderation-aware replies</h2>
+<p>If the message that triggered a command is deleted, or its author is timed out or banned while the bot
+is still working, the run is cancelled and nothing is sent. The check runs before each command, before any
+side effect, and again immediately before sending. A channel can add
+<code>reply_hold_ms</code> to delay replies slightly, giving moderators a moment to act first.</p>
+
+<h2 id="logging">Chat log and history</h2>
+<p>Every message is written to a searchable log (full-text). <strong>Nothing is ever deleted:</strong> a
+deleted message keeps its row and gains a deletion time, so the record of what happened stays honest.
+Timeouts, bans and chat clears are stored as events of their own.</p>
+<p>Coverage is recorded too: the log knows exactly when the bot was listening. If the bot was down, the
+gap can be filled from the public recent-messages service when a channel opts in, and anything that can't
+be proven complete is marked partial rather than quietly called whole. <strong>Backfilled messages never
+run commands</strong> — they only go to the log.</p>
+
+<h2 id="channels">Channels and onboarding</h2>
+<p>A broadcaster types <code>{{ p }}join</code> in the bot's own chat, and the bot starts reading and
+replying in theirs — no authorization needed for that. More becomes possible as trust grows:</p>
+<table>
+  <tr><th>Tier</th><th>What unlocks it</th><th>What it adds</th></tr>
+  <tr><td>basic</td><td>nothing — just <code>{{ p }}join</code></td><td>reading chat, replying, commands, timers</td></tr>
+  <tr><td>moderator</td><td>the broadcaster mods the bot</td><td>follow events, moderation detail, higher send limits, no slow mode</td></tr>
+  <tr><td>full</td><td>the broadcaster connects the bot</td><td>channel point redemptions, sub and cheer events, the chat bot badge</td></tr>
+</table>
+<p><code>{{ p }}part</code> removes the bot; it stops listening and sending immediately.</p>
+
+<h2 id="explain">Explaining an expression</h2>
+<pre>{{ p }}explain {{ p }}random 1-6 | echo you rolled {1}
+{{ p }}explain --run {{ p }}ping</pre>
+<p>Shows how each name resolved (built-in, published, or your alias, with the author and version), your
+rank against what each command requires, both cooldowns with the time remaining, which placeholders exist
+in that context, and the first check that would fail. <code>--run</code> also evaluates it, with variable
+writes discarded, cooldowns untouched and nothing sent to chat.</p>
+
+<h2 id="api">API and admin</h2>
+<table>
+  <tr><th>Endpoint</th><th>What it gives</th></tr>
+  <tr><td><code>GET /api/v1/commands</code></td><td>every built-in with usage, parameters and examples</td></tr>
+  <tr><td><code>GET /api/v1/language</code></td><td>operators, placeholder roots per context, types, limits</td></tr>
+  <tr><td><code>POST /api/v1/parse</code></td><td>the AST, or the error with its code, column and hint</td></tr>
+  <tr><td><code>POST /api/v1/explain</code></td><td>the same report as <code>{{ p }}explain</code></td></tr>
+  <tr><td><code>GET /healthz</code>, <code>GET /readyz</code></td><td>liveness, and readiness with component detail</td></tr>
+</table>
+<p>The admin pages show health, channels, and every channel's modules, triggers, filters, published
+commands and ignore list, with an audit trail of configuration changes. They need the local admin password
+and are meant for a LAN, not the internet.</p>
+{% endblock %}

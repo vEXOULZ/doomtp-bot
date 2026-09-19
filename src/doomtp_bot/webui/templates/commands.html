@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% set p = default_prefix %}
+{% block title %}Commands — doomtp-bot{% endblock %}
+{% block content %}
+<h1>Command reference</h1>
+<p class="muted">Generated from the specs the bot runs on, so this page and the bot can't disagree. What
+you can actually use depends on your channel's settings and your role —
+<code>{{ p }}help</code> in chat lists only what you can run there.</p>
+
+<div class="card toc">
+  {% for module in by_module %}<a href="#{{ module }}">{{ module }}</a><br>{% endfor %}
+</div>
+
+{% for module, specs in by_module.items() %}
+<h2 id="{{ module }}">{{ module }}</h2>
+{% for spec in specs|sort(attribute='name') %}
+<div class="card">
+  <h3 style="margin-top:0"><code>{{ p }}{{ spec.usage() }}</code></h3>
+  <p>{{ spec.summary }}</p>
+  {% if spec.description and spec.description != spec.summary %}
+    <p class="muted">{{ spec.description }}</p>
+  {% endif %}
+  <p>
+    <span class="pill">needs {{ spec.required_role }}</span>
+    {% if spec.aliases %}<span class="pill">also {{ spec.aliases|join(', ') }}</span>{% endif %}
+    {% if not spec.toggleable %}<span class="pill">always on</span>{% endif %}
+    {% if spec.fixed_policy %}<span class="pill">no cooldown, no role</span>{% endif %}
+    {% for role, cd in spec.default_cooldowns.items() %}
+      <span class="pill">{{ role }}: {{ cd.tier_s }}s shared / {{ cd.user_s }}s personal</span>
+    {% endfor %}
+  </p>
+  {% if spec.params %}
+  <table>
+    <tr><th>Argument</th><th>Type</th><th>Required</th><th>Meaning</th></tr>
+    {% for param in spec.params %}
+    <tr>
+      <td><code>{{ param.name }}</code> <span class="muted">({{ param.position }})</span></td>
+      <td>{{ param.type }}{% if param.choices %}: {{ param.choices|join(', ') }}{% endif %}</td>
+      <td>{{ 'yes' if param.required else 'no' }}</td>
+      <td>{{ param.description }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if spec.examples %}
+  <p class="muted" style="margin-bottom:.2rem">Examples</p>
+  <pre>{% for example in spec.examples %}{{ example.invocation }}{% if example.output %}
+  → {{ example.output }}{% endif %}
+{% endfor %}</pre>
+  {% endif %}
+</div>
+{% endfor %}
+{% endfor %}
+{% endblock %}

@@ -84,6 +84,21 @@ versions. After changing a dependency in `pyproject.toml`, refresh the lock (CI 
 uv lock
 ```
 
+## Web UI
+
+With the bot running, <http://127.0.0.1:8080/> documents every feature, the command reference is
+generated from the bot's own specs, and `/docs/language` is the language reference.
+
+The admin pages at `/admin` show health, channels, modules, triggers, filters, published commands and the
+audit trail, and can toggle each of those. They need a password:
+
+```bash
+mkdir -p secrets && printf '%s' 'a long random password' > secrets/admin_password
+```
+
+Then set `ADMIN_PASSWORD_FILE=./secrets/admin_password` in `.env`. Without it `/admin` returns 404 rather
+than being open. The bot binds to `127.0.0.1` by default; keep it on the LAN.
+
 ## Backups
 
 `bot.db` holds the OAuth refresh tokens and every channel's configuration; `chatlog.db` holds the message

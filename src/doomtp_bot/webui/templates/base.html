@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}doomtp-bot{% endblock %}</title>
+<style>
+:root {
+  --bg: #12100e; --panel: #1b1815; --ink: #efe7dd; --muted: #a99d8f;
+  --line: #322c26; --accent: #e0a458; --ok: #7cb87c; --bad: #d4796b;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #faf7f2; --panel: #fff; --ink: #22201d; --muted: #6d6459;
+          --line: #e2dbd1; --accent: #a4621b; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, sans-serif; }
+header { border-bottom: 1px solid var(--line); padding: 1rem 1.5rem; display: flex; gap: 1.5rem;
+         align-items: baseline; flex-wrap: wrap; }
+header h1 { font-size: 1.1rem; margin: 0; letter-spacing: .02em; }
+header nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+a { color: var(--accent); }
+main { max-width: 62rem; margin: 0 auto; padding: 1.5rem; }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: .3rem; margin-top: 2.5rem; }
+h3 { margin-top: 1.8rem; }
+code, pre, .cmd { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+code { background: var(--panel); padding: .1rem .35rem; border-radius: .25rem; }
+pre { background: var(--panel); border: 1px solid var(--line); border-radius: .4rem;
+      padding: .8rem 1rem; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: .8rem 0; }
+th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line);
+         vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: .85rem; text-transform: uppercase;
+     letter-spacing: .04em; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: .5rem;
+        padding: 1rem 1.2rem; margin: 1rem 0; }
+.muted { color: var(--muted); }
+.pill { display: inline-block; padding: .05rem .5rem; border-radius: 1rem; font-size: .8rem;
+        border: 1px solid var(--line); }
+.on { color: var(--ok); } .off { color: var(--bad); }
+form.inline { display: inline; }
+button { font: inherit; padding: .2rem .7rem; border-radius: .3rem; border: 1px solid var(--line);
+         background: var(--panel); color: var(--ink); cursor: pointer; }
+button:hover { border-color: var(--accent); }
+input[type=password], input[type=text] { font: inherit; padding: .4rem .6rem; border-radius: .3rem;
+         border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+footer { border-top: 1px solid var(--line); margin-top: 3rem; padding: 1rem 1.5rem;
+         color: var(--muted); font-size: .85rem; }
+.toc { columns: 2; column-gap: 2rem; }
+@media (max-width: 40rem) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/" style="text-decoration:none">🏜 doomtp-bot</a></h1>
+  <nav>
+    <a href="/docs/features">Features</a>
+    <a href="/docs/commands">Commands</a>
+    <a href="/docs/language">Language</a>
+    {% if admin_enabled %}
+      {% if signed_in %}<a href="/admin">Admin</a>{% else %}<a href="/admin/login">Sign in</a>{% endif %}
+    {% endif %}
+  </nav>
+  {% if signed_in %}
+  <form method="post" action="/admin/logout" class="inline" style="margin-left:auto">
+    <button type="submit">Sign out</button>
+  </form>
+  {% endif %}
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  doomtp-bot {{ version }} · command language {{ syntax_version }} ·
+  default command sign <code>{{ default_prefix }}</code> ·
+  <a href="/docs">API docs</a>
+</footer>
+</body>
+</html>

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set p = default_prefix %}
+{% block title %}Language — doomtp-bot{% endblock %}
+{% block content %}
+<h1>Language reference</h1>
+<p class="muted">Version {{ syntax_version }}. The bot's parser is the only authority on what is valid;
+this page and <code>/api/v1/language</code> come from it.</p>
+
+<h2>Shape of a line</h2>
+<pre>{{ p }}command argument "an argument with spaces" | other {1} &amp;&amp; third &gt; channel.saved</pre>
+<ul>
+  <li>The command sign starts a line. After an emoji sign a space is allowed: <code>{{ p }} ping</code>.</li>
+  <li>Arguments are split on spaces. Use <code>"quotes"</code> to keep spaces, and <code>\</code> to escape
+      a character literally (<code>\"</code>, <code>\{</code>).</li>
+  <li>Only the final result is sent to chat.</li>
+</ul>
+
+<h2>Operators</h2>
+<p>These count as operators only when they stand alone between spaces, so ordinary chat like
+<code>(lol)</code> or <code>-&gt;</code> is never mistaken for one.</p>
+<p>{% for op in operators %}<code>{{ op }}</code>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p><code>;</code> is reserved: it is rejected with a clear error rather than doing something surprising.</p>
+
+<h2>Placeholders</h2>
+<p><code>{reference}</code>, <code>{reference:type}</code>, <code>{reference ?? fallback}</code>. A
+reference that isn't available in the current context is an error before anything runs, and a missing
+value without a <code>??</code> fallback stops the command.</p>
+<h3>Roots</h3>
+<p>{% for root in roots %}<code>{{ root }}</code>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<table>
+  <tr><th>Reference</th><th>What it is</th></tr>
+  <tr><td><code>{1}</code>, <code>{2}</code></td><td>the result of an earlier command in the same line</td></tr>
+  <tr><td><code>{_}</code></td><td>the previous result</td></tr>
+  <tr><td><code>{1.celsius}</code></td><td>a field of that result's data</td></tr>
+  <tr><td><code>{arg.1}</code>, <code>{arg.2+}</code>, <code>{arg.name}</code></td><td>arguments, inside a custom command or trigger</td></tr>
+  <tr><td><code>{chatter.display}</code>, <code>{channel.name}</code></td><td>who and where</td></tr>
+  <tr><td><code>{event.*}</code>, <code>{match.*}</code></td><td>trigger payload, listener captures</td></tr>
+  <tr><td><code>{now.*}</code>, <code>{bot.*}</code>, <code>{run.*}</code></td><td>time, bot info, this run</td></tr>
+</table>
+
+<h2>Types</h2>
+<p>A placeholder can demand a type, and a bad value fails with usage text instead of running:
+<code>{arg.1:int}</code>, <code>{arg.1:choice(rock,paper,scissors)}</code>.</p>
+<p>{% for type in types %}<code>{{ type }}</code>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+<h2>Variables</h2>
+<p>{% for ns in namespaces %}<code>{{ ns }}.name</code>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p>Write with <code>&gt;</code> (replace) or <code>&gt;&gt;</code> (append), only when the command
+succeeded. Who may write what is on the <a href="/docs/features#variables">features page</a>.</p>
+
+<h2>Exit codes</h2>
+<table>
+  <tr><th>Code</th><th>Meaning</th><th>Sent to chat?</th></tr>
+  <tr><td>0</td><td>success</td><td>the message, if there is one</td></tr>
+  <tr><td>1</td><td>the command failed</td><td>yes, unless the channel turned error replies off</td></tr>
+  <tr><td>2</td><td>bad arguments or a bad reference</td><td>yes: usage text</td></tr>
+  <tr><td>3</td><td>nothing found</td><td>yes</td></tr>
+  <tr><td>124 / 125</td><td>timed out / upstream rate limited</td><td>yes</td></tr>
+  <tr><td>126</td><td>not allowed</td><td>no — silent, with an optional callback</td></tr>
+  <tr><td>127</td><td>unknown or disabled command</td><td>silent if it's the first word of the line</td></tr>
+  <tr><td>128</td><td>on cooldown</td><td>no — silent, with an optional callback</td></tr>
+  <tr><td>130</td><td>cancelled by moderation</td><td>no</td></tr>
+</table>
+
+<h2>Limits</h2>
+<table>
+  <tr><th>Limit</th><th>Value</th></tr>
+  {% for name, value in limits.items() %}<tr><td>{{ name }}</td><td>{{ value }}</td></tr>{% endfor %}
+  <tr><td>message length</td><td>2 messages of 500 characters</td></tr>
+</table>
+
+{% if grammar %}
+<h2>Grammar</h2>
+<p class="muted">The documentation grammar (spec Appendix D). The normative one is the PEG in Appendix C,
+which the parser mirrors rule for rule.</p>
+<pre>{{ grammar }}</pre>
+{% endif %}
+{% endblock %}

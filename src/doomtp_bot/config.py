@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8080"
 
     default_prefix: str = DEFAULT_PREFIX
+
+    # Admin UI: the password is read from a file (a Docker secret) or the environment. Without one,
+    # /admin is disabled rather than open.
+    admin_password: SecretStr | None = None
+    admin_password_file: Path | None = None
     history_provider_url: str = "https://recent-messages.robotty.de/api/v2"
 
     log_level: str = "INFO"
@@ -45,6 +50,14 @@ class Settings(BaseSettings):
             return self.twitch_client_secret.get_secret_value()
         if self.twitch_client_secret_file and self.twitch_client_secret_file.is_file():
             return self.twitch_client_secret_file.read_text(encoding="utf-8").strip() or None
+        return None
+
+    def admin_password_value(self) -> str | None:
+        """ADMIN_PASSWORD, or the contents of ADMIN_PASSWORD_FILE."""
+        if self.admin_password is not None:
+            return self.admin_password.get_secret_value() or None
+        if self.admin_password_file and self.admin_password_file.is_file():
+            return self.admin_password_file.read_text(encoding="utf-8").strip() or None
         return None
 
     @property

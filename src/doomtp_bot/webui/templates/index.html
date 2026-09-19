@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}doomtp-bot{% endblock %}
+{% block content %}
+<p class="muted">A Twitch chat bot with a composable command language: commands pipe into each other,
+anyone can build new ones from the pieces, and every message is logged and searchable.</p>
+
+<div class="card">
+  <h3 style="margin-top:0">Try it in chat</h3>
+  <pre>{{ default_prefix }}ping
+{{ default_prefix }}random 1-100 | echo you rolled {1}!
+{{ default_prefix }}help</pre>
+  <p class="muted">The command sign is <code>{{ default_prefix }}</code> by default and a space after it is
+  fine — <code>{{ default_prefix }} ping</code> works too. Each channel can pick its own with
+  <code>{{ default_prefix }}prefix</code>.</p>
+</div>
+
+<h2>Where to start</h2>
+<div class="toc">
+  <p><a href="/docs/features">Features</a><br>
+  <span class="muted">Every part of the bot: permissions, cooldowns, custom commands, packs, variables,
+  triggers, timers, the word filter, logging and the API.</span></p>
+
+  <p><a href="/docs/commands">Command reference</a><br>
+  <span class="muted">Every built-in command with its arguments, examples, required role and cooldowns —
+  generated from the same specs the bot runs on.</span></p>
+
+  <p><a href="/docs/language">Language reference</a><br>
+  <span class="muted">Operators, placeholders, types and the grammar, with the limits that apply.</span></p>
+
+  <p><a href="/docs">API</a><br>
+  <span class="muted">OpenAPI docs for <code>/api/v1/parse</code>, <code>/explain</code>,
+  <code>/language</code> and <code>/commands</code>.</span></p>
+</div>
+
+<h2>Channels</h2>
+{% if channels %}
+<table>
+  <tr><th>Channel</th><th>Sign</th><th>Tier</th><th>Commands</th></tr>
+  {% for channel in channels %}
+  <tr>
+    <td><a href="/channels/{{ channel.login }}">#{{ channel.login }}</a></td>
+    <td><code>{{ channel.prefix }}</code></td>
+    <td>{{ channel.tier }}</td>
+    <td><a href="/channels/{{ channel.login }}">what's published here</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">The bot hasn't joined any channels yet. A broadcaster can type
+<code>{{ default_prefix }}join</code> in the bot's own chat.</p>
+{% endif %}
+{% endblock %}

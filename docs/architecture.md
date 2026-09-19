@@ -502,11 +502,11 @@ A **race window** remains: a mod can act after the message has already been sent
 | `POST /api/v1/explain` | Early | Same output as `!explain`, with an optional `as_user` for admins |
 | `GET /api/v1/language` | Early | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
 | `/api/v1/...` channels, roles, toggles, cooldowns, filters, triggers, variables, custom commands, messages search, audit log, command runs | Later | API key or session auth. All writes go through the same services and the audit log. |
-| `/admin/*` | Later | **Admin UI.** Starts with a local admin login (argon2 password) on the LAN. |
-| `/` | Later | **Public UI.** Command docs, channel command lists, published custom commands. |
+| `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. |
+| `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. |
 
 **UI technology:**
-- **Pages** are server-rendered **Jinja2 + HTMX** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages.
+- **Pages** are server-rendered **Jinja2** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages. *(Built with plain forms so far: HTMX would be a CDN dependency or a vendored file, and nothing yet needs partial updates. Add it when a page does.)*
 - **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component with a small **Lezer** grammar for local highlighting. It gets diagnostics from `/api/v1/parse`, autocomplete from `/api/v1/language` and previews from `/api/v1/explain`.
   - It ships as a single static JS bundle, built in CI (esbuild) and served from `/static`.
   - It's embedded in the HTMX pages as a web component, so only this component needs Node tooling.

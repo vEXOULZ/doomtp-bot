@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% set p = channel.prefix %}
+{% block title %}#{{ channel.login }} — admin{% endblock %}
+{% block content %}
+<h1>#{{ channel.login }}</h1>
+<p><a href="/admin">← all channels</a> · <a href="/channels/{{ channel.login }}">public page</a></p>
+<p>
+  <span class="pill">sign <code>{{ p }}</code></span>
+  <span class="pill">{{ channel.tier }} tier</span>
+  <span class="pill {{ 'on' if channel.active and channel.status == 'joined' else 'off' }}">{{ channel.status }}</span>
+  <span class="pill">logging {{ 'on' if channel.log_enabled else 'off' }}</span>
+  <span class="pill">backfill {{ 'on' if channel.history_backfill else 'off' }}</span>
+  <span class="pill">error replies {{ 'off' if channel.quiet_errors else 'on' }}</span>
+  <span class="pill">reply hold {{ channel.reply_hold_ms }}ms</span>
+</p>
+
+<h2>Modules</h2>
+<p class="muted">Turning a module off here is the same change as
+<code>{{ p }}module disable &lt;name&gt;</code> in chat, and lands in the same audit log.</p>
+<table>
+  <tr><th>Module</th><th>State</th><th></th></tr>
+  {% for module, enabled, toggleable in modules %}
+  <tr>
+    <td><code>{{ module }}</code></td>
+    <td class="{{ 'on' if enabled else 'off' }}">{{ 'on' if enabled else 'off' }}</td>
+    <td>
+      {% if toggleable %}
+      <form method="post" action="/admin/channels/{{ channel.login }}/module" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="module" value="{{ module }}">
+        <input type="hidden" name="enabled" value="{{ 'off' if enabled else 'on' }}">
+        <button type="submit">turn {{ 'off' if enabled else 'on' }}</button>
+      </form>
+      {% else %}<span class="muted">always on</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Published custom commands</h2>
+{% if publications %}
+<table>
+  <tr><th>Name</th><th>By</th><th>Version</th><th>State</th><th></th></tr>
+  {% for publication, command in publications %}
+  <tr>
+    <td><code>{{ p }}{{ publication.name }}</code></td>
+    <td>@{{ command.owner_login }}</td>
+    <td>v{{ command.version }}{% if publication.last_run_version and publication.last_run_version != command.version %}
+        <span class="muted">(changed since v{{ publication.last_run_version }})</span>{% endif %}</td>
+    <td class="{{ 'on' if publication.status == 'active' else 'off' }}">{{ publication.status }}</td>
+    <td>
+      {% if publication.status != 'orphaned' %}
+      <form method="post" action="/admin/channels/{{ channel.login }}/publication" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="name" value="{{ publication.name }}">
+        <input type="hidden" name="enabled" value="{{ 'off' if publication.status == 'active' else 'on' }}">
+        <button type="submit">{{ 'disable' if publication.status == 'active' else 'enable' }}</button>
+      </form>
+      {% else %}<span class="muted">its owner deleted it</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">Nothing published here.</p>{% endif %}
+
+<h2>Triggers and timers</h2>
+{% if triggers %}
+<table>
+  <tr><th>Type</th><th>Matches</th><th>Expression</th><th>Runs as</th><th>State</th><th></th></tr>
+  {% for trigger in triggers %}
+  <tr>
+    <td>{{ trigger.type }}</td>
+    <td class="muted"><code>{% if trigger.type == 'listener' %}{{ trigger.regex }}{% elif trigger.type == 'timer' %}every {{ trigger.every_s }}s{% else %}{{ trigger.match }}{% endif %}</code></td>
+    <td><code>{{ trigger.expr }}</code></td>
+    <td>rank {{ trigger.run_as_rank }}</td>
+    <td class="{{ 'on' if trigger.enabled else 'off' }}">{{ 'on' if trigger.enabled else 'off' }}</td>
+    <td>
+      <form method="post" action="/admin/channels/{{ channel.login }}/trigger" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="trigger_id" value="{{ trigger.id }}">
+        <input type="hidden" name="enabled" value="{{ 'off' if trigger.enabled else 'on' }}">
+        <button type="submit">turn {{ 'off' if trigger.enabled else 'on' }}</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">None. Add one in chat with <code>{{ p }}trigger listen &lt;regex&gt; =&gt; &lt;expression&gt;</code>
+or <code>{{ p }}timer add 15m &lt;expression&gt;</code>.</p>
+{% endif %}
+
+<h2>Word filter</h2>
+{% if filters %}
+<table>
+  <tr><th>Pattern</th><th>Kind</th><th>Action</th><th>Scope</th><th>State</th><th></th></tr>
+  {% for entry in filters %}
+  <tr>
+    <td><code>{{ entry.pattern }}</code></td>
+    <td>{{ entry.kind }}</td>
+    <td>{{ entry.action }}{% if entry.replacement %} → {{ entry.replacement }}{% endif %}</td>
+    <td>{{ 'global' if entry.channel_id == '*' else 'this channel' }}</td>
+    <td class="{{ 'on' if entry.enabled else 'off' }}">{{ 'on' if entry.enabled else 'off' }}</td>
+    <td>
+      {% if entry.channel_id != '*' %}
+      <form method="post" action="/admin/channels/{{ channel.login }}/filter" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="entry_id" value="{{ entry.id }}">
+        <input type="hidden" name="enabled" value="{{ 'off' if entry.enabled else 'on' }}">
+        <button type="submit">turn {{ 'off' if entry.enabled else 'on' }}</button>
+      </form>
+      {% else %}<span class="muted">bot-wide</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No filter entries. Add one with <code>{{ p }}filter add word &lt;pattern&gt;</code>.</p>
+{% endif %}
+
+<h2>Ignored users</h2>
+{% if ignored %}
+<p class="muted">Their messages are still logged, but never run commands.</p>
+<p>{% for user_id in ignored %}<code>{{ user_id }}</code>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% else %}<p class="muted">Nobody is ignored here.</p>{% endif %}
+{% endblock %}

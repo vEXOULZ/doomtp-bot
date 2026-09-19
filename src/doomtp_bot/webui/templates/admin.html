@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Admin — doomtp-bot{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+
+<h2>Health</h2>
+<table>
+  <tr><th>Component</th><th>Status</th><th>Detail</th></tr>
+  {% for name, component in components.items() %}
+  <tr>
+    <td>{{ name }}</td>
+    <td class="{{ 'on' if component.status.value == 'ok' else 'off' }}">{{ component.status.value }}</td>
+    <td class="muted">{% for key, value in component.detail.items() %}{{ key }}={{ value }} {% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Channels</h2>
+<table>
+  <tr><th>Channel</th><th>Status</th><th>Sign</th><th>Tier</th><th>Logging</th><th>Backfill</th><th></th></tr>
+  {% for channel in channels %}
+  <tr>
+    <td>#{{ channel.login }}</td>
+    <td class="{{ 'on' if channel.active and channel.status == 'joined' else 'off' }}">{{ channel.status }}</td>
+    <td><code>{{ channel.prefix }}</code></td>
+    <td>{{ channel.tier }}</td>
+    <td>{{ 'on' if channel.log_enabled else 'off' }}</td>
+    <td>{{ 'on' if channel.history_backfill else 'off' }}</td>
+    <td><a href="/admin/channels/{{ channel.login }}">manage</a></td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Recent configuration changes</h2>
+<p class="muted">Every change to roles, permissions, cooldowns, toggles, filters, triggers and custom
+commands is recorded here, whoever made it and however.</p>
+<table>
+  <tr><th>Action</th><th>Channel</th><th>By</th><th>Target</th><th>Via</th></tr>
+  {% for row in audit %}
+  <tr>
+    <td><code>{{ row.action }}</code></td>
+    <td>{{ row.channel }}</td>
+    <td>{{ row.actor }}</td>
+    <td class="muted">{{ row.target }}</td>
+    <td>{{ row.via }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
