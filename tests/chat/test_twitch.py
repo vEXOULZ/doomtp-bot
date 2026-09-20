@@ -24,7 +24,7 @@ from doomtp_bot.twitch.auth import (
     OAuthError,
     TwitchAuth,
 )
-from doomtp_bot.twitch.client import TwitchService
+from doomtp_bot.twitch.client import BroadcasterEvents, TwitchService
 from doomtp_bot.twitch.tokens import TokenStore, broadcaster_identity
 
 WHEN = datetime(2026, 9, 16, 12, 0, 0, tzinfo=UTC)
@@ -269,3 +269,50 @@ async def test_the_connect_route_redirects_and_reports_what_was_granted(dbs: Dat
         done = await client.get("/auth/callback", params={"code": "c", "state": state})
         assert done.status_code == 200 and "Channel connected" in done.text
         assert "channel:read:redemptions" in done.text
+
+
+class FakeSubscriptions:
+    """Stands in for the TwitchIO client: it records subscriptions, or refuses them the same way."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.made: list[tuple[str, str]] = []
+
+    async def subscribe_websocket(self, subscription: Any, token_for: str) -> None:
+        if self.error is not None:
+            raise self.error
+        self.made.append((subscription.type, token_for))
+
+
+async def test_what_comes_of_subscribing_with_a_broadcaster_token() -> None:
+    """Only Twitch refusing the token means the grant is gone; a blip is just a blip (ADR-0007 item 5)."""
+
+    async def sink(event: Event) -> None: ...
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=sink)  # type: ignore[arg-type]
+
+    happy = FakeSubscriptions()
+    service.client = happy  # type: ignore[assignment]
+    assert await service.subscribe_broadcaster("100", {"chat", "redemptions", "bits"}) == (
+        BroadcasterEvents()
+    )
+    assert happy.made == [
+        ("channel.channel_points_custom_reward_redemption.add", "100"),
+        ("channel.cheer", "100"),
+    ]
+
+    service.client = FakeSubscriptions(RuntimeError("HTTPException: 401 Unauthorized"))  # type: ignore[assignment]
+    refused = await service.subscribe_broadcaster("100", {"redemptions"})
+    assert refused == BroadcasterEvents(
+        ("channel.channel_points_custom_reward_redemption.add",), unauthorized=True
+    )
+
+    service.client = FakeSubscriptions(RuntimeError("409 Conflict: subscription already exists"))  # type: ignore[assignment]
+    assert await service.subscribe_broadcaster("100", {"bits"}) == BroadcasterEvents()
+
+    service.client = FakeSubscriptions(TimeoutError("the request timed out"))  # type: ignore[assignment]
+    flaky = await service.subscribe_broadcaster("100", {"bits"})
+    assert flaky.failed == ("channel.cheer",) and not flaky.unauthorized
+
+    service.client = None
+    assert await service.subscribe_broadcaster("100", {"bits"}) == BroadcasterEvents(("channel.cheer",))

@@ -42,7 +42,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
 from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHttp
 from doomtp_bot.twitch.client import TwitchService
-from doomtp_bot.twitch.tokens import TokenStore, broadcaster_identity
+from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import SqliteVariableStore
 
@@ -191,13 +191,36 @@ async def run(settings: Settings) -> None:
         if twitch is None:
             return
         for stored in await twitch.tokens.broadcasters():
-            if not stored.refresh_token:
-                continue
-            if not await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token):
-                continue
             settings_of = policy.channel_settings(stored.user_id)
-            if settings_of is not None:
-                await twitch.subscribe_broadcaster(stored.user_id, set(settings_of.capabilities))
+            capabilities = set(settings_of.capabilities) if settings_of else set()
+            await use_broadcaster(stored.user_id, stored.login, stored, capabilities)
+
+    async def use_broadcaster(
+        channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]
+    ) -> None:
+        """Subscribe to a channel's own events with the broadcaster's token, and notice when it's gone."""
+        if twitch is None:
+            return
+        if stored is None or not stored.refresh_token:
+            await forget_broadcaster(channel_id, login, "no usable token is stored")
+            return
+        if not await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token):
+            await forget_broadcaster(channel_id, login, "Twitch would not take the token")
+            return
+        events = await twitch.subscribe_broadcaster(channel_id, capabilities)
+        if events.unauthorized:
+            await forget_broadcaster(channel_id, login, "Twitch refused the grant")
+            return
+        log.info("twitch.broadcaster_ready", channel=login, has=sorted(capabilities), failed=events.failed)
+
+    async def forget_broadcaster(channel_id: str, login: str, why: str) -> None:
+        """The grant is gone — taken back on Twitch, or never usable. Fall back to what the bot earned
+        by itself, and drop the token rather than keep asking with it (ADR-0007 item 5)."""
+        if twitch is None:
+            return
+        await twitch.tokens.forget(broadcaster_identity(channel_id))
+        kept = await probe.revoke_full(channel_id)
+        log.warning("twitch.broadcaster_grant_gone", channel=login, why=why, has=sorted(kept))
 
     async def on_broadcaster_authorized(account: AuthorizedAccount) -> None:
         """A broadcaster connected their channel: join it, grant what they gave, subscribe (ADR-0007)."""
@@ -206,15 +229,7 @@ async def run(settings: Settings) -> None:
         await channels.join(account.user_id, account.login, Actor(None, "web"))
         capabilities = await probe.grant(account.user_id, granted_by(account.scopes))
         stored = await twitch.tokens.get(broadcaster_identity(account.user_id))
-        if stored is not None and stored.refresh_token:
-            await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token)
-        failed = await twitch.subscribe_broadcaster(account.user_id, set(capabilities))
-        log.info(
-            "twitch.broadcaster_connected",
-            channel=account.login,
-            has=sorted(capabilities),
-            failed=failed,
-        )
+        await use_broadcaster(account.user_id, account.login, stored, set(capabilities))
 
     async def on_bot_authorized(account: AuthorizedAccount) -> None:
         log.info("twitch.authorized", bot=account.login, scopes=list(account.scopes))

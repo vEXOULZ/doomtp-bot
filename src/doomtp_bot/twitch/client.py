@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -46,6 +47,21 @@ def _already_subscribed(exc: Exception) -> bool:
     """TwitchIO raises on a duplicate subscription; that still means the bot is allowed to have it."""
     text = repr(exc).lower()
     return "409" in text or "conflict" in text or "already" in text
+
+
+def _unauthorized(exc: Exception) -> bool:
+    """Twitch refusing the token itself, rather than a request that went wrong on the way."""
+    text = repr(exc).lower()
+    return "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text
+
+
+@dataclass(frozen=True, slots=True)
+class BroadcasterEvents:
+    """What came of subscribing with a broadcaster's token (ADR-0007 item 5)."""
+
+    failed: tuple[str, ...] = ()
+    #: Twitch refused the token, so the grant is gone — not a request that failed on the way.
+    unauthorized: bool = False
 
 
 class _BotClient(twitchio.Client):
@@ -202,14 +218,14 @@ class TwitchService:
             return False
         return True
 
-    async def subscribe_broadcaster(self, channel_id: str, capabilities: set[str]) -> list[str]:
-        """Subscribe to the full-tier events this channel granted. Returns what failed."""
+    async def subscribe_broadcaster(self, channel_id: str, capabilities: set[str]) -> BroadcasterEvents:
+        """Subscribe to the full-tier events this channel granted, and say what came of it."""
+        wanted = [sub for capability, sub in BROADCASTER_SUBSCRIPTIONS if capability in capabilities]
         if self.client is None:
-            return [sub.type for capability, sub in BROADCASTER_SUBSCRIPTIONS if capability in capabilities]
+            return BroadcasterEvents(tuple(sub.type for sub in wanted))
         failed: list[str] = []
-        for capability, subscription in BROADCASTER_SUBSCRIPTIONS:
-            if capability not in capabilities:
-                continue
+        refused = False
+        for subscription in wanted:
             try:
                 await self.client.subscribe_websocket(
                     subscription(broadcaster_user_id=channel_id), token_for=channel_id
@@ -218,13 +234,14 @@ class TwitchService:
                 if _already_subscribed(exc):
                     continue
                 failed.append(subscription.type)
+                refused = refused or _unauthorized(exc)
                 log.warning(
                     "twitch.broadcaster_subscribe_failed",
                     channel=channel_id,
                     type=subscription.type,
                     error=repr(exc),
                 )
-        return failed
+        return BroadcasterEvents(tuple(failed), refused)
 
     async def unsubscribe_channel(self, channel_id: str) -> None:
         self._subscribed.discard(channel_id)
