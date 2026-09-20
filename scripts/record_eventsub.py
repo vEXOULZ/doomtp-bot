@@ -120,7 +120,7 @@ async def record_all(port: int, twitch: str, out: Path) -> list[str]:
         for wanted in WANTED:
             message = await _record(ws, session, wanted, twitch)
             (out / wanted.filename).write_text(
-                json.dumps(_settle(message), indent=2) + "\n", encoding="utf-8"
+                json.dumps(_settle(message), indent=2) + "\n", encoding="utf-8", newline="\n"
             )
             written.append(wanted.filename)
     return written
