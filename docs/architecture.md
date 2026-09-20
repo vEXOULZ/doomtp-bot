@@ -579,8 +579,8 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   apply, `/readyz` is ok with Twitch reported as disabled, and the language page serves both the grammar
   and the editor.*
 - **Self-hosted history, optional:** for independence from the public recent-messages service, run a `recent-messages2` container on a separate compose stack. It needs TimescaleDB. Don't restart it together with the bot during updates. Point `HISTORY_PROVIDER_URL` at it.
-- **Updates:** before stopping, the bot writes `log_sessions.end_reason='update'`. On start, it backfills the gap.
-- **Backups:** run nightly `sqlite3 .backup` for both database files. `bot.db` is critical because it holds custom commands, variables and roles.
+- **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is backfilled. `scripts/coverage.py` (compose: `--profile tools run --rm coverage`) says how each channel's last session ended and which gaps no complete backfill run covers — the deploy runbook in the README.
+- **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) snapshots both databases with SQLite's online backup API, gzipped and rotated, safe to run while the bot writes. `bot.db` is critical because it holds custom commands, variables and roles.
 - **Metrics:**
   - `messages_logged_total{source}`
   - `backfill_inserted_total`

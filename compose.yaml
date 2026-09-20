@@ -3,6 +3,9 @@ services:
     build: .
     image: doomtp-bot:dev
     restart: unless-stopped
+    # Long enough for SIGTERM to close the log sessions and drain the writer queue, so a deploy doesn't
+    # look like a crash to the gap detector (ADR-0008). The default 10s is not.
+    stop_grace_period: 45s
     env_file: .env
     secrets: [twitch_client_secret]
     volumes:
@@ -30,6 +33,24 @@ services:
       - ./data:/data:ro
     ports:
       - "127.0.0.1:8001:8001"
+
+  # One-shot coverage check after a deploy (ADR-0008): docker compose --profile tools run --rm coverage
+  coverage:
+    profiles: ["tools"]
+    build: .
+    image: doomtp-bot:dev
+    entrypoint: ["python", "/app/scripts/coverage.py"]
+    command: ["--data-dir", "/data"]
+    volumes:
+      # Not `:ro`: the script opens both databases read-only, but SQLite needs the -shm file beside a
+      # WAL database while the bot is running.
+      - ./data:/data
+      - ./scripts:/app/scripts:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
 
   # One-shot backup (ADR-0003). Run from host cron: docker compose run --rm backup
   backup:

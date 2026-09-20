@@ -84,6 +84,32 @@ versions. After changing a dependency in `pyproject.toml`, refresh the lock (CI 
 uv lock
 ```
 
+## Deploying an update
+
+The chat log records when the bot was listening, and fills what it missed from the recent-messages
+service when it comes back (ADR-0008). That only works if the old process is allowed to finish: stop it
+with a signal, never with a kill.
+
+```bash
+docker compose up -d --build
+```
+
+Compose sends `SIGTERM` and waits out `stop_grace_period` (45s), which is the bot's cue to close its log
+sessions and flush the writer queue — the last line it logs is `bot.stop`. A process that dies without it
+leaves its sessions open; the next startup closes them at the last message it stored and says
+`chatlog.unclean_shutdown_detected`, so the gap is honest either way, but it is wider than it had to be.
+
+Once the bot is back, give backfill its pass and check what it covered:
+
+```bash
+docker compose --profile tools run --rm coverage
+```
+
+It prints how each channel's last session ended and, for channels with backfill on, every gap in the last
+week with whether it was filled. Exit code 1 means a gap is still open — the usual causes are the
+recent-messages service being down or the outage being longer than its 800-message reach, and both are
+worth seeing in the log before you assume the history is complete.
+
 ## Web UI
 
 With the bot running, <http://127.0.0.1:8080/> documents every feature, the command reference is
