@@ -27,6 +27,7 @@ dev = [
     "pyyaml>=6",
     "ruff>=0.6",
     "mypy>=1.10",
+    "railroad-diagrams>=3",
 ]
 
 [project.scripts]

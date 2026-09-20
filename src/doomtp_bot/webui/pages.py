@@ -43,6 +43,22 @@ _GRAMMAR_FILES = (
 _GRAMMAR_FILE = next((f for f in _GRAMMAR_FILES if f.is_file()), _GRAMMAR_FILES[0])
 # Read once at import: the docs page shows the same grammar CI checks against the spec (ADR-0011).
 GRAMMAR = _GRAMMAR_FILE.read_text(encoding="utf-8") if _GRAMMAR_FILE.is_file() else ""
+
+
+def _grammar_rules(text: str) -> list[dict[str, str]]:
+    """`Name ::= body` per rule, to caption and describe the diagrams drawn by scripts/render_railroad.py.
+    An indented line continues the rule above it, the way the file is written."""
+    found: list[dict[str, str]] = []
+    for line in text.splitlines():
+        name, sep, body = line.partition("::=")
+        if sep and name.strip() and not line[0].isspace():
+            found.append({"name": name.strip(), "body": " ".join(body.split())})
+        elif found and line.strip():
+            found[-1]["body"] += " " + " ".join(line.split())
+    return found
+
+
+GRAMMAR_RULES = _grammar_rules(GRAMMAR)
 router = APIRouter(tags=["web"])
 
 
@@ -195,6 +211,7 @@ async def language_page(request: Request) -> HTMLResponse:
         namespaces=list(VAR_NAMESPACES),
         limits={"invocations": MAX_INVOCATIONS, "custom command depth": MAX_CC_DEPTH},
         grammar=GRAMMAR,
+        grammar_rules=GRAMMAR_RULES,
     )
 
 

@@ -86,6 +86,11 @@ table.inner th, table.inner td { padding: .25rem .5rem; font-size: .9rem; }
   background: var(--panel); border: 1px solid var(--line); font-size: .9rem;
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 button.dtb-explain { margin-top: .6rem; }
+/* Railroad diagrams (ADR-0011): drawn by scripts/render_railroad.py, one per grammar rule. */
+figure.railroad { margin: 1rem 0; overflow-x: auto; }
+figure.railroad figcaption { color: var(--muted); font-size: .85rem; letter-spacing: .04em;
+  text-transform: uppercase; font-family: ui-monospace, Consolas, monospace; margin-bottom: .3rem; }
+figure.railroad img { max-width: 100%; }
 dtb-editor textarea { width: 100%; font: inherit; font-family: ui-monospace, Consolas, monospace;
   padding: .6rem; border-radius: .4rem; border: 1px solid var(--line);
   background: var(--panel); color: var(--ink); }

@@ -22,6 +22,7 @@ from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
 from doomtp_bot.webui.emoji import emojify
+from doomtp_bot.webui.pages import GRAMMAR_RULES
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
@@ -160,6 +161,17 @@ async def test_the_language_page_lists_operators_and_the_grammar(client: httpx.A
     assert "&amp;&amp;" in body and "E" not in body[:0]  # operators are rendered
     assert "Exit codes" in body and "126" in body
     assert "Grammar" in body  # the checked copy of spec Appendix D
+
+
+async def test_the_language_page_draws_the_grammar(client: httpx.AsyncClient) -> None:
+    """ADR-0011 item 6: a picture per rule, with the text still there underneath."""
+    body = (await client.get("/docs/language")).text
+    assert body.count('<figure class="railroad">') == len(GRAMMAR_RULES) > 10
+    assert "<details>" in body and "Line        ::= Prefix Gap? Expr" in body
+
+    first = await client.get(f"/static/grammar/{GRAMMAR_RULES[0]['name']}.svg")
+    assert first.status_code == 200 and first.headers["content-type"].startswith("image/svg")
+    assert "railroad-diagram" in first.text
 
 
 async def test_the_language_page_carries_the_expression_editor(client: httpx.AsyncClient) -> None:

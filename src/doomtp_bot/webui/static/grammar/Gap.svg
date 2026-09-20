@@ -1,0 +1,23 @@
+<svg class="railroad-diagram" height="62" viewBox="0 0 137.0 62" width="137.0" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g transform="translate(.5 .5)">
+<g>
+<path d="M20 21v20m10 -20v20m-10 -10h20" /></g><path d="M40 31h10" /><g class="non-terminal ">
+<path d="M50 31h0.0" /><path d="M87.0 31h0.0" /><rect height="22" width="37" x="50" y="20"></rect><text x="68.5" y="35">WS</text></g><path d="M87.0 31h10" /><path d="M 97.0 31 h 20 m -10 -10 v 20 m 10 -20 v 20"></path></g><style>/* <![CDATA[ */
+
+svg.railroad-diagram { background: transparent; }
+svg.railroad-diagram path { stroke-width: 2; stroke: #6d6459; fill: none; }
+svg.railroad-diagram text { font: 13px ui-monospace, Consolas, monospace; text-anchor: middle;
+  fill: #22201d; }
+svg.railroad-diagram text.comment { font: italic 11px ui-monospace, Consolas, monospace; }
+svg.railroad-diagram rect { stroke-width: 2; stroke: #e2dbd1; fill: #fff; }
+svg.railroad-diagram rect.group-box { stroke: #a4621b; stroke-dasharray: 8 4; fill: none; }
+svg.railroad-diagram .non-terminal rect { stroke: #a4621b; }
+@media (prefers-color-scheme: dark) {
+  svg.railroad-diagram path { stroke: #a99d8f; }
+  svg.railroad-diagram text { fill: #efe7dd; }
+  svg.railroad-diagram rect { stroke: #322c26; fill: #1b1815; }
+  svg.railroad-diagram rect.group-box, svg.railroad-diagram .non-terminal rect { stroke: #e0a458; }
+}
+
+/* ]]> */
+</style></svg>

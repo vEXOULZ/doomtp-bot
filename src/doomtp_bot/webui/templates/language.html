@@ -83,9 +83,19 @@ succeeded. Who may write what is on the <a href="/docs/features#variables">featu
 </table>
 
 {% if grammar %}
-<h2>Grammar</h2>
-<p class="muted">The documentation grammar (spec Appendix D). The normative one is the PEG in Appendix C,
-which the parser mirrors rule for rule.</p>
-<pre>{{ grammar }}</pre>
+<h2 id="grammar">Grammar</h2>
+<p class="muted">The documentation grammar (spec Appendix D), one picture per rule. The normative one is
+the PEG in Appendix C, which the parser mirrors rule for rule.</p>
+{% for rule in grammar_rules %}
+<figure class="railroad">
+  <figcaption>{{ rule.name }}</figcaption>
+  <img src="/static/grammar/{{ rule.name }}.svg" alt="Railroad diagram: {{ rule.name }} ::= {{ rule.body }}"
+       loading="lazy">
+</figure>
+{% endfor %}
+<details>
+  <summary>The same thing as text</summary>
+  <pre>{{ grammar }}</pre>
+</details>
 {% endif %}
 {% endblock %}
