@@ -165,6 +165,7 @@ async def run(settings: Settings) -> None:
         automod=(
             AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None
         ),
+        customcmds=customcmds,
     )
 
     backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)

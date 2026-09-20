@@ -102,7 +102,9 @@ exactly like an unknown one, so it doesn't leak that it exists.</p>
 </table>
 <p><strong>Edits are live.</strong> When you edit a command, every channel and every person using it gets
 the new version immediately. There is no pinning and no approval step, so linking or publishing someone
-else's command always answers with a warning saying exactly that.</p>
+else's command always answers with a warning saying exactly that. A channel isn't left guessing:
+<code>{{ p }}cc info</code> says when a command changed since the version this channel last ran, and a
+channel that turns edit notices on hears it in chat the first time a run picks the change up.</p>
 <p><strong>A custom command runs as whoever typed it.</strong> Commands inside it are checked against
 their permissions, their cooldowns and their rank — never the author's. Publishing something can't hand
 anyone new powers.</p>

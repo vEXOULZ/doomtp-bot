@@ -14,6 +14,8 @@ from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.customcmds.resolution import CustomCommandLoader
+from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
@@ -75,6 +77,7 @@ class Harness:
     twitch: FakeTwitch
     dispatcher: Dispatcher
     channels: ChannelManager
+    commands: CustomCommandService
     counter: int = 0
 
     async def say(
@@ -111,25 +114,28 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     twitch = FakeTwitch()
     registry = builtin_registry()
     registry.add(slowreply)
+    commands = CustomCommandService(dbs.bot)
     runtime = Runtime(
         registry,
         policy=policy,
         callbacks=policy,
         resolve_user=twitch.resolve_user,
-        services={"policy": policy, "twitch": twitch},
+        custom=CustomCommandLoader(commands),
+        services={"policy": policy, "twitch": twitch, "customcmds": commands},
     )
     channels = ChannelManager(policy, twitch, writer, default_prefix="!")  # emoji default: see below
     runtime.services["channels"] = channels
     moderation = ModerationIndex()
     outbox = Outbox(twitch, writer)
     dispatcher = Dispatcher(
-        runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation, channels=channels
-    )
+        runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation,
+        channels=channels, customcmds=commands,
+    )  # fmt: skip
     await channels.ensure_home(BOT_ID, BOT_LOGIN)
     await channels.subscribe_all()
     await channels.join(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system"))
     try:
-        yield Harness(dbs, policy, writer, twitch, dispatcher, channels)
+        yield Harness(dbs, policy, writer, twitch, dispatcher, channels, commands)
     finally:
         gate.set()
         await dispatcher.drain()
@@ -255,3 +261,34 @@ async def test_default_emoji_prefix_with_or_without_a_space(h: Harness) -> None:
     await h.say("alice", "!echo d")  # the old sign is ordinary chat now
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent] == ["a", "b", "c"]
+
+
+async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Harness) -> None:
+    """ADR-0009: edits are live, so a channel can ask to hear about them as they land."""
+    created = await h.commands.create(
+        owner_user_id=USERS["alice"], owner_login="alice", name="hi", body="echo one"
+    )
+    await h.commands.publish(channel_id=CHANNEL_ID, name="hi", command=created, published_by="1")
+    await h.say("bob", "!hi")
+    await h.settle()
+    assert [text for _, text, _ in h.twitch.sent] == ["one"]
+
+    edited = await h.commands.edit(created, "echo two")
+    await h.say("bob", "!hi")
+    await h.settle()
+    assert [text for _, text, _ in h.twitch.sent] == ["one", "two"]  # the notice is off by default
+
+    await h.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "cc_edit_notice", 1, Actor(None, "system"))
+    )
+    await h.commands.edit(edited, "echo three")
+    await h.say("bob", "!hi")
+    await h.settle()
+    assert [text for _, text, _ in h.twitch.sent][-2:] == [
+        "three",
+        "heads up: hi changed since v2 — @alice edited it (now v3)",
+    ]
+
+    await h.say("bob", "!hi")  # the channel has seen v3 now, so it is not told twice
+    await h.settle()
+    assert [text for _, text, _ in h.twitch.sent][-1] == "three"

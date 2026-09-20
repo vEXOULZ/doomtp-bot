@@ -21,7 +21,7 @@ from doomtp_bot.runtime.output import CallbackKind, Origin, decide_output
 from doomtp_bot.runtime.policy import AllowAllPolicy, Decision, Policy
 from doomtp_bot.runtime.preflight import MAX_INVOCATIONS, preflight
 from doomtp_bot.runtime.registry import CommandRegistry
-from doomtp_bot.runtime.resolver import BuiltinResolver, Resolver
+from doomtp_bot.runtime.resolver import BuiltinResolver, CustomTarget, Resolver
 from doomtp_bot.runtime.result import Code, Result, error_result
 from doomtp_bot.runtime.values import UserResolver
 from doomtp_bot.runtime.variables import (
@@ -50,11 +50,23 @@ class RunReport:
     failed_index: int | None = None
     failed_name: str | None = None
     executed: list[int] = field(default_factory=list)
+    #: The custom commands this run actually reached, in the order they ran (ADR-0009 edit notices).
+    customs: list[CustomTarget] = field(default_factory=list)
     committed: list[WriteOp] = field(default_factory=list)
     cancelled: bool = False
     duration_ms: int = 0
     ast: Node | None = None
     callback_report: RunReport | None = None
+
+
+def _record_executed(report: RunReport, scope: Scope) -> None:
+    """What ran, and which of it came from a custom command."""
+    report.executed = list(scope.executed)
+    report.customs = [
+        resolved.custom
+        for index in report.executed
+        if (resolved := scope.resolved.get(index)) is not None and resolved.custom is not None
+    ]
 
 
 CommitHook = Callable[[ExecContext, list[WriteOp]], Awaitable[None]]
@@ -194,7 +206,7 @@ class Runtime:
         else:
             if ctx.dry_run:  # !explain --run: nothing it wrote is kept (spec §9)
                 ctx.variables.discard()
-                report.executed = list(scope.executed)
+                _record_executed(report, scope)
                 await self._settle(report, ctx)
                 return self._finish(report, started)
             try:
@@ -204,7 +216,7 @@ class Runtime:
                 report.result = exc.result()
             if report.committed and self.on_commit is not None:
                 await self.on_commit(ctx, report.committed)
-        report.executed = list(scope.executed)
+        _record_executed(report, scope)
         await self._settle(report, ctx)
         return self._finish(report, started)
 

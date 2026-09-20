@@ -11,6 +11,7 @@
   <span class="pill">logging {{ 'on' if channel.log_enabled else 'off' }}</span>
   <span class="pill">backfill {{ 'on' if channel.history_backfill else 'off' }}</span>
   <span class="pill">error replies {{ 'off' if channel.quiet_errors else 'on' }}</span>
+  <span class="pill">edit notices {{ 'on' if channel.cc_edit_notice else 'off' }}</span>
   <span class="pill">reply hold {{ channel.reply_hold_ms }}ms</span>
   <span class="pill {{ 'off' if channel.automod_action == 'off' else 'on' }}">automod {{ channel.automod_action }}{% if channel.automod_action == 'timeout' %} {{ channel.automod_timeout_s }}s{% endif %}</span>
 </p>

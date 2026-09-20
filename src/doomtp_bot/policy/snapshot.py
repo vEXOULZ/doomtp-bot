@@ -27,6 +27,7 @@ class ChannelSettings:
     log_enabled: bool = True
     history_backfill: bool = False
     quiet_errors: bool = False
+    cc_edit_notice: bool = False  # say when a published command changed (ADR-0009)
     timezone: str = "UTC"
     automod_action: str = "off"  # off | delete | timeout (architecture §9.3)
     automod_timeout_s: int = 600
@@ -100,6 +101,7 @@ async def load_snapshot(conn: aiosqlite.Connection) -> PolicySnapshot:
                 log_enabled=bool(r["log_enabled"]),
                 history_backfill=bool(r["history_backfill"]),
                 quiet_errors=bool(r["quiet_errors"]),
+                cc_edit_notice=bool(r["cc_edit_notice"]),
                 timezone=r["timezone"],
                 automod_action=r["automod_action"],
                 automod_timeout_s=r["automod_timeout_s"],

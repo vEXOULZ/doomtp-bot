@@ -67,7 +67,7 @@ class PolicyRepository:
     async def set_channel_field(self, channel_id: str, column: str, value: object, actor: Actor) -> None:
         allowed = {
             "prefix", "active", "status", "tier", "capabilities", "reply_hold_ms", "log_enabled", "history_backfill",
-            "quiet_errors", "timezone", "channel_var_write_role", "grant_min_role", "publish_min_role",
+            "quiet_errors", "cc_edit_notice", "timezone", "channel_var_write_role", "grant_min_role", "publish_min_role",
             "create_min_role", "var_admin_role", "automod_action", "automod_timeout_s",
         }  # fmt: skip
         if column not in allowed:

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from doomtp_bot.core.channels import ChannelManager
     from doomtp_bot.core.outbox import Outbox
     from doomtp_bot.core.streams import StreamStatus
+    from doomtp_bot.customcmds.service import CustomCommandService
     from doomtp_bot.moderation.automod import AutoMod
     from doomtp_bot.moderation.index import ModerationIndex
     from doomtp_bot.policy.service import PolicyService
@@ -74,6 +75,7 @@ class Dispatcher:
         activity: ChatActivity | None = None,
         streams: StreamStatus | None = None,
         automod: AutoMod | None = None,
+        customcmds: CustomCommandService | None = None,
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -87,6 +89,7 @@ class Dispatcher:
         self.activity = activity
         self.streams = streams
         self.automod = automod
+        self.customcmds = customcmds
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -241,8 +244,35 @@ class Dispatcher:
                         is_invalidated=invalidated,
                         run_ref=ctx.run_id,
                     )
+                await self._note_edits(msg, report)  # after the reply: it's a footnote to it
             except Exception:
                 log.exception("dispatch.run_failed", message_id=msg.message_id)
+
+    async def _note_edits(self, msg: ChatMessage, report: RunReport) -> None:
+        """Remember which version of a published command this channel ran, and — where the channel asked
+        for it — say so the first time a run picks up the owner's edit (ADR-0009).
+
+        Only this channel's own publications: a command reached globally or through a pack has no row
+        here to remember it by.
+        """
+        if self.customcmds is None:
+            return
+        settings = self.policy.channel_settings(msg.channel_id)
+        for target in report.customs:
+            if target.publication is None:
+                continue
+            found = await self.customcmds.publication(msg.channel_id, target.publication)
+            if found is None:
+                continue
+            publication, command = found
+            seen = publication.last_run_version
+            if settings is not None and settings.cc_edit_notice and seen not in (None, target.version):
+                await self.outbox.send(
+                    msg.channel_id,
+                    f"heads up: {target.publication} changed since v{seen} —"
+                    f" @{command.owner_login} edited it (now v{target.version})",
+                )
+            await self.customcmds.touch_run(publication, target.version)
 
     async def _log_run(self, msg: ChatMessage, report: RunReport, run_ref: str) -> None:
         level = LogLevel.INVOCATIONS

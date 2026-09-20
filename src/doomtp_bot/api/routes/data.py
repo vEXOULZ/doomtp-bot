@@ -40,7 +40,7 @@ router = APIRouter(prefix="/api/v1", tags=["data"])
 ACTOR = Actor(None, "api")
 MAX_ROWS = 500
 SETTABLE = (
-    "prefix", "quiet_errors", "log_enabled", "history_backfill", "reply_hold_ms", "timezone",
+    "prefix", "quiet_errors", "cc_edit_notice", "log_enabled", "history_backfill", "reply_hold_ms", "timezone",
     "automod_action", "automod_timeout_s", "channel_var_write_role", "grant_min_role",
     "publish_min_role", "create_min_role", "var_admin_role",
 )  # fmt: skip
@@ -123,6 +123,7 @@ def _channel_json(settings: ChannelSettings) -> dict[str, Any]:
         "log_enabled": settings.log_enabled,
         "history_backfill": settings.history_backfill,
         "quiet_errors": settings.quiet_errors,
+        "cc_edit_notice": settings.cc_edit_notice,
         "reply_hold_ms": settings.reply_hold_ms,
         "automod": {"action": settings.automod_action, "timeout_s": settings.automod_timeout_s},
         "roles": {
@@ -138,6 +139,7 @@ def _channel_json(settings: ChannelSettings) -> dict[str, Any]:
 class ChannelPatch(BaseModel):
     prefix: str | None = Field(default=None, max_length=16)
     quiet_errors: bool | None = None
+    cc_edit_notice: bool | None = None
     log_enabled: bool | None = None
     history_backfill: bool | None = None
     reply_hold_ms: int | None = Field(default=None, ge=0, le=5000)

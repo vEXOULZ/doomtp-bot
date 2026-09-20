@@ -371,7 +371,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - The **owner** can use it anywhere through a *personal alias*, as long as the channel has `custom_cmds` enabled.
 - A **publication** makes a command available to everyone in a channel. Publishing requires the channel's `publish_min_role` (default: moderator). Channel mods can disable or unpublish it.
 - A **link** lets another user add someone's published command to their own personal aliases. They can then **republish** it in channels where they have permission. The original owner stays the owner.
-- **Edits and deletes take effect instantly** everywhere. There's no pinning. The link and publish replies carry a **warning** that the owner can change or remove the command at any time. Mods see a change notice after edits.
+- **Edits and deletes take effect instantly** everywhere. There's no pinning. The link and publish replies carry a **warning** that the owner can change or remove the command at any time. Each publication remembers the version the channel last ran, which is what `!cc info` means by "changed since vN"; with `cc_edit_notice` on, the channel is also told in chat the first time a run picks up an edit.
 - **Commands always run with the *invoker's* permissions and cooldowns**, for the custom command itself and for every command inside it. Publishing can't be used to escalate privileges.
 - **Name resolution** in a channel: built-in commands, then channel publications, then the caller's personal aliases. `@name` addresses a personal alias directly. `!explain` shows which one won.
 - **Limits:** a body may nest custom commands `MAX_CC_DEPTH (3)` deep, cycles are rejected, and the 8-invocation limit counts every command after expansion (spec §5.2).
@@ -491,7 +491,7 @@ A **race window** remains: a mod can act after the message has already been sent
   - Leave with `!part`.
   - Auto-leave and flag the channel if the bot gets a 403 (banned).
   - Never send unsolicited messages in basic-tier channels. Timers and alerts there require an explicit opt-in by a mod.
-- **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (opt-in), `log_enabled`, `quiet_errors` and the callback defaults.
+- **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (opt-in), `log_enabled`, `quiet_errors`, `cc_edit_notice` (off by default) and the callback defaults.
 - **Prefix validation:** a prefix can't start with `/` or `.`, because Twitch clients treat those as chat commands. Its length is 1–3 characters and it can't contain whitespace.
 
 ---
