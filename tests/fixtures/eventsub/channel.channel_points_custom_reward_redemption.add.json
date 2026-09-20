@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "message_id": "5fc4e4ed-5e1b-4dd2-9a0d-0de0ad9c9a19",
+    "message_type": "notification",
+    "message_timestamp": "2026-01-01T12:00:00.000000000Z",
+    "subscription_type": "channel.channel_points_custom_reward_redemption.add",
+    "subscription_version": "1"
+  },
+  "payload": {
+    "subscription": {
+      "id": "5fc4e4ed-5e1b-4dd2-9a0d-0de0ad9c9a19",
+      "status": "enabled",
+      "type": "channel.channel_points_custom_reward_redemption.add",
+      "version": "1",
+      "condition": {
+        "broadcaster_user_id": "40174384"
+      },
+      "transport": {
+        "method": "websocket",
+        "session_id": "recorded_session"
+      },
+      "created_at": "2026-01-01T12:00:00.000000000Z",
+      "cost": 0
+    },
+    "event": {
+      "broadcaster_user_id": "40174384",
+      "broadcaster_user_login": "testBroadcaster",
+      "broadcaster_user_name": "testBroadcaster",
+      "id": "5fc4e4ed-5e1b-4dd2-9a0d-0de0ad9c9a19",
+      "redeemed_at": "2026-01-01T12:00:00.000000000Z",
+      "reward": {
+        "cost": 500,
+        "id": "92af127c-7326-4483-a52b-b0da0be61c01",
+        "prompt": "Redeem Your Test Reward from CLI",
+        "title": "Hydrate"
+      },
+      "status": "unfulfilled",
+      "user_id": "80730642",
+      "user_input": "Test Input From CLI",
+      "user_login": "testFromUser",
+      "user_name": "testFromUser"
+    }
+  }
+}

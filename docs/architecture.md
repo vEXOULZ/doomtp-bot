@@ -135,6 +135,21 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 5. The final result goes through the Outbox: badword filter, then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
 6. The run is recorded in `command_runs` according to the command's log level.
 
+### How step 1 is tested
+
+The adapter is the one place a change on Twitch's side arrives silently, so it is pinned from both ends
+with Twitch's own event simulator (the [Twitch CLI](https://dev.twitch.tv/docs/cli/)):
+
+- `tests/chat/test_eventsub_mock_server.py` runs the bot's client and handlers against the mock EventSub
+  server — the welcome, the session id, an event off the wire into the dispatcher's sink, and a
+  `session_reconnect` that moves the session without dropping what comes next (ADR-0001).
+- `tests/fixtures/eventsub/*.json` are notifications recorded from that simulator by
+  `scripts/record_eventsub.py`, replayed through TwitchIO's parser into the adapter by
+  `tests/chat/test_eventsub_contract.py` (ADR-0002). The simulator has no `channel.chat.*` topic, so chat
+  messages, notices and deletions are still covered with hand-built payload objects.
+
+Both skip themselves where the CLI isn't installed; CI installs it.
+
 ---
 
 ## 3. Chat log, moderation events, gaps

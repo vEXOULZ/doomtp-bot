@@ -50,6 +50,17 @@ python -m venv .venv
 .venv/Scripts/python -m pytest
 ```
 
+Two of the test files talk to Twitch's own event simulator: one speaks the EventSub handshake for real
+(welcome, session id, reconnect), the other checks the recorded payloads in `tests/fixtures/eventsub/`
+still match what Twitch sends. They skip themselves unless the [Twitch CLI][twitch-cli] is installed —
+set `TWITCH_CLI` to its path if it isn't on `PATH`, and re-record the fixtures with:
+
+```bash
+.venv/Scripts/python scripts/record_eventsub.py --start-server
+```
+
+[twitch-cli]: https://dev.twitch.tv/docs/cli/
+
 ```bash
 .venv/Scripts/python -m doomtp_bot
 ```
@@ -174,6 +185,7 @@ src/doomtp_bot/
   twitch/ history/ chatlog/ moderation/ policy/ customcmds/
   variables/ triggers/ filters/ audit/ modules/
 tests/          pytest; tests/lang/corpus.yaml is the shared parser conformance corpus
+                and tests/fixtures/eventsub/ holds EventSub payloads recorded from Twitch
 web-editor/     the CodeMirror expression editor — npm, and the only Node in the repo
 docs/           architecture, spec, ADRs, grammar
 ```

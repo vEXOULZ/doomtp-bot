@@ -23,6 +23,15 @@ jobs:
         run: uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
       - name: Type check
         run: uv run mypy
+      - name: Twitch CLI
+        # Twitch's event simulator. Without it the EventSub handshake and fixture tests skip themselves
+        # (ADR-0001 item 5, ADR-0002 item 4); bumping the version re-checks us against a newer simulator.
+        run: |
+          version=1.1.24
+          url=https://github.com/twitchdev/twitch-cli/releases/download/v$version/twitch-cli_${version}_Linux_x86_64.tar.gz
+          curl -fsSL "$url" | tar -xz
+          sudo install "twitch-cli_${version}_Linux_x86_64/twitch" /usr/local/bin/twitch
+          twitch version || true  # the CLI's own update check can crash it after it has done the job
       - name: Test
         run: uv run pytest -q
       - name: Grammar copy in sync with spec

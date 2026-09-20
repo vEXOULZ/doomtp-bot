@@ -230,9 +230,7 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
     mod = policy.build_chatter(CHANNEL, "300", "mod", "Mod", frozenset({"moderator"}))
 
     async def run(text: str, who: object = None) -> tuple[int, str]:
-        report = await runtime.run(
-            text, runtime.make_context(channel=channel, invoker=who or chatter)
-        )
+        report = await runtime.run(text, runtime.make_context(channel=channel, invoker=who or chatter))
         assert report is not None
         return report.result.code, report.result.message or ""
 
