@@ -127,6 +127,19 @@ changes nothing, if one of the names is already taken in that channel.</p>
 every channel without being published one by one. Built-ins (written in Python) are <em>primitive</em>;
 derived commands are written in this language and can be fixed live. A channel can always override a
 derived command with its own, or switch it off.</p>
+<p>This bot ships a <strong>starter</strong> pack of them, owned by the bot's own account:</p>
+<table>
+  <tr><th>Command</th><th>What it does</th></tr>
+  <tr><td><code>{{ p }}hug [user]</code></td><td>Hug someone, or the whole chat</td></tr>
+  <tr><td><code>{{ p }}lurk</code></td><td>Say you're still around, quietly</td></tr>
+  <tr><td><code>{{ p }}roll [1-6]</code></td><td>Roll a die (1-20 by default)</td></tr>
+  <tr><td><code>{{ p }}so &lt;streamer&gt;</code></td><td>Shout out another streamer</td></tr>
+  <tr><td><code>{{ p }}deaths</code></td><td>Count the deaths of the run</td></tr>
+</table>
+<p><code>{{ p }}cc info hug</code> shows the body of any of them — they're ordinary commands. Turn the set
+off with <code>{{ p }}module disable starter</code>, or one of them with <code>{{ p }}cmd disable hug</code>.
+<code>{{ p }}deaths</code> writes a channel variable, so it stays quiet until a mod allows it once:
+<code>{{ p }}cc grant deaths channel.deaths</code>.</p>
 
 <h2 id="variables">Variables</h2>
 <p>Values the bot remembers, in seven namespaces:</p>

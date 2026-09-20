@@ -57,7 +57,12 @@ async def connect(path: Path) -> aiosqlite.Connection:
     await conn.execute("PRAGMA synchronous=NORMAL")
     await conn.commit()
     if os.name == "posix":
-        os.chmod(path, 0o600)  # bot.db holds refresh tokens
+        try:
+            os.chmod(path, 0o600)  # bot.db holds refresh tokens
+        except OSError as exc:
+            # A bind mount from a host filesystem without Unix ownership (Docker Desktop on Windows)
+            # refuses this. Worth saying out loud, not worth refusing to open the database over.
+            log.warning("db.permissions_unchanged", path=str(path), error=repr(exc))
     return conn
 
 

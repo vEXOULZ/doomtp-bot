@@ -77,4 +77,4 @@ stand`. Publishing the pack publishes **every member at once**, and unpublishing
 3. [x] `!cc pack create|add|rm|list|info`, `!cc publish pack <name> [global]`, `!cc unpublish pack <name>`.
 4. [x] Pack name becomes the module name, so existing `!module` toggles apply.
 5. [x] `!explain` and `/api/v1/commands` report which scope a name resolved through. *(the report carries source, owner and version per invocation)*
-6. [ ] A starter set of derived commands, once the badword filter and `!cc param` docs settle.
+6. [x] A starter set of derived commands, once the badword filter and `!cc param` docs settle. *(2026-09-20: `scripts/starter_pack.py` installs `hug`, `lurk`, `roll`, `so` and `deaths` as one globally published pack owned by the bot account, idempotently, so an upgrade ships a fix by re-running it. Deliberately a script an admin runs, not a boot-time seed — the ADR rejected two sources of truth at boot, and this keeps the database the only one. Granting a write to a command that arrives globally needed `cc grant` to look past this channel's own publications, which it now does, in the order the runtime resolves names.)*

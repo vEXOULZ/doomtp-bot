@@ -52,6 +52,23 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # One-shot install of the starter commands (ADR-0012):
+  # docker compose --profile tools run --rm starter-pack [--dry-run]
+  starter-pack:
+    profiles: ["tools"]
+    build: .
+    image: doomtp-bot:dev
+    entrypoint: ["python", "/app/scripts/starter_pack.py"]
+    command: ["--data-dir", "/data"]
+    volumes:
+      - ./data:/data
+      - ./scripts:/app/scripts:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
   # One-shot backup (ADR-0003). Run from host cron: docker compose run --rm backup
   backup:
     profiles: ["tools"]

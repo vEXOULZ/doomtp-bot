@@ -127,6 +127,22 @@ async def _publication_here(ctx: CommandContext, name: str) -> tuple[Publication
     return found
 
 
+async def _reachable_here(ctx: CommandContext, name: str) -> CustomCommand:
+    """Whatever this channel gets under that name, in the order the runtime resolves it: this channel's
+    publication, a global one, then a pack published here or globally (spec 5.1).
+
+    Grants are per command, so a derived command that arrives globally is granted in this channel like
+    any other (ADR-0012).
+    """
+    found = await _service(ctx).publication_in_scope(ctx.channel.id, name)
+    if found is not None:
+        return found[1]
+    in_pack = await _packs(ctx).find_in_scope(ctx.channel.id, name)
+    if in_pack is None:
+        raise CommandError(f"{name} isn't published here")
+    return in_pack[0]
+
+
 # ── the subcommands ─────────────────────────────────────────────────────────
 async def _add(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 2)
@@ -531,7 +547,7 @@ async def _grant(ctx: CommandContext, v: list[str], granted: bool) -> Result:
     _need(v, 3)
     if not _may(ctx, "grant_min_role"):
         raise CommandError("only channel moderators can grant variable writes", Code.DENIED)
-    _, command = await _publication_here(ctx, v[1])
+    command = await _reachable_here(ctx, v[1])
     user_id, _ = _invoker(ctx)
     try:
         await _access(ctx).set_grant(ctx.channel.id, command.id, v[2].lower(), granted, user_id)

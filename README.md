@@ -84,6 +84,22 @@ versions. After changing a dependency in `pyproject.toml`, refresh the lock (CI 
 uv lock
 ```
 
+## Starter commands
+
+The bot ships a small set of commands written in its own language rather than Python — `hug`, `lurk`,
+`roll`, `so` and `deaths` — published globally as the `starter` pack. They are not installed
+automatically; the database stays the only source of truth for what the bot offers:
+
+```bash
+docker compose --profile tools run --rm starter-pack
+```
+
+It creates them under the bot's own account (`--dry-run` says what it would change first). Re-run it
+after an upgrade to pick up fixes: it edits only what changed and leaves anything else alone. A channel
+turns the set off with `!module disable starter` or one command with `!cmd disable hug`, and `!cc info
+hug` shows the body of any of them. `!deaths` writes a channel variable, so each channel allows it once
+with `!cc grant deaths channel.deaths`.
+
 ## Deploying an update
 
 The chat log records when the bot was listening, and fills what it missed from the recent-messages

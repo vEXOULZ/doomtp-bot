@@ -377,6 +377,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - **Limits:** a body may nest custom commands `MAX_CC_DEPTH (3)` deep, cycles are rejected, and the 8-invocation limit counts every command after expansion (spec §5.2).
 - **Packs** group a user's commands so they publish and unpublish as one unit, and the pack's name is the module name for `!module` toggles (ADR-0012). A command added to a published pack appears immediately.
 - **Derived commands** are custom commands published to the global scope by a bot owner or admin: available in every channel, still overridable by a channel publication, and never able to shadow a Python built-in (a *primitive*).
+- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`) is installed by `scripts/starter_pack.py` (compose: `--profile tools run --rm starter-pack`), not seeded at boot: it creates the commands under the bot's own account and publishes the `starter` pack globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication.
 
 ### Variables, briefly
 
