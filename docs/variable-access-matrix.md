@@ -74,6 +74,7 @@ Notes:
 - **Every grant names exact variables.** There are no wildcard grants.
 - **There are no read grants.** Every variable is readable (§4.2).
 - **Grants follow instant edits (ADR-0009).** When a grant is issued, the bot replies with the warning `⚠ @owner's future edits can use this grant`.
+- **Missing grants are announced, not discovered.** Publishing a command or a pack parses each body and names the `channel.*` and `channel.chatter.*` writes that have no grant yet, with the `cc grant` line that allows them; `explain` says `can't write <variable>` for any store the caller couldn't make.
 - **Grants are audited:** issue, revoke, and automatic revoke when the publication is removed.
 - **Grants are never transferable.** Republishing the same command in another channel starts with no grants.
 

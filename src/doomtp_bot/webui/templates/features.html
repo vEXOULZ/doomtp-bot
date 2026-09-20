@@ -149,7 +149,14 @@ write your spaces; a published command written by someone else may write <em>the
 only touch the channel's if a moderator granted exactly that variable:</p>
 <pre>{{ p }}cc grant points channel.chatter.points   # and {{ p }}cc revoke to take it back</pre>
 <p>A grant follows the command, not the name it was published under, and it survives the author's future
-edits — which the reply says when you grant it.</p>
+edits — which the reply says when you grant it. Unpublishing takes the grants with it.</p>
+<p>You don't have to spot the missing grants yourself. Publishing reads the body and names the writes that
+are still denied, with the command to allow the first one; <code>{{ p }}explain</code> says the same about
+any expression you're about to run:</p>
+<pre>{{ p }}cc publish count
+&gt; published "count" (by @you) as {{ p }}count here. Mods can {{ p }}cc disable count.
+&gt; ⚠ count writes channel.deaths — those writes are denied until a mod allows them:
+&gt;   {{ p }}cc grant count channel.deaths.</pre>
 <p class="muted">All variables are readable by anyone. Don't store anything private in them.</p>
 
 <h2 id="triggers">Triggers, listeners and timers</h2>

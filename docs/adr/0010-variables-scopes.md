@@ -120,4 +120,4 @@ publication_write_grants(channel_id TEXT, publication_name TEXT, variable TEXT,
 1. [x] Add the `variables` and `publication_write_grants` migrations, plus `variables/store.py` with buffered writes, atomic `incr`/`append` and `top`.
 2. [x] Build an access matrix implementation with a table-driven test covering every namespace × own/built-in/foreign × grant case.
 3. [x] Add `!var get|set|incr|del|list|top` and the `>`/`>>` executor support.
-4. [ ] Add the publish-time write-grant warning, `!cc grant … revoke`, and `!explain` output for denied writes. *(waits on ADR-0009)*
+4. [x] Add the publish-time write-grant warning, `!cc grant … revoke`, and `!explain` output for denied writes. *(2026-09-20: publishing a command or a pack parses each body, collects `channel.*` and `channel.chatter.*` write targets, and names the ones without a grant plus the `cc grant` line that allows them; `explain`'s one-line answer says `can't write <variable>` for every denied store, and the structured report has said so per store since item 3.)*

@@ -390,7 +390,7 @@ Resolution runs in this order, and the first rule that matches decides:
 | `{publisher.channel.x}` | command owner + channel | ✔ | ✔ (its owner's space, current channel) |
 | `{publisher.channel.chatter.x}` | command owner + channel + user | ✔ | ✔ |
 
-- Nothing is silently redirected: the placeholder name is the key.
+- Nothing is silently redirected: the placeholder name is the key. A write that isn't allowed is said out loud: publishing lists the writes still waiting on a grant, and `!explain` names the denied ones.
 - **All variables are public for now.** Access control only restricts writes, and write grants name exact variables (no wildcards). Private variables are a future consideration.
 - The full per-actor rules (typed, own, built-in, foreign via link or publication, trigger, callback), grant types and admin actions are in **[variable-access-matrix.md](variable-access-matrix.md)** (reviewed).
 - Values are JSON, capped at 2 KB each. Operations are atomic (`set`, `incr`, `append`, `del`, `top`). Writes are buffered per run (§4.3).

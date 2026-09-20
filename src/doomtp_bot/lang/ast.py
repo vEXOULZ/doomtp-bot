@@ -94,6 +94,20 @@ def invocations(node: Node) -> list[Invocation]:
     raise TypeError(f"not an AST node: {node!r}")
 
 
+def stores(node: Node) -> list[Store]:
+    """Every variable write in the expression, in source order."""
+    match node:
+        case Invocation():
+            return []
+        case And(left, right) | Or(left, right) | Pipe(left, right):
+            return stores(left) + stores(right)
+        case Group(inner):
+            return stores(inner)
+        case Store(inner, _, _):
+            return [*stores(inner), node]
+    raise TypeError(f"not an AST node: {node!r}")
+
+
 # ── Canonical text form ─────────────────────────────────────────────────────
 # Used by tests/lang/corpus.yaml. Examples:
 #   Pipe(random["1-100"], echo["dice","rolled","a","{1}!"])

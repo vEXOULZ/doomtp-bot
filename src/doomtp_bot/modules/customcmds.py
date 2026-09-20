@@ -18,8 +18,9 @@ from doomtp_bot.customcmds.service import (
     CustomCommandService,
     Publication,
 )
+from doomtp_bot.lang.ast import stores
 from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import Context
+from doomtp_bot.lang.parser import Context, parse
 from doomtp_bot.modules._common import rank, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext, Publisher
@@ -44,6 +45,9 @@ USAGE = (
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
 )
 EDIT_WARNING = "⚠ {owner} can edit or delete it at any time, and changes apply immediately."
+# Namespaces a published command can't write on its own: a channel mod grants each variable
+# by name (ADR-0010, variable-access-matrix §4).
+GRANTABLE = ("channel", "channel.chatter")
 
 
 def _service(ctx: CommandContext) -> CustomCommandService:
@@ -383,6 +387,39 @@ async def _unlink(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"unlinked {v[1]}" if removed else f"you have no alias named {v[1]}")
 
 
+def _channel_writes(ctx: CommandContext, custom: CustomCommand) -> list[str]:
+    """The channel variables a body writes. Published, it can't write them without a grant (ADR-0010)."""
+    runtime: Runtime = ctx.service("runtime")
+    try:
+        node = parse(custom.body, Context.BODY, runtime.parser_params(ctx.channel.prefix))
+    except ParseError:
+        return []  # a body that no longer parses is somebody else's problem to report
+    seen = {f"{s.target.namespace}.{s.target.name}" for s in stores(node) if s.target.namespace in GRANTABLE}
+    return sorted(seen)
+
+
+def _grant_warning(ctx: CommandContext, commands: list[CustomCommand], scope: str) -> str:
+    """Say up front which writes stay denied until a mod grants them, and how to grant them."""
+    wanted: dict[str, list[str]] = {}
+    for member in commands:
+        writes = _channel_writes(ctx, member)
+        if not writes:
+            continue
+        held = frozenset() if scope == GLOBAL else _access(ctx).granted(scope, member.id)
+        missing = [variable for variable in writes if variable not in held]
+        if missing:
+            wanted[member.name] = missing
+    if not wanted:
+        return ""
+    listed = "; ".join(f"{name} writes {', '.join(writes)}" for name, writes in sorted(wanted.items()))
+    where = " in each channel that enables it" if scope == GLOBAL else ""
+    first = next(iter(sorted(wanted)))
+    return (
+        f" ⚠ {listed} — those writes are denied{where} until a mod allows them:"
+        f" {ctx.channel.prefix}cc grant {first} {wanted[first][0]}."
+    )
+
+
 async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     """`cc publish <own name|alias> [as <name>] [global]`, or `cc publish pack <name> [global]`."""
     _need(v, 2)
@@ -406,7 +443,8 @@ async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     )
     if command.owner_user_id != user_id:
         text += " " + EDIT_WARNING.format(owner=f"@{command.owner_login}")
-    return Result.success(text + f" Mods can {ctx.channel.prefix}cc disable {name}.", {"name": name})
+    text += f" Mods can {ctx.channel.prefix}cc disable {name}."
+    return Result.success(text + _grant_warning(ctx, [command], scope), {"name": name})
 
 
 async def _resolve_pack(ctx: CommandContext, v: list[str], at: int) -> Any:
@@ -449,7 +487,8 @@ async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result
     return Result.success(
         f"published pack {pack.name} {_where(scope)} ({names}).{owner_note} "
         f"⚠ Commands added to the pack later appear {_where(scope)} too. "
-        f"Mods can {ctx.channel.prefix}module disable {pack.name}.",
+        f"Mods can {ctx.channel.prefix}module disable {pack.name}."
+        + _grant_warning(ctx, list(members), scope),
         {"pack": pack.name, "commands": [c.name for c in members]},
     )
 

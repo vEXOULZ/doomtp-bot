@@ -223,6 +223,24 @@ async def test_the_body_runs_as_the_invoker_not_the_owner(h: Harness) -> None:
     assert await h.say("mod", "!mine") == "Mod rank 80"
 
 
+async def test_publishing_says_which_writes_still_need_a_grant(h: Harness) -> None:
+    """ADR-0010: a mod publishing a community command shouldn't find out from silence (§4)."""
+    await h.add("mod", "count", "echo 1 > channel.deaths | echo {_} >> channel.chatter.log")
+    published = await h.run("mod", "!cc publish count")
+    assert "count writes channel.chatter.log, channel.deaths" in published.send
+    assert "!cc grant count channel.chatter.log" in published.send
+
+    command = await h.service.by_owner(USERS["mod"]["id"], "count")
+    assert command is not None
+    for variable in ("channel.deaths", "channel.chatter.log"):
+        await h.access.set_grant(CHANNEL_ID, command.id, variable, True, USERS["mod"]["id"])
+    again = await h.run("mod", "!cc publish count")  # publishing again keeps the grants
+    assert "grant" not in again.send  # everything it writes is already allowed
+
+    await h.add("mod", "quiet", "echo hi > chatter.note")
+    assert "grant" not in (await h.run("mod", "!cc publish quiet")).send  # its own variables, no grant
+
+
 async def test_a_published_body_cannot_write_channel_variables_without_a_grant(h: Harness) -> None:
     command = await h.add("alice", "count", "echo 1 > channel.deaths")
     await h.service.publish(

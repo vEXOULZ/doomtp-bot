@@ -10,7 +10,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.lang.ast import Node, invocations, to_canonical
+from doomtp_bot.lang.ast import Node, invocations, stores, to_canonical
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, parse
 from doomtp_bot.runtime.namespaces import root_available
@@ -96,6 +96,9 @@ class ExplainReport:
         if len(self.invocations) > MAX_SUMMARY_COMMANDS:
             parts.append(f"… +{len(self.invocations) - MAX_SUMMARY_COMMANDS} more")
         text = f"{self.ast} — " + ", ".join(parts)
+        denied = list(dict.fromkeys(s["variable"] for s in self.stores if not s["allowed"]))
+        if denied:  # a write that goes nowhere is the surprise explain exists to spare you (ADR-0010)
+            text += f" — can't write {', '.join(denied)}"
         if self.failure is not None:
             where = f" at {self.failed_index}" if self.failed_index else ""
             text += f" — would fail{where}: {self.failure.message} (code {self.failure.code})"
@@ -177,27 +180,14 @@ def _describe(inv: Any, ctx: ExecContext, runtime: Runtime, resolver: Any, resol
 
 
 def _stores(node: Node, ctx: ExecContext, runtime: Runtime) -> list[dict[str, Any]]:
-    from doomtp_bot.lang.ast import Store
-
-    found: list[dict[str, Any]] = []
-
-    def walk(n: Node) -> None:
-        for attr in ("left", "right", "inner"):
-            child = getattr(n, attr, None)
-            if isinstance(child, Node):
-                walk(child)
-        if isinstance(n, Store):
-            target = n.target
-            found.append(
-                {
-                    "variable": f"{target.namespace}.{target.name}",
-                    "append": n.append,
-                    "allowed": ctx.variables.access.can_write(ctx, target.namespace, target.name),
-                }
-            )
-
-    walk(node)
-    return found
+    return [
+        {
+            "variable": f"{store.target.namespace}.{store.target.name}",
+            "append": store.append,
+            "allowed": ctx.variables.access.can_write(ctx, store.target.namespace, store.target.name),
+        }
+        for store in stores(node)
+    ]
 
 
 async def _dry_run(

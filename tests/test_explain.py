@@ -114,6 +114,8 @@ async def test_it_reports_placeholders_and_store_targets(h: Harness) -> None:
 
     viewer = await h.explain("alice", "!echo hi > channel.note")
     assert viewer.stores[0]["allowed"] is False
+    assert "can't write channel.note" in viewer.one_line()  # the chat answer says so too (ADR-0010)
+    assert "can't write" not in report.one_line()
 
 
 async def test_it_shows_where_a_custom_command_came_from(h: Harness) -> None:

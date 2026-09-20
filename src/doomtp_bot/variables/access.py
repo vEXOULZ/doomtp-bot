@@ -61,6 +61,10 @@ class VariableAccessPolicy:
         pub = ctx.publisher if ctx.publisher is not None and ctx.publisher.publication else None
         return pub is not None and (ctx.channel.id, pub.command_id, f"{namespace}.{name}") in self._grants
 
+    def granted(self, channel_id: str, command_id: str) -> frozenset[str]:
+        """Which variables a published command may write in this channel."""
+        return frozenset(v for c, cmd, v in self._grants if c == channel_id and cmd == command_id)
+
     def can_write(self, ctx: ExecContext, namespace: str, name: str) -> bool:
         actor = actor_of(ctx)
         if actor is Actor.CALLBACK:
