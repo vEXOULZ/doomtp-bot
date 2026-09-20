@@ -70,5 +70,6 @@ B beats A because every bot of this kind eventually wants sub, raid and online e
 1. [x] Register the Twitch app. Set redirect URI `http://localhost:8080/auth/callback`. *(done 2026-09-17)*
 2. [x] Authorize the bot account (`user:read:chat user:write:chat user:bot`). *(done 2026-09-17; the token is rejected if it belongs to another account)*
 3. [x] Broadcaster authorization (`channel:bot` and the full-tier scopes). *Built 2026-09-19 as `/auth/connect` (ADR-0007 item 5); not yet run against a live channel.*
-4. [ ] Build a reconnect test against the Twitch CLI mock EventSub server. The client is also not restarted yet when it stops.
+4. [x] Restart the client when it stops on its own. *Built 2026-09-20: the service calls `on_stopped` from a task of its own, and `__main__` starts it again after 5 s, doubling to at most 5 min so a Twitch outage isn't met with a reconnect storm. Coming back re-runs the whole startup path, so subscriptions, capabilities, broadcaster grants and the backfill of what was missed are all redone.*
+5. [ ] Build a reconnect test against the Twitch CLI mock EventSub server. *(the restart path is covered by a fake client; the real handshake isn't)*
 5. [x] Add `message_id` dedupe (LRU) in the adapter. *(`TwitchService.emit`, 2000 ids)*

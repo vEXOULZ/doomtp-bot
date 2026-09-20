@@ -86,4 +86,4 @@ A covers the common cases (updates, crashes, short outages) cheaply and even cov
 3. [~] The per-channel toggle (`channels.history_backfill`) is respected and partial gaps are recorded with their reason. The onboarding consent text and the admin indicator wait on the web UI.
 4. [ ] Contact the service maintainer about the bot integration and the keep-warm interval. **Do this before enabling backfill for real channels.**
 5. [ ] Add a deploy runbook step: record the session end before stopping the bot, and verify backfill afterwards.
-6. [ ] Re-check gaps after an EventSub reconnect, not only at startup.
+6. [x] Re-check gaps after an EventSub reconnect, not only at startup. *Done 2026-09-20: a client that stops is started again (ADR-0001 item 4) through the same path startup uses, which ends in `backfill.run_all()` — so whatever was missed while the bot was deaf is filled when it comes back. A reconnect TwitchIO handles inside one running client is invisible to us and needs no gap check, because the session never ended.*

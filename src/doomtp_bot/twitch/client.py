@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -113,11 +113,21 @@ class _BotClient(twitchio.Client):
 
 
 class TwitchService:
-    def __init__(self, *, client_id: str, client_secret: str, tokens: TokenStore, sink: EventSink) -> None:
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        tokens: TokenStore,
+        sink: EventSink,
+        on_stopped: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.tokens = tokens
         self.sink = sink
+        #: Called when the client stops by itself, so whoever started it can start it again (ADR-0001).
+        self.on_stopped = on_stopped
         self.client: _BotClient | None = None
         self.bot_id: str | None = None
         self.bot_login: str | None = None
@@ -154,6 +164,13 @@ class TwitchService:
         except Exception as exc:
             self.last_error = repr(exc)
             log.exception("twitch.client_stopped")
+        else:
+            self.last_error = "the client returned on its own"
+            log.warning("twitch.client_stopped", error=self.last_error)
+        if self.on_stopped is not None and self.client is client:
+            # Nobody asked for this, so EventSub gave up on its own: hand it back to be started again,
+            # from a new task, because starting again cancels this one.
+            asyncio.create_task(self.on_stopped(), name="twitch-restart")  # noqa: RUF006
 
     async def stop(self) -> None:
         if self.client is not None:

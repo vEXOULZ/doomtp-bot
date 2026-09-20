@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -316,3 +317,38 @@ async def test_what_comes_of_subscribing_with_a_broadcaster_token() -> None:
 
     service.client = None
     assert await service.subscribe_broadcaster("100", {"bits"}) == BroadcasterEvents(("channel.cheer",))
+
+
+class DeadClient:
+    """A client that ends the way TwitchIO's does when EventSub gives up: by raising, or by returning."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+
+    async def start(self, **kwargs: Any) -> None:
+        if self.error is not None:
+            raise self.error
+
+
+async def test_a_client_that_stops_on_its_own_asks_to_be_started_again() -> None:
+    """ADR-0001: nothing else notices the bot has gone deaf, so the client says so itself."""
+    restarts: list[str] = []
+
+    async def on_stopped() -> None:
+        restarts.append("go")
+
+    async def sink(event: Event) -> None: ...
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=sink, on_stopped=on_stopped)  # type: ignore[arg-type]
+
+    for client in (DeadClient(RuntimeError("websocket closed")), DeadClient()):
+        service.client = client  # type: ignore[assignment]
+        await service._run(client)  # type: ignore[arg-type]
+    await asyncio.sleep(0)  # the restart runs in a task of its own, since it cancels this one
+    assert restarts == ["go", "go"]
+    assert service.last_error is not None
+
+    stale = DeadClient()  # a task left over from an earlier client must not restart the current one
+    await service._run(stale)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+    assert restarts == ["go", "go"]

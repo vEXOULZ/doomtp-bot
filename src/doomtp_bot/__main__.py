@@ -48,6 +48,10 @@ from doomtp_bot.variables.store import SqliteVariableStore
 
 log = structlog.get_logger("doomtp_bot")
 
+# How long to wait before starting the Twitch client again after it stopped on its own (ADR-0001).
+FIRST_RETRY_S = 5.0
+MAX_RETRY_S = 300.0
+
 
 class _NoSender:
     async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
@@ -88,7 +92,11 @@ async def run(settings: Settings) -> None:
     secret = settings.client_secret()
     if settings.twitch_client_id and secret:
         twitch = TwitchService(
-            client_id=settings.twitch_client_id, client_secret=secret, tokens=TokenStore(dbs.bot), sink=sink
+            client_id=settings.twitch_client_id,
+            client_secret=secret,
+            tokens=TokenStore(dbs.bot),
+            sink=sink,
+            on_stopped=lambda: restart_twitch(),  # by name: it is defined further down
         )
 
     streams = StreamStatus()
@@ -166,11 +174,15 @@ async def run(settings: Settings) -> None:
         else None
     )
 
+    retry_in = 0.0  # grows while Twitch keeps refusing, so an outage isn't met with a reconnect storm
+
     async def start_twitch() -> None:
+        nonlocal retry_in
         if twitch is None:
             return
         try:
             if await twitch.start() and twitch.bot_id and twitch.bot_login:
+                retry_in = 0.0
                 await channels.ensure_home(twitch.bot_id, twitch.bot_login)
                 await channels.subscribe_all()
                 await probe.probe_all()  # tier per channel, before anything checks a capability
@@ -185,6 +197,16 @@ async def run(settings: Settings) -> None:
                 backfill.start_keep_warm()
         except Exception:
             log.exception("twitch.start_failed")
+
+    async def restart_twitch() -> None:
+        """The client stopped by itself: EventSub gave up, or the token went bad. Start it again, waiting
+        longer each time (ADR-0001). Coming back re-runs the startup path, so subscriptions, capabilities
+        and the backfill of whatever was missed while it was deaf are all done again (ADR-0008)."""
+        nonlocal retry_in
+        retry_in = min(max(retry_in * 2, FIRST_RETRY_S), MAX_RETRY_S)
+        log.warning("twitch.restarting", in_s=retry_in)
+        await asyncio.sleep(retry_in)
+        await start_twitch()
 
     async def restore_broadcasters() -> None:
         """Give the client the broadcaster tokens we hold, and re-subscribe their events (ADR-0007)."""

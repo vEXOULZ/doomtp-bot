@@ -69,4 +69,4 @@ A gets the organization benefits of B (clear boundaries, features that can be to
 1. [x] ~~Define the `Module` base and a config-driven loader.~~ Dropped: command groups register specs, and toggles enable them per channel (see the revision note above).
 2. [x] Wrap every handler in try/except with an `asyncio.timeout`. *(3 s per command stage in `runtime/executor.py`; the Dispatcher logs and isolates handler failures)*
 3. [x] Implement the `/data/.lock` single-instance guard. *(`core/instance_lock.py`)*
-4. [ ] Use a lint rule or review checklist to catch blocking calls such as `requests` or `time.sleep` in `modules/`.
+4. [x] Use a lint rule to catch blocking calls such as `requests` or `time.sleep` in `modules/`. *Done 2026-09-20 (and in force since): ruff's `ASYNC` ruleset is selected repo-wide, which catches `time.sleep` (ASYNC251), blocking HTTP (ASYNC210) and blocking `open` (ASYNC230) inside any `async def` — module handlers are all async, so this covers them without a rule that knows about `modules/`.*

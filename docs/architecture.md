@@ -197,7 +197,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 ### 3.3 Gaps and backfill (ADR-0008)
 
 - `log_sessions` records exactly when the bot was listening to each channel.
-- On startup, and after any EventSub reconnect gap longer than 5 s, the **HistoryProvider** fetches `recent-messages/:channel?after=<gap_from - 5s>`.
+- On startup — including the one after a stopped Twitch client is started again (ADR-0001) — the **HistoryProvider** fetches `recent-messages/:channel?after=<gap_from - 5s>` for every gap longer than 5 s. A reconnect TwitchIO handles inside one running client never ends the session, so there is no gap to fill for it.
 - It parses the raw IRC lines and inserts them with `source='recent-messages'`. Inserts are idempotent on the message ID.
 - It records a `backfill_runs` row. The row is marked `complete=0` if the service hit its 800-message cap or reported `channel_not_joined`.
 - **Backfilled events never trigger commands, listeners or triggers.**
