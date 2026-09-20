@@ -188,6 +188,7 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
     """Custom command bodies, names and variable values are checked at save time (architecture §9)."""
     import dataclasses
 
+    from doomtp_bot.customcmds.packs import PackService
     from doomtp_bot.customcmds.resolution import CustomCommandLoader
     from doomtp_bot.customcmds.service import CustomCommandService
     from doomtp_bot.modules import builtin_registry
@@ -204,6 +205,7 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     commands = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
+    packs = PackService(dbs.bot, commands)
     filters = FilterService(dbs.bot)
     await filters.reload()
     await filters.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300")
@@ -212,11 +214,12 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
         policy=policy,
         store=store,
         access=access,
-        custom=CustomCommandLoader(commands),
+        custom=CustomCommandLoader(commands, packs),
         services={
             "policy": policy,
             "variable_store": store,
             "customcmds": commands,
+            "packs": packs,
             "variable_access": access,
             "filters": filters,
         },
@@ -224,9 +227,12 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
 
     channel = dataclasses.replace(policy.channel_info(CHANNEL, "doomtp"), prefix="!")
     chatter = policy.build_chatter(CHANNEL, "400", "alice", "Alice")
+    mod = policy.build_chatter(CHANNEL, "300", "mod", "Mod", frozenset({"moderator"}))
 
-    async def run(text: str) -> tuple[int, str]:
-        report = await runtime.run(text, runtime.make_context(channel=channel, invoker=chatter))
+    async def run(text: str, who: object = None) -> tuple[int, str]:
+        report = await runtime.run(
+            text, runtime.make_context(channel=channel, invoker=who or chatter)
+        )
         assert report is not None
         return report.result.code, report.result.message or ""
 
@@ -239,3 +245,16 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
     code, message = await run("!var set chatter.note that was bad")
     assert code == Code.USAGE and "filter rejects" in message  # a stored value
     assert (await run("!var set chatter.note that was fine"))[0] == Code.OK
+
+    # Everything else a custom command stores is read out later, so it is filtered too (ADR-0009 item 4).
+    for stored in (
+        "!cc describe greet a bad idea",
+        '!cc param greet 1 name=who "a bad person"',
+        "!cc pack create bad",
+        "!cc pack create nice a bad set",
+    ):
+        code, message = await run(stored)
+        assert (code, "filter rejects" in message) == (Code.USAGE, True), stored
+    assert (await run("!cc add mine echo hi", mod))[0] == Code.OK
+    assert (await run("!cc publish mine as bad", mod))[0] == Code.USAGE  # the published name
+    assert (await run("!cc publish mine as hello", mod))[0] == Code.OK

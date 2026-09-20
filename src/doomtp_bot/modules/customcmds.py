@@ -103,6 +103,18 @@ async def _own(ctx: CommandContext, name: str) -> CustomCommand:
     return found
 
 
+def _reject_filtered(ctx: CommandContext, *texts: str) -> None:
+    """Everything stored here is read out later — as a name, a usage line or a reply — so it goes
+    through the channel's filter before it is saved (architecture §9, ADR-0009 item 4)."""
+    filters = ctx.exec.services.get("filters")
+    if filters is None:
+        return
+    for text in texts:
+        hits = filters.rejects(ctx.channel.id, text)
+        if hits:
+            raise CommandError(f"the filter rejects that: {', '.join(hits)}")
+
+
 async def _validate_body(ctx: CommandContext, body: str, *names: str) -> None:
     """Parse the body the way it will run, and filter what is about to be stored (ADR-0009, §9)."""
     try:
@@ -111,13 +123,7 @@ async def _validate_body(ctx: CommandContext, body: str, *names: str) -> None:
         raise CommandError(str(exc)) from exc
     except CustomCommandError as exc:
         raise CommandError(str(exc)) from exc
-    filters = ctx.exec.services.get("filters")
-    if filters is None:
-        return
-    for text in (body, *names):
-        hits = filters.rejects(ctx.channel.id, text)
-        if hits:
-            raise CommandError(f"the filter rejects that: {', '.join(hits)}")
+    _reject_filtered(ctx, body, *names)
 
 
 async def _publication_here(ctx: CommandContext, name: str) -> tuple[Publication, CustomCommand]:
@@ -262,6 +268,7 @@ async def _param(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if len(v) > 3 and v[3].lower() == "remove":
         rows = params.remove(command.params, position)
     else:
+        _reject_filtered(ctx, " ".join(v[3:]))
         assignments, description = params.split_declaration(" ".join(v[3:]))
         try:
             rows = params.declare(command.params, position, assignments, description)
@@ -280,6 +287,7 @@ async def _describe(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 3)
     command = await _own(ctx, v[1])
     summary = " ".join(v[2:])
+    _reject_filtered(ctx, summary)
     await _service(ctx).set_summary(command, summary)
     return Result.success(f"{command.name}: {summary}")
 
@@ -296,6 +304,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
     _need(v, 3)
     name = v[2].lower()
     if action == "create":
+        _reject_filtered(ctx, name, " ".join(v[3:]))
         try:
             created = await packs.create(owner_user_id=user_id, name=name, summary=" ".join(v[3:]))
         except CustomCommandError as exc:
@@ -385,6 +394,7 @@ async def _link(ctx: CommandContext, v: list[str], args: Args) -> Result:
         alias = v[2] if len(v) > 2 else v[1]
     if command.owner_user_id == user_id:
         raise CommandError("that's your own command")
+    _reject_filtered(ctx, alias)
     try:
         await service.link(user_id=user_id, alias=alias, command=command)
     except CustomCommandError as exc:
@@ -449,6 +459,7 @@ async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if command is None:
         raise CommandError(f"you have no command or alias named {v[1]}")
     name = v[3] if len(v) > 3 and v[2].lower() == "as" else command.name
+    _reject_filtered(ctx, name)
     try:
         await service.publish(channel_id=scope, name=name, command=command, published_by=user_id)
     except CustomCommandError as exc:
