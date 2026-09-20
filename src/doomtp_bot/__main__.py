@@ -112,6 +112,7 @@ async def run(settings: Settings) -> None:
         "filters": content_filter,
         "triggers": triggers,
         "variable_access": access,
+        "history": history,  # the backfill command names the service before anything is sent to it
     }
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for)

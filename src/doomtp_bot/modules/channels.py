@@ -51,7 +51,11 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     failed = await channels.join(channel_id, login, actor(ctx))
     if failed:
         return Result.failure(Code.FAIL, f"joined #{login}, but Twitch refused: {', '.join(failed)}")
-    return Result.success(f"joined #{login}", {"channel_id": channel_id, "login": login})
+    return Result.success(
+        f"joined #{login}. The chat log starts now; filling the gaps in it from elsewhere is off until"
+        f" you ask for it — type {sign_of(ctx, channel_id)}backfill in your channel to read what that means.",
+        {"channel_id": channel_id, "login": login},
+    )
 
 
 @command(
@@ -86,4 +90,46 @@ async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.success(f"bye! leaving #{login}")
 
 
-COMMANDS: tuple[Command, ...] = (join_cmd, part_cmd)
+@command(
+    CommandSpec(
+        name="backfill",
+        module=MODULE,
+        toggleable=False,
+        summary="Fill gaps in this channel's chat log from a history service",
+        description=(
+            "While the bot is offline nothing reaches the log. With backfill on, what it missed is"
+            " fetched from a third-party history service when it comes back (ADR-0008). Off by default,"
+            " because it means naming this channel to that service; only the broadcaster can change it."
+        ),
+        params=(Param("1", "state", required=False, choices=("on", "off"), description="Turn it on or off"),),
+        examples=(Example("{sign}backfill on", "backfill is on"),),
+    )
+)
+async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+    """The consent prompt ADR-0008 asks for: it names the service before anything is sent to it."""
+    policy = ctx.service("policy")
+    settings = policy.channel_settings(ctx.channel.id)
+    if settings is None:
+        return Result.failure(Code.FAIL, "backfill is a channel setting")
+    state = args.get("state")
+    if not state:
+        provider = ctx.exec.services.get("history")
+        where = getattr(provider, "base_url", "") or "a history service"
+        return Result.success(
+            f"backfill is {'on' if settings.history_backfill else 'off'}. When it is on, messages this"
+            f" channel saw while the bot was away are fetched from {where} and added to the log, marked"
+            f" as coming from there. They never run commands or triggers."
+            f" {ctx.channel.prefix}backfill on|off changes it.",
+            {"enabled": settings.history_backfill, "provider": where},
+        )
+    if rank(ctx) < BROADCASTER_RANK:
+        return Result.failure(Code.DENIED, "only the broadcaster can change backfill")
+    wanted = state.lower() == "on"
+    if wanted != settings.history_backfill:
+        await policy.mutate(
+            lambda repo: repo.set_channel_field(ctx.channel.id, "history_backfill", int(wanted), actor(ctx))
+        )
+    return Result.success(f"backfill is {'on' if wanted else 'off'}", {"enabled": wanted})
+
+
+COMMANDS: tuple[Command, ...] = (join_cmd, part_cmd, backfill_cmd)

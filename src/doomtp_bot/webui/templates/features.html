@@ -238,6 +238,9 @@ Timeouts, bans and chat clears are stored as events of their own.</p>
 gap can be filled from the public recent-messages service when a channel opts in, and anything that can't
 be proven complete is marked partial rather than quietly called whole. <strong>Backfilled messages never
 run commands</strong> — they only go to the log.</p>
+<p>Opting in is the broadcaster's call and nothing happens until they make it:</p>
+<pre>{{ p }}backfill          # what it is, and which service would be asked
+{{ p }}backfill on       # broadcaster only</pre>
 
 <h2 id="channels">Channels and onboarding</h2>
 <p>A broadcaster types <code>{{ p }}join</code> in the bot's own chat, and the bot starts reading and

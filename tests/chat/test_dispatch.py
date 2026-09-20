@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -121,7 +122,12 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
         callbacks=policy,
         resolve_user=twitch.resolve_user,
         custom=CustomCommandLoader(commands),
-        services={"policy": policy, "twitch": twitch, "customcmds": commands},
+        services={
+            "policy": policy,
+            "twitch": twitch,
+            "customcmds": commands,
+            "history": SimpleNamespace(base_url="https://history.example/api"),
+        },
     )
     channels = ChannelManager(policy, twitch, writer, default_prefix="!")  # emoji default: see below
     runtime.services["channels"] = channels
@@ -197,7 +203,7 @@ async def test_notifications_logged(h: Harness) -> None:
 async def test_join_and_part_flow(h: Harness) -> None:
     await h.say("other", "!join", channel=BOT_ID)  # "other" types !join in the bot's own channel
     await h.settle()
-    assert h.twitch.sent[-1][1] == "joined #other" and "500" in h.twitch.subscribed
+    assert h.twitch.sent[-1][1].startswith("joined #other") and "500" in h.twitch.subscribed
     assert h.channels.is_active("500")
 
     await h.say("alice", "!join")  # outside the bot's channel
@@ -220,7 +226,7 @@ async def test_part_unsubscribes_so_join_works_again(h: Harness) -> None:
     assert CHANNEL_ID not in h.twitch.subscribed
     await h.say("owner", "!join doomtp", channel=BOT_ID)
     await h.settle()
-    assert h.twitch.sent[-1][1] == "joined #doomtp" and CHANNEL_ID in h.twitch.subscribed
+    assert h.twitch.sent[-1][1].startswith("joined #doomtp") and CHANNEL_ID in h.twitch.subscribed
     assert await h.rows(
         f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}' ORDER BY id"
     ) == [
@@ -292,3 +298,25 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
     await h.say("bob", "!hi")  # the channel has seen v3 now, so it is not told twice
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent][-1] == "three"
+
+
+async def test_backfill_explains_itself_and_waits_for_the_broadcaster(h: Harness) -> None:
+    """ADR-0008: opt-in, named at onboarding — and the prompt names the service before anything is sent."""
+    await h.say("bob", "!backfill")
+    await h.settle()
+    said = h.twitch.sent[-1][1]
+    assert said.startswith("backfill is off") and "https://history.example/api" in said
+
+    await h.say("bob", "!backfill on")
+    await h.settle()
+    assert h.twitch.sent[-1][1] == "only the broadcaster can change backfill"
+    assert not h.policy.channel_settings(CHANNEL_ID).history_backfill
+
+    await h.say("doomtp", "!backfill on")
+    await h.settle()
+    assert h.twitch.sent[-1][1] == "backfill is on"
+    assert h.policy.channel_settings(CHANNEL_ID).history_backfill
+
+    await h.say("doomtp", "!backfill off")
+    await h.settle()
+    assert not h.policy.channel_settings(CHANNEL_ID).history_backfill

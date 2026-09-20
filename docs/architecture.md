@@ -202,7 +202,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 - It records a `backfill_runs` row. The row is marked `complete=0` if the service hit its 800-message cap or reported `channel_not_joined`.
 - **Backfilled events never trigger commands, listeners or triggers.**
 - The service only starts collecting a channel after the first request for it, so the bot **keeps each channel warm** with periodic `limit=1` requests.
-- Per the service's guidelines, backfill is **opt-in per channel**, chosen at onboarding.
+- Per the service's guidelines, backfill is **opt-in per channel**, chosen at onboarding: `!join` says the log has started and points at `!backfill`, which names the service and what it would receive before anything is sent there, and only the broadcaster can turn it on.
 
 ---
 
