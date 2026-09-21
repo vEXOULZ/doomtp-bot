@@ -8,6 +8,10 @@
 # `git commit --no-verify` skips this, which is the escape hatch for the day you need it.
 set -eu
 
+# Concluding a conflicted merge is a commit on the branch being merged into, which is exactly how work
+# is meant to reach main. Let it through; the rule is about where work starts, not where it lands.
+if [ -e "$(git rev-parse --git-path MERGE_HEAD)" ]; then exit 0; fi
+
 # A detached HEAD is a rebase, a bisect or a deliberate look around: nothing to check.
 branch=$(git symbolic-ref --quiet --short HEAD) || exit 0
 
