@@ -73,6 +73,11 @@ jobs:
         # GHCR rejects an uppercase path, and an owner's login may well have one.
         id: image
         run: echo "repo=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Server compose files are valid
+        # Nothing else parses the production override, and it is only ever run on the box it matters on.
+        env:
+          BOT_IMAGE: ${{ steps.image.outputs.repo }}:main
+        run: docker compose -f compose.yaml -f compose.prod.yaml --profile tools config --quiet
       - name: Log in to GHCR
         if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
