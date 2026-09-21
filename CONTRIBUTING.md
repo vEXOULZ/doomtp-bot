@@ -32,8 +32,9 @@ where the description is lowercase letters, digits and single hyphens.
 A ticket number is just another word in the description. `.githooks/check-branch-name.sh <name>` says
 whether a name passes, and CI runs the same script against the branch a pull request comes from.
 
-`git commit --no-verify` skips the hook. It exists for the day you need it, not for the day you are in a
-hurry.
+Concluding a merge that hit conflicts is a commit on `main`, and the hook lets that one through — the
+rule is about where work starts, not where it lands. `git commit --no-verify` skips the hook entirely.
+It exists for the day you need it, not for the day you are in a hurry.
 
 Once the repository has a remote, turn on branch protection for `main` as well — require a pull request,
 and disallow direct pushes. A local hook protects the person who installed it; the setting protects the
