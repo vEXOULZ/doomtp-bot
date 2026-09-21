@@ -4,14 +4,11 @@ A self-hosted, multi-channel Twitch chat bot with a composable command language
 (`!random 1-100 | echo you rolled {1}`), user-published custom commands, a complete chat log, and a REST API
 with a web UI.
 
-**Status:** working core. Implemented so far:
-- Parser and runtime for the command language
-- Permissions, cooldowns and toggles
-- Variables
-- The chat log
-- The Twitch connection (EventSub chat events, Helix sending, OAuth)
-
-Custom commands, triggers, filters, history backfill and the web UI are next.
+**Status:** feature-complete for v1 and not yet run in anger. The command language and its runtime,
+permissions, cooldowns and toggles, variables, the chat log with gap backfill, custom commands with
+versions and packs, triggers, the badword filter, the REST API and the web UI are all built and tested;
+so is the deploy path. What is left is running it against real chat — see
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Connecting to Twitch
 
@@ -31,6 +28,8 @@ Custom commands, triggers, filters, history backfill and the web UI are next.
 | [docs/namespaces.md](docs/namespaces.md) | Placeholder namespaces, argument types |
 | [docs/variable-access-matrix.md](docs/variable-access-matrix.md) | Variable read/write rules and grants |
 | [docs/adr/](docs/adr/) | Architecture decision records |
+| [docs/roadmap.md](docs/roadmap.md) | What is done, what is left, and why |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Branch rules, hooks, what CI checks |
 
 ## Local development
 
@@ -43,6 +42,13 @@ python -m venv .venv
 ```bash
 .venv/Scripts/python -m pip install -e ".[dev]"
 ```
+
+```bash
+git config core.hooksPath .githooks
+```
+
+That last one is per clone and git can't do it for you. It stops commits landing on `main` and checks
+branch names — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 (on Linux/macOS use `.venv/bin/python`)
 
@@ -137,59 +143,183 @@ week with whether it was filled. Exit code 1 means a gap is still open — the u
 recent-messages service being down or the outage being longer than its 800-message reach, and both are
 worth seeing in the log before you assume the history is complete.
 
-## Running it on a server
+## Deploying to a server, step by step
 
-That build-on-the-box flow is for the machine you develop on. A server — a Proxmox guest here — runs the
-image CI published instead, and pulls it itself, so nothing from outside ever connects to the homelab
+This is the whole path from an empty Proxmox host to a bot that updates itself. It assumes a Proxmox
+host and a Twitch application you have already created (see *Connecting to Twitch* above); everything
+else is below. A server runs the image CI published rather than building one, and pulls it itself, so
+nothing from outside ever connects to the homelab
 ([ADR-0013](docs/adr/0013-deploy-by-pulling-a-published-image.md)).
 
-Give it a small VM rather than an LXC container: Debian, 2 vCPU, 2 GB, 16 GB disk, Docker from the
-official repository. Docker inside an unprivileged LXC needs nesting, keyctl and a cooperative overlayfs,
-and you would be debugging that instead of the bot. Keep `/data` on the guest's own disk — SQLite in WAL
-mode needs real locking and a `-shm` file beside the database, which an NFS or CIFS share does not give
-you.
+### 1. Create the guest
 
-Set the guest up once:
+In the Proxmox web UI, **Create VM** — not a container. Docker inside an unprivileged LXC needs nesting,
+keyctl and a cooperative overlayfs, and you would spend the evening on that instead of the bot.
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| OS | Debian 13 netinst ISO | Anything with a current Docker package does |
+| System | Machine `q35`, BIOS `OVMF (UEFI)`, **QEMU Agent ticked** | The agent is what lets Proxmox shut it down gracefully |
+| Disk | 16 GB on local storage | The chat log grows slowly; SQLite wants a real disk, never NFS or CIFS |
+| CPU | 2 cores | The bot is idle most of the time |
+| Memory | 2048 MB, ballooning off | The container is capped at 256 MB; the rest is the OS and page cache |
+| Network | bridged, DHCP or a static lease | Outbound only. No port forward, ever |
+
+Install Debian with an SSH server and no desktop. Then, in the guest:
 
 ```bash
-git clone <repo> /srv/doomtp-bot && cd /srv/doomtp-bot && cp .env.example .env
+sudo apt update && sudo apt install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent
 ```
 
-Fill in `.env` as above, add `BOT_IMAGE=ghcr.io/<owner>/doomtp-bot:main`, write
-`secrets/twitch_client_secret`, then start it:
+### 2. Let the bot finish when the host stops it
+
+The bot closes its chat-log sessions on `SIGTERM` and compose gives it 45 s. Both layers above that
+default to 10, so a reboot would kill it mid-flush and leave a gap in the log that the deploy never
+needed to cost ([ADR-0008](docs/adr/0008-history-backfill-recent-messages.md)).
+
+```bash
+sudo mkdir -p /etc/systemd/system.conf.d && printf '[Manager]
+DefaultTimeoutStopSec=90s
+' | sudo tee /etc/systemd/system.conf.d/timeout.conf
+```
+
+Then on the **Proxmox host**, give the guest the same room:
+
+```bash
+qm set <vmid> --startup 'order=1,up=30,down=120'
+```
+
+### 3. Install Docker
+
+From Docker's own repository — Debian's `docker.io` package lags, and compose v2 matters here.
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker "$USER"
+```
+
+Log out and back in, then check both halves are there:
+
+```bash
+docker compose version && docker run --rm hello-world
+```
+
+### 4. Put the files on the guest
+
+```bash
+sudo mkdir -p /srv/doomtp-bot && sudo chown "$USER" /srv/doomtp-bot && git clone <repo-url> /srv/doomtp-bot
+```
+
+Everything from here happens in `/srv/doomtp-bot`.
+
+### 5. Configure it
+
+```bash
+cd /srv/doomtp-bot && cp .env.example .env && mkdir -p secrets data
+```
+
+Edit `.env`: `TWITCH_CLIENT_ID` and `TWITCH_BOT_ID` from the Twitch console, `BOT_OWNER_IDS` with your
+own Twitch user ID, and `BOT_IMAGE=ghcr.io/<owner>/doomtp-bot:main` — the package CI publishes, all
+lowercase. Leave `PUBLIC_BASE_URL=http://localhost:8080` alone; step 7 explains why.
+
+Then the client secret, which only ever lives in a file:
+
+```bash
+printf '%s' 'the-secret-from-the-twitch-console' > secrets/twitch_client_secret && chmod 600 secrets/twitch_client_secret
+```
+
+### 6. Start it
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml up -d
 ```
 
-Authorize the bot through an SSH tunnel, which keeps the redirect URL exactly what is registered on the
-Twitch app — nothing in `.env` or the Twitch console changes:
+It pulls the image, creates both databases and runs the migrations. Give it a few seconds, then:
+
+```bash
+curl -s localhost:8080/readyz
+```
+
+Expect `"status":"degraded"` with `twitch: bot not authorized` — the databases are up and Twitch is
+waiting for step 7. `docker compose logs -f doomtp-bot` shows what it is doing.
+
+### 7. Authorize the bot account
+
+The web UI is bound to `127.0.0.1` on the guest and the redirect URL registered with Twitch is
+`http://localhost:8080/auth/callback`. An SSH tunnel satisfies both at once, so nothing in `.env` or the
+Twitch console has to change. **From your own machine:**
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 you@bot-guest
 ```
 
-Then open `http://localhost:8080/auth/login` in your own browser. `/admin` works over the same tunnel.
-Only if you want the web UI on the LAN do you change the port binding in `compose.yaml`,
-`PUBLIC_BASE_URL`, and the redirect URL registered with Twitch — and never past the LAN (architecture §11).
+Leave that open, and in your own browser go to <http://localhost:8080/auth/login>. Sign in as the **bot
+account**, not your personal one — a token belonging to anyone else is rejected at the callback. Then
+check again:
 
-Updates arrive on a timer:
+```bash
+curl -s localhost:8080/readyz
+```
+
+`"status":"ok"`. The bot is now in its own chat. Type `!join` there from your channel's account to add
+it, or `!join <channel>` as a bot owner.
+
+### 8. Turn on unattended updates
 
 ```bash
 sudo cp deploy/doomtp-bot-update.* /etc/systemd/system/ && sudo systemctl enable --now doomtp-bot-update.timer
 ```
 
-It pulls nightly, does nothing when the tag hasn't moved, and when it has, restarts through compose and
-runs the coverage check — whose exit code becomes the unit's, so `systemctl status doomtp-bot-update`
-is where an unfilled gap shows up. `sudo systemctl start doomtp-bot-update` deploys now instead of
-waiting. To roll back, point `BOT_IMAGE` at a `:<sha>` tag and run it again; mind that migrations run at
-startup and only go forward, so roll back within a schema or restore a backup.
+Nightly it pulls, does nothing if the tag hasn't moved, and otherwise restarts through compose — which
+waits out the grace period from step 2 — then runs the coverage check and takes its exit code. So a
+failed unit means an unfilled gap in the chat log, not a failed deploy.
 
-Two host-level details matter more than they look. Install `qemu-guest-agent` and raise the guest's
-`DefaultTimeoutStopSec` and the VM's own shutdown timeout past the 45 s stop grace period — otherwise a
-host reboot kills the bot mid-flush and the next startup records an unclean shutdown. And don't rely on
-`vzdump` of a live VM for the databases: it snapshots a disk, not a consistent SQLite file. Keep the
-backup job below in the guest's crontab.
+```bash
+systemctl list-timers doomtp-bot-update
+```
+
+```bash
+sudo systemctl start doomtp-bot-update && journalctl -u doomtp-bot-update -n 20
+```
+
+That second command deploys now instead of waiting for tonight.
+
+### 9. Back it up
+
+`bot.db` holds the OAuth refresh tokens, every channel's configuration and every custom command. A
+Proxmox backup of a running VM snapshots a disk, which is not the same as a consistent SQLite file — so
+run the job that is, from the guest's own crontab (`crontab -e`):
+
+```bash
+15 4 * * * cd /srv/doomtp-bot && docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm backup >> data/backups/cron.log 2>&1
+```
+
+Keep a copy off the guest. The snapshots sit on the same disk as the originals, so they survive mistakes,
+not drive failures.
+
+### 10. Day to day
+
+| | |
+|---|---|
+| Is it healthy? | `curl -s localhost:8080/readyz` |
+| What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
+| Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage` |
+| Deploy now | `sudo systemctl start doomtp-bot-update` |
+| Install the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
+
+To **roll back**, point `BOT_IMAGE` at a `:<sha>` tag and run the update unit again. Mind that migrations
+run at startup and only go forward: roll back within a schema, or restore a backup taken before the
+deploy.
+
+### If something is wrong
+
+| Symptom | Cause |
+|---------|-------|
+| `up -d` tries to build | `BOT_IMAGE` is unset, or `compose.prod.yaml` was left off the command |
+| `denied` or `manifest unknown` on pull | The package path is wrong or private — GHCR paths are lowercase, and a private package needs `docker login ghcr.io` |
+| `/readyz` says `bot not authorized` after signing in | The token belongs to another account, or `PUBLIC_BASE_URL` no longer matches the redirect URL registered with Twitch |
+| The browser can't reach the login page | The tunnel dropped. The bot listens on `127.0.0.1` on the guest by design |
+| `chatlog.unclean_shutdown_detected` at startup | Something killed the bot instead of stopping it — revisit step 2 |
+| The update unit is failed but the bot is fine | That is the coverage check reporting a gap. `journalctl -u doomtp-bot-update` says which channel |
 
 ## Web UI
 
