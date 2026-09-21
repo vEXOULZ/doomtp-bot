@@ -1,6 +1,7 @@
 # doomtp-bot — Architecture
 
-**Status:** Proposed · **Date:** 2026-09-16 · **Revision:** 3
+**Status:** Proposed · **Date:** 2026-09-16 · **Revision:** 4 (2026-09-21: diagrams redrawn from the
+built system; deployment section follows ADR-0013)
 
 A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a container. The main features are a composable command language, user-published custom commands, a complete chat log, and a REST API with a web UI.
 
@@ -71,52 +72,75 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 
 ## 2. High-level design
 
+One process, one container (ADR-0004). Everything below runs on a single event loop; the only threads are
+SQLite's. Solid arrows are the path a chat message takes, dotted ones are everything else.
+
+```mermaid
+flowchart TB
+    classDef ext fill:#2b2b2b,stroke:#888,color:#eee
+    classDef store fill:#1f3b4d,stroke:#5a9,color:#eee
+
+    ES["Twitch EventSub<br/>WebSocket"]:::ext
+    RM["recent-messages<br/>.robotty.de"]:::ext
+
+    ES --> ADP["twitch/ adapter<br/>map · dedupe by message_id"]
+    RM -.-> HIST["history/<br/>gap detect · IRC parse · backfill"]
+
+    ADP --> DISP{{"core/dispatch<br/>one ordered pass per event"}}
+    HIST -.-> DISP
+
+    DISP --> LOG["chatlog/ writer<br/>batched, never blocks"]
+    DISP --> MOD["moderation/ index<br/>deletes · timeouts · clears"]
+    DISP --> IGN["policy/ ignore gate"]
+    DISP -.-> TRG["triggers/<br/>events · timers · cron"]
+
+    IGN --> RT
+    TRG -.-> RT
+
+    subgraph RT["runtime/ — the command pipeline (ADR-0005)"]
+        direction LR
+        PARSE["lang/parser<br/>PEG → AST"] --> RES["resolver<br/>built-in → publication →<br/>pack → global → personal"]
+        RES --> PRE["preflight<br/>toggles · roles · cooldowns"]
+        PRE --> EXEC["executor<br/>operators · buffered writes"]
+    end
+
+    subgraph SVC["consulted while it runs"]
+        direction LR
+        CC["customcmds/<br/>versions · links · packs"]
+        POL["policy/<br/>ranks · cooldowns · toggles"]
+        VAR["variables/<br/>7 namespaces · write grants"]
+    end
+
+    SVC -.-> RT
+    MOD -.-> RT
+
+    RT --> OUT["core/outbox<br/>moderation recheck → badword filter →<br/>chunk → per-channel token bucket"]
+    OUT --> HX["Twitch Helix<br/>send · mod · lookup"]:::ext
+    ADP -.-> HX
+
+    LOG --> CHAT
+    OUT -.-> CHAT
+    RT -.-> CHAT
+    SVC -.-> BOT
+    API["api/ + webui/<br/>health · OAuth · /api/v1 · /admin"] -.-> BOT
+    API -.-> CHAT
+
+    subgraph DATA["/data — one SQLite file each (ADR-0003)"]
+        direction LR
+        BOT[("bot.db<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · audit · oauth_tokens")]:::store
+        CHAT[("chatlog.db<br/>messages + FTS · mod_events<br/>log_sessions · backfill_runs<br/>command_runs · outbound_msgs")]:::store
+    end
 ```
-      Twitch EventSub WS            Twitch Helix               recent-messages.robotty.de
-             │ events                  ▲ send/mod/lookup             ▲ backfill (HTTP)
-─────────────┼─────────────────────────┼─────────────────────────────┼──────── container
-             ▼                         │                             │
-   ┌──────────────────┐        ┌───────┴────────┐          ┌─────────┴────────┐
-   │ twitch/ adapter  │        │ twitch/ helix  │          │ history/ provider│
-   │ dedupe, map      │        └───────▲────────┘          └─────────┬────────┘
-   └────────┬─────────┘                │                             │ historical events
-            ▼                          │                             ▼
-   ┌────────────────────────── Dispatcher (core/dispatch.py) ─────────────────────┐
-   │  calls each step in order for every event; one failing step is logged, not fatal │
-   └──┬───────────────┬────────────────────┬───────────────────┬───────────────┬──┘
-      ▼               ▼                    ▼                   ▼               ▼
-┌───────────┐ ┌───────────────┐ ┌───────────────────┐ ┌──────────────┐ ┌─────────────┐
-│ ChatLogger│ │ Moderation    │ │ Dispatch          │ │ Triggers     │ │ Ignore list │
-│ (batch)   │ │ Index         │ │ prefix / listener │ │ events,timers│ │ (gate)      │
-└─────┬─────┘ │ deleted msgs, │ └─────────┬─────────┘ └──────┬───────┘ └─────────────┘
-      │       │ user clears,  │           │ text              │ pipeline
-      │       │ chat clears   │           ▼                   ▼
-      │       └──────┬────────┘ ┌──────────────────────────────────────────────┐
-      │              │ checks   │ Command Runtime                              │
-      │              ├─────────►│ Parser → Resolver → Preflight → Executor     │
-      │              │          │   AST    builtins/   toggles     stages,     │
-      │              │          │          published/  roles       operators,  │
-      │              │          │          personal    cooldowns   vars (buffered)
-      │              │          └───────────────┬──────────────────────────────┘
-      │              │                          │ Result(code, message, data)
-      │              │                          ▼
-      │              │          ┌──────────────────────────────┐
-      │              └─────────►│ Outbox: moderation recheck → │──► Helix send
-      │                         │ badword filter → chunk →     │
-      │                         │ per-channel token bucket     │
-      │                         └──────────────────────────────┘
-      ▼
-┌──────────────────────────────┐   ┌──────────────────────────────────────────────┐
-│ chatlog.db                   │   │ bot.db                                       │
-│ messages(+FTS) mod_events    │   │ channels roles toggles cooldowns commands    │
-│ log_sessions backfill_runs   │   │ custom_commands(+versions,links,publications)│
-│ command_runs outbound_msgs   │   │ variables triggers filters ignore audit_log  │
-└──────────────────────────────┘   │ oauth_tokens api_keys                        │
-                                   └──────────────────────────────────────────────┘
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│ api/ FastAPI (same event loop): /healthz /readyz /auth/*  /api/v1/*  /admin  /   │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+
+Three properties the picture is meant to make obvious:
+
+- **Nothing reaches in.** The four outside boxes are all connections *the bot opens* — events arrive
+  down a socket it dialled, and even the deploy is a pull (ADR-0001, ADR-0013). The homelab needs no
+  port forward, and the web UI is bound to localhost.
+- **Logging is not in the command path.** The writer is a queue; a slow disk delays storage, never a
+  reply, and every message is logged including ignored users' (architecture §3.1).
+- **The pipeline is the only thing that runs user text**, and it is checked at both ends: preflight
+  before anything runs, and the outbox again immediately before the send.
 
 ### Main flow: a chat command
 
@@ -584,6 +608,23 @@ docs/grammar/railroad.ebnf   # spec Appendix D, CI-checked copy for railroad dia
 ---
 
 ## 13. Deployment and operations
+
+```mermaid
+flowchart LR
+    push["git push to main"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
+    ci -->|red| none["nothing is published"]
+    ci -->|green| ghcr[("ghcr.io/owner/doomtp-bot<br/>:main and :sha")]
+
+    subgraph guest["Proxmox guest — it pulls, nothing pushes to it"]
+        timer["systemd timer<br/>nightly"] --> upd["deploy/update.sh"]
+        upd --> moved{"digest<br/>moved?"}
+        moved -->|no| done["exit 0, nothing touched"]
+        moved -->|yes| restart["compose up -d<br/>SIGTERM, 45 s grace, sessions closed"]
+        restart --> cov["coverage check<br/>its exit code is the unit's"]
+    end
+
+    ghcr -.->|docker pull| upd
+```
 
 The deployment setup is unchanged from revision 2, apart from the notes below.
 
