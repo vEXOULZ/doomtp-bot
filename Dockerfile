@@ -24,6 +24,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN groupadd --system --gid 10001 bot && useradd --system --uid 10001 --gid bot --no-create-home bot \
     && mkdir -p /data && chown bot:bot /data
 COPY --from=build /opt/venv /opt/venv
+# The one-shot tools (backup, coverage, starter pack) run from the image, not from a checkout beside it:
+# a guest that deploys by pulling has no source tree to mount over them.
+COPY scripts /app/scripts
 USER bot
 VOLUME ["/data"]
 EXPOSE 8080

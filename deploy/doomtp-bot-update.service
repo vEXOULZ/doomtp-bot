@@ -1,0 +1,13 @@
+[Unit]
+Description=Update doomtp-bot to the published image
+Documentation=file:/srv/doomtp-bot/docs/adr/0013-deploy-by-pulling-a-published-image.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/doomtp-bot
+ExecStart=/srv/doomtp-bot/deploy/update.sh
+# The coverage check at the end exits 1 on a gap no backfill run closed, which leaves the unit failed on
+# purpose: `systemctl status doomtp-bot-update` is then the alarm. The bot itself is already running.
+TimeoutStartSec=15min

@@ -137,6 +137,60 @@ week with whether it was filled. Exit code 1 means a gap is still open — the u
 recent-messages service being down or the outage being longer than its 800-message reach, and both are
 worth seeing in the log before you assume the history is complete.
 
+## Running it on a server
+
+That build-on-the-box flow is for the machine you develop on. A server — a Proxmox guest here — runs the
+image CI published instead, and pulls it itself, so nothing from outside ever connects to the homelab
+([ADR-0013](docs/adr/0013-deploy-by-pulling-a-published-image.md)).
+
+Give it a small VM rather than an LXC container: Debian, 2 vCPU, 2 GB, 16 GB disk, Docker from the
+official repository. Docker inside an unprivileged LXC needs nesting, keyctl and a cooperative overlayfs,
+and you would be debugging that instead of the bot. Keep `/data` on the guest's own disk — SQLite in WAL
+mode needs real locking and a `-shm` file beside the database, which an NFS or CIFS share does not give
+you.
+
+Set the guest up once:
+
+```bash
+git clone <repo> /srv/doomtp-bot && cd /srv/doomtp-bot && cp .env.example .env
+```
+
+Fill in `.env` as above, add `BOT_IMAGE=ghcr.io/<owner>/doomtp-bot:main`, write
+`secrets/twitch_client_secret`, then start it:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml up -d
+```
+
+Authorize the bot through an SSH tunnel, which keeps the redirect URL exactly what is registered on the
+Twitch app — nothing in `.env` or the Twitch console changes:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 you@bot-guest
+```
+
+Then open `http://localhost:8080/auth/login` in your own browser. `/admin` works over the same tunnel.
+Only if you want the web UI on the LAN do you change the port binding in `compose.yaml`,
+`PUBLIC_BASE_URL`, and the redirect URL registered with Twitch — and never past the LAN (architecture §11).
+
+Updates arrive on a timer:
+
+```bash
+sudo cp deploy/doomtp-bot-update.* /etc/systemd/system/ && sudo systemctl enable --now doomtp-bot-update.timer
+```
+
+It pulls nightly, does nothing when the tag hasn't moved, and when it has, restarts through compose and
+runs the coverage check — whose exit code becomes the unit's, so `systemctl status doomtp-bot-update`
+is where an unfilled gap shows up. `sudo systemctl start doomtp-bot-update` deploys now instead of
+waiting. To roll back, point `BOT_IMAGE` at a `:<sha>` tag and run it again; mind that migrations run at
+startup and only go forward, so roll back within a schema or restore a backup.
+
+Two host-level details matter more than they look. Install `qemu-guest-agent` and raise the guest's
+`DefaultTimeoutStopSec` and the VM's own shutdown timeout past the 45 s stop grace period — otherwise a
+host reboot kills the bot mid-flush and the next startup records an unclean shutdown. And don't rely on
+`vzdump` of a live VM for the databases: it snapshots a disk, not a consistent SQLite file. Keep the
+backup job below in the guest's crontab.
+
 ## Web UI
 
 With the bot running, <http://127.0.0.1:8080/> documents every feature, the command reference is
@@ -187,5 +241,7 @@ src/doomtp_bot/
 tests/          pytest; tests/lang/corpus.yaml is the shared parser conformance corpus
                 and tests/fixtures/eventsub/ holds EventSub payloads recorded from Twitch
 web-editor/     the CodeMirror expression editor — npm, and the only Node in the repo
+scripts/        the one-shot tools: backup, coverage, starter pack, fixture recording
+deploy/         what a server needs: the update script and its systemd timer
 docs/           architecture, spec, ADRs, grammar
 ```

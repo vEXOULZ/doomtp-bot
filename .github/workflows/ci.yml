@@ -60,13 +60,35 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: python
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # A pull request builds the image and stops there; only main publishes one (ADR-0013).
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: Image name
+        # GHCR rejects an uppercase path, and an owner's login may well have one.
+        id: image
+        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
+          push: ${{ env.PUBLISH == 'true' }}
           platforms: linux/amd64
-          tags: doomtp-bot:ci
+          # :main is what a server follows; the sha tag is what it rolls back to.
+          tags: |
+            ${{ steps.image.outputs.repo }}:main
+            ${{ steps.image.outputs.repo }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

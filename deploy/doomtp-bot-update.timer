@@ -1,0 +1,11 @@
+[Unit]
+Description=Check nightly for a new doomtp-bot image
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+# Off the hour, and after a host that was asleep comes back.
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

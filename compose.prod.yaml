@@ -1,0 +1,25 @@
+# Server deploy: run the image CI published instead of building from a tree (ADR-0013).
+#
+#     docker compose -f compose.yaml -f compose.prod.yaml pull
+#     docker compose -f compose.yaml -f compose.prod.yaml up -d
+#
+# `deploy/update.sh` does both, and BOT_IMAGE in .env says which image and tag to run.
+services:
+  doomtp-bot:
+    image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
+    # Always ask the registry: the tag moves, and an image already on disk would otherwise win.
+    pull_policy: always
+
+  # The one-shot tools run the same image. They keep `pull_policy: always` too, so a guest without the
+  # build context beside them can never fall back to building one.
+  coverage:
+    image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
+    pull_policy: always
+
+  starter-pack:
+    image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
+    pull_policy: always
+
+  backup:
+    image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
+    pull_policy: always

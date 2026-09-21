@@ -21,6 +21,8 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | [ADR-0009](adr/0009-user-custom-commands-sharing.md) | User-owned custom commands: link, publish, edit, versions |
 | [ADR-0010](adr/0010-variables-scopes.md) | Variables: seven namespaces, exact-name write grants, all public for now |
 | [ADR-0011](adr/0011-parser-and-web-editor.md) | One authoritative server-side PEG parser. The web editor highlights locally and gets diagnostics from the API. |
+| [ADR-0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications; packs publish a set at once |
+| [ADR-0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes the image; the server pulls it on a timer |
 
 ---
 
@@ -588,6 +590,14 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **Docker Compose:**
   - `doomtp-bot`: non-root, read-only root filesystem, `/data` volume, LAN-bound port.
   - `datasette`: optional, read-only on `chatlog.db`.
+  - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
+    (ADR-0013). The same file builds locally in development and pulls on a server.
+- **How an update reaches the server (ADR-0013):** CI pushes `:main` and `:<sha>` to GHCR on every push to
+  `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
+  hasn't moved, restarts through compose when it has, and finishes with the coverage check. Nothing
+  outside the homelab connects to it, which is the same constraint ADR-0001 was chosen under. Rolling back
+  means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and are forward-only, so roll
+  back only within a schema.
 - **What the image holds:** the locked dependency set and the installed package — templates, static files,
   the built editor bundle and the copy of the grammar the language page shows (force-included into the
   wheel, since `docs/` isn't installed). There is no Node in the image, which is why `web-editor/`'s
