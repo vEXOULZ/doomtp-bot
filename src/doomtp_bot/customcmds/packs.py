@@ -11,12 +11,10 @@ import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-import aiosqlite
-
 from doomtp_bot.clock import now_ms
 from doomtp_bot.customcmds.service import NAME_RE, CustomCommand, CustomCommandError, CustomCommandService
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, Row, transaction
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -52,17 +50,17 @@ class PackPublication:
 class PackService:
     """Pack storage. Command lookups go through the CustomCommandService it wraps."""
 
-    def __init__(self, conn: aiosqlite.Connection, commands: CustomCommandService) -> None:
+    def __init__(self, conn: Connection, commands: CustomCommandService) -> None:
         self.conn = conn
         self.commands = commands
 
     # ── reads ───────────────────────────────────────────────────────────────
-    async def _row(self, sql: str, params: Sequence[Any]) -> aiosqlite.Row | None:
-        async with self.conn.execute(sql, tuple(params)) as cur:
+    async def _row(self, sql: str, params: Sequence[Any]) -> Row | None:
+        async with await self.conn.execute(sql, tuple(params)) as cur:
             return await cur.fetchone()
 
     @staticmethod
-    def _pack(row: aiosqlite.Row) -> Pack:
+    def _pack(row: Row) -> Pack:
         return Pack(
             id=row["id"],
             owner_user_id=row["owner_user_id"],
@@ -73,26 +71,26 @@ class PackService:
 
     async def by_owner(self, owner_user_id: str, name: str) -> Pack | None:
         row = await self._row(
-            "SELECT * FROM custom_command_packs WHERE owner_user_id = ? AND name = ? AND status = 'active'",
+            "SELECT * FROM custom_command_packs WHERE owner_user_id = %s AND name = %s AND status = 'active'",
             (owner_user_id, name.lower()),
         )
         return self._pack(row) if row else None
 
     async def by_id(self, pack_id: str) -> Pack | None:
-        row = await self._row("SELECT * FROM custom_command_packs WHERE id = ?", (pack_id,))
+        row = await self._row("SELECT * FROM custom_command_packs WHERE id = %s", (pack_id,))
         return self._pack(row) if row else None
 
     async def owned_by(self, owner_user_id: str) -> list[Pack]:
-        async with self.conn.execute(
-            "SELECT * FROM custom_command_packs WHERE owner_user_id = ? AND status = 'active' ORDER BY name",
+        async with await self.conn.execute(
+            "SELECT * FROM custom_command_packs WHERE owner_user_id = %s AND status = 'active' ORDER BY name",
             (owner_user_id,),
         ) as cur:
             return [self._pack(r) for r in await cur.fetchall()]
 
     async def members(self, pack_id: str) -> list[CustomCommand]:
-        async with self.conn.execute(
+        async with await self.conn.execute(
             f"{self.commands._SELECT} JOIN custom_command_pack_members m ON m.command_id = c.id"
-            " WHERE m.pack_id = ? AND c.status = 'active' ORDER BY c.name",
+            " WHERE m.pack_id = %s AND c.status = 'active' ORDER BY c.name",
             (pack_id,),
         ) as cur:
             rows = await cur.fetchall()
@@ -102,8 +100,8 @@ class PackService:
         self, channel_id: str, *, include_global: bool = False
     ) -> list[tuple[PackPublication, Pack]]:
         scopes = (channel_id, GLOBAL) if include_global else (channel_id,)
-        placeholders = ", ".join("?" for _ in scopes)
-        async with self.conn.execute(
+        placeholders = ", ".join("%s" for _ in scopes)
+        async with await self.conn.execute(
             "SELECT p.*, k.id AS pack_id_, k.owner_user_id, k.name, k.summary, k.status AS pack_status"
             " FROM custom_command_pack_publications p"
             f" JOIN custom_command_packs k ON k.id = p.pack_id WHERE p.channel_id IN ({placeholders})"
@@ -133,8 +131,8 @@ class PackService:
                 " JOIN custom_command_pack_members m ON m.command_id = c.id"
                 " JOIN custom_command_packs k ON k.id = m.pack_id"
                 " JOIN custom_command_pack_publications p ON p.pack_id = k.id"
-                " WHERE p.channel_id = ? AND p.status = 'active' AND k.status = 'active'"
-                " AND c.status = 'active' AND c.name = ?",
+                " WHERE p.channel_id = %s AND p.status = 'active' AND k.status = 'active'"
+                " AND c.status = 'active' AND c.name = %s",
                 (scope, name.lower()),
             )
             if row is not None:
@@ -161,7 +159,7 @@ class PackService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO custom_command_packs (id, owner_user_id, name, summary, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                " VALUES (%s, %s, %s, %s, %s, %s)",
                 (pack_id, owner_user_id, name, summary, ts, ts),
             )
             await self.commands._audit("chat", owner_user_id, "pack.create", pack_id, None, {"name": name})
@@ -174,8 +172,8 @@ class PackService:
             raise CustomCommandError("a pack holds your own commands")
         async with transaction(self.conn):
             await self.conn.execute(
-                "INSERT OR IGNORE INTO custom_command_pack_members (pack_id, command_id, added_at)"
-                " VALUES (?, ?, ?)",
+                "INSERT INTO custom_command_pack_members (pack_id, command_id, added_at)"
+                " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
                 (pack.id, command.id, now_ms()),
             )
             await self.commands._audit(
@@ -185,7 +183,7 @@ class PackService:
     async def remove_member(self, pack: Pack, command: CustomCommand) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "DELETE FROM custom_command_pack_members WHERE pack_id = ? AND command_id = ?",
+                "DELETE FROM custom_command_pack_members WHERE pack_id = %s AND command_id = %s",
                 (pack.id, command.id),
             )
             if cur.rowcount:
@@ -197,7 +195,7 @@ class PackService:
     async def delete(self, pack: Pack) -> None:
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE custom_command_packs SET status = 'deleted', updated_at = ? WHERE id = ?",
+                "UPDATE custom_command_packs SET status = 'deleted', updated_at = %s WHERE id = %s",
                 (now_ms(), pack.id),
             )
             await self.commands._audit("chat", pack.owner_user_id, "pack.delete", pack.id, pack.name, None)
@@ -218,7 +216,7 @@ class PackService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO custom_command_pack_publications (channel_id, pack_id, published_by, created_at)"
-                " VALUES (?, ?, ?, ?)"
+                " VALUES (%s, %s, %s, %s)"
                 " ON CONFLICT (channel_id, pack_id) DO UPDATE SET status = 'active',"
                 " published_by = excluded.published_by",
                 (channel_id, pack.id, published_by, now_ms()),
@@ -239,7 +237,7 @@ class PackService:
     ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "UPDATE custom_command_pack_publications SET status = ? WHERE channel_id = ? AND pack_id = ?",
+                "UPDATE custom_command_pack_publications SET status = %s WHERE channel_id = %s AND pack_id = %s",
                 (status, channel_id, pack.id),
             )
             if cur.rowcount:
@@ -257,13 +255,13 @@ class PackService:
     async def unpublish(self, *, channel_id: str, pack: Pack, actor_user_id: str | None) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "DELETE FROM custom_command_pack_publications WHERE channel_id = ? AND pack_id = ?",
+                "DELETE FROM custom_command_pack_publications WHERE channel_id = %s AND pack_id = %s",
                 (channel_id, pack.id),
             )
             if cur.rowcount:
                 await self.conn.execute(
-                    "DELETE FROM publication_write_grants WHERE channel_id = ? AND command_id IN"
-                    " (SELECT command_id FROM custom_command_pack_members WHERE pack_id = ?)",
+                    "DELETE FROM publication_write_grants WHERE channel_id = %s AND command_id IN"
+                    " (SELECT command_id FROM custom_command_pack_members WHERE pack_id = %s)",
                     (channel_id, pack.id),
                 )
                 await self.commands._audit(

@@ -52,6 +52,17 @@ branch names — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 (on Linux/macOS use `.venv/bin/python`)
 
+The tests run against a real Postgres rather than a stand-in
+([ADR-0014](docs/adr/0014-storage-postgres-one-database-two-schemas.md)). The compose file carries a
+throwaway one that keeps its data in a tmpfs:
+
+```bash
+docker compose --profile test up -d postgres-test
+```
+
+It listens on `127.0.0.1:55432`; set `TEST_DATABASE_URL` to use a different server. Each run creates a
+database of its own and drops it afterwards, and each test rolls back, so nothing piles up.
+
 ```bash
 .venv/Scripts/python -m pytest
 ```
@@ -67,9 +78,22 @@ set `TWITCH_CLI` to its path if it isn't on `PATH`, and re-record the fixtures w
 
 [twitch-cli]: https://dev.twitch.tv/docs/cli/
 
+To run the bot itself outside Docker, point it at a database — the default URL names the compose
+service, which only resolves inside the compose network. The test container above will do. Create a
+database on it once:
+
 ```bash
-.venv/Scripts/python -m doomtp_bot
+docker compose exec postgres-test createdb -U postgres doomtp_dev
 ```
+
+and put its URL in `.env` (the password is in the URL here because this database is a throwaway; on a
+server it comes from a secret file instead):
+
+```
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55432/doomtp_dev
+```
+
+The bot creates its own `bot` and `chatlog` schemas and migrates them on startup.
 
 Then open http://127.0.0.1:8080/readyz. Configuration comes from environment variables or `.env`.
 See [.env.example](.env.example).
@@ -84,15 +108,27 @@ cp .env.example .env
 mkdir -p secrets data && printf '%s' 'your-client-secret' > secrets/twitch_client_secret
 ```
 
+The database needs a password of its own. Pick one and write it to `secrets/postgres_password` — it is
+read by both Postgres and the bot, so it only has to be typed once:
+
+```bash
+printf '%s' 'a long random password' > secrets/postgres_password
+```
+
 ```bash
 docker compose up -d --build
 ```
 
-The API listens on `127.0.0.1:8080` only. To browse the chat log, run the optional Datasette tool:
+That starts Postgres and the bot. The bot waits for the database's healthcheck, then applies its
+migrations at startup — on a fresh volume that is where the `bot` and `chatlog` schemas come from.
+
+The API listens on `127.0.0.1:8080` only. To browse the chat log, run the optional read-only tool:
 
 ```bash
-docker compose --profile tools up -d datasette
+docker compose --profile tools up -d pgweb
 ```
+
+It appears on `127.0.0.1:8001`. Open the `chatlog` schema for messages, `bot` for configuration.
 
 The image installs the exact dependency set from `uv.lock`, so rebuilding an old commit gives the same
 versions. After changing a dependency in `pyproject.toml`, refresh the lock (CI fails if it is stale):
@@ -160,9 +196,9 @@ keyctl and a cooperative overlayfs, and you would spend the evening on that inst
 |---------|-------|-----|
 | OS | Debian 13 netinst ISO | Anything with a current Docker package does |
 | System | Machine `q35`, BIOS `OVMF (UEFI)`, **QEMU Agent ticked** | The agent is what lets Proxmox shut it down gracefully |
-| Disk | 16 GB on local storage | The chat log grows slowly; SQLite wants a real disk, never NFS or CIFS |
+| Disk | 16 GB on local storage | The chat log grows slowly; Postgres wants a real disk, never NFS or CIFS |
 | CPU | 2 cores | The bot is idle most of the time |
-| Memory | 2048 MB, ballooning off | The container is capped at 256 MB; the rest is the OS and page cache |
+| Memory | 2048 MB, ballooning off | The bot is capped at 256 MB and Postgres at 512 MB; the rest is the OS and page cache |
 | Network | bridged, DHCP or a static lease | Outbound only. No port forward, ever |
 
 Install Debian with an SSH server and no desktop. Then, in the guest:
@@ -221,11 +257,20 @@ Edit `.env`: `TWITCH_CLIENT_ID` and `TWITCH_BOT_ID` from the Twitch console, `BO
 own Twitch user ID, and `BOT_IMAGE=ghcr.io/<owner>/doomtp-bot:main` — the package CI publishes, all
 lowercase. Leave `PUBLIC_BASE_URL=http://localhost:8080` alone; step 7 explains why.
 
-Then the client secret, which only ever lives in a file:
+Then the two secrets, which only ever live in files:
 
 ```bash
 printf '%s' 'the-secret-from-the-twitch-console' > secrets/twitch_client_secret && chmod 600 secrets/twitch_client_secret
 ```
+
+```bash
+printf '%s' 'a long random password' > secrets/postgres_password && chmod 600 secrets/postgres_password
+```
+
+The second one is the database's password, and you are choosing it right now — it is read by Postgres
+when it initialises its volume and by the bot when it connects, so it is never typed anywhere else.
+Change it later and the volume keeps the old one: `POSTGRES_PASSWORD_FILE` is only consulted on first
+init, so a change means `ALTER ROLE doomtp PASSWORD …` inside the running database as well.
 
 ### 6. Start it
 
@@ -233,13 +278,14 @@ printf '%s' 'the-secret-from-the-twitch-console' > secrets/twitch_client_secret 
 docker compose -f compose.yaml -f compose.prod.yaml up -d
 ```
 
-It pulls the image, creates both databases and runs the migrations. Give it a few seconds, then:
+It pulls the image, starts Postgres, waits for it to report healthy, then creates both schemas and
+runs the migrations. Give it a few seconds, then:
 
 ```bash
 curl -s localhost:8080/readyz
 ```
 
-Expect `"status":"degraded"` with `twitch: bot not authorized` — the databases are up and Twitch is
+Expect `"status":"degraded"` with `twitch: bot not authorized` — the database is up and Twitch is
 waiting for step 7. `docker compose logs -f doomtp-bot` shows what it is doing.
 
 ### 7. Authorize the bot account
@@ -285,9 +331,9 @@ That second command deploys now instead of waiting for tonight.
 
 ### 9. Back it up
 
-`bot.db` holds the OAuth refresh tokens, every channel's configuration and every custom command. A
-Proxmox backup of a running VM snapshots a disk, which is not the same as a consistent SQLite file — so
-run the job that is, from the guest's own crontab (`crontab -e`):
+The `bot` schema holds the OAuth refresh tokens, every channel's configuration and every custom command.
+A Proxmox backup of a running VM snapshots a disk, which is not the same as a consistent dump of a
+database that was mid-write — so run the job that is, from the guest's own crontab (`crontab -e`):
 
 ```bash
 15 4 * * * cd /srv/doomtp-bot && docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm backup >> data/backups/cron.log 2>&1
@@ -338,23 +384,40 @@ than being open. The bot binds to `127.0.0.1` by default; keep it on the LAN.
 
 ## Backups
 
-`bot.db` holds the OAuth refresh tokens and every channel's configuration; `chatlog.db` holds the message
-history. Both are backed up by one script, which uses SQLite's online backup API and is safe to run while
-the bot is writing:
+The `bot` schema holds the OAuth refresh tokens and every channel's configuration; the `chatlog` schema
+holds the message history. One script dumps both, using `pg_dump`, which takes its snapshot inside a
+single transaction and is therefore safe to run while the bot is writing:
 
 ```bash
 docker compose --profile tools run --rm backup
 ```
 
-Each run writes a gzipped snapshot to `data/backups/` and keeps the newest 7 per database (`--keep`).
-For a nightly copy, add it to the host's crontab (`crontab -e`):
+Each run writes `<schema>-<timestamp>.dump` into `data/backups/` and keeps the newest 7 of each
+(`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
+grows without bound do not have to share a retention policy. For a nightly copy, add it to the host's
+crontab (`crontab -e`):
 
 ```bash
 15 4 * * * cd /srv/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
 ```
 
-Restore by stopping the bot, then gunzipping the snapshot over the database file. Keep a copy off the host:
-the backups sit on the same disk as the originals, so they survive mistakes, not drive failures.
+To restore, stop the bot, drop the schema and let `pg_restore` put it back:
+
+```bash
+docker compose stop doomtp-bot
+```
+
+```bash
+docker compose exec -T postgres psql -U doomtp -d doomtp -c 'DROP SCHEMA bot CASCADE'
+```
+
+```bash
+docker compose exec -T postgres pg_restore -U doomtp -d doomtp < data/backups/bot-20260922T041500Z.dump
+```
+
+The archives are in `custom` format, so `pg_restore --list` shows what is in one and `--table=` pulls a
+single table out without touching the rest. Keep a copy off the host: the backups sit on the same disk as
+the originals, so they survive mistakes, not drive failures.
 
 ## Project layout
 
@@ -364,7 +427,7 @@ src/doomtp_bot/
   core/         dispatch, channels, outbox, health, capabilities, stream status
   lang/         AST, parse errors, PEG recursive-descent parser
   runtime/      Result, command specs, resolver, preflight, executor, explain
-  storage/      SQLite connections + migrations for bot.db and chatlog.db
+  storage/      Postgres connections + migrations for the bot and chatlog schemas
   webui/        server-rendered pages, the admin UI and the static files they serve
   twitch/ history/ chatlog/ moderation/ policy/ customcmds/
   variables/ triggers/ filters/ audit/ modules/

@@ -127,7 +127,7 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
     wanted = state.lower() == "on"
     if wanted != settings.history_backfill:
         await policy.mutate(
-            lambda repo: repo.set_channel_field(ctx.channel.id, "history_backfill", int(wanted), actor(ctx))
+            lambda repo: repo.set_channel_field(ctx.channel.id, "history_backfill", wanted, actor(ctx))
         )
     return Result.success(f"backfill is {'on' if wanted else 'off'}", {"enabled": wanted})
 

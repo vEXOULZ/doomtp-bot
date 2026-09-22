@@ -36,7 +36,7 @@ from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import MODERATOR_RANK
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
-from doomtp_bot.storage.db import Databases, current_version
+from doomtp_bot.storage.db import Databases, configure_event_loop, current_version
 from doomtp_bot.triggers.runner import TriggerRunner
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
@@ -44,7 +44,7 @@ from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHtt
 from doomtp_bot.twitch.client import TwitchService
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
-from doomtp_bot.variables.store import SqliteVariableStore
+from doomtp_bot.variables.store import PostgresVariableStore
 
 log = structlog.get_logger("doomtp_bot")
 
@@ -59,12 +59,12 @@ class _NoSender:
 
 
 async def run(settings: Settings) -> None:
-    dbs = await Databases.open(settings.bot_db_path, settings.chatlog_db_path)
+    dbs = await Databases.open(settings.database_dsn())
     health = HealthRegistry()
 
     policy = PolicyService(dbs.bot, bot_owner_ids=settings.bot_owner_ids)
     await policy.reload()
-    store = SqliteVariableStore(dbs.bot)
+    store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
@@ -275,8 +275,8 @@ async def run(settings: Settings) -> None:
         return ComponentHealth(
             Status.OK,
             {
-                "bot_schema": await current_version(dbs.bot),
-                "chatlog_schema": await current_version(dbs.chatlog),
+                "bot_schema": await current_version(dbs.bot, "bot"),
+                "chatlog_schema": await current_version(dbs.chatlog, "chatlog"),
             },
         )
 
@@ -351,6 +351,7 @@ def main() -> None:
         log.error("bot.already_running", detail=str(exc))
         sys.exit(1)
     try:
+        configure_event_loop()
         asyncio.run(run(settings))
     except KeyboardInterrupt:
         pass

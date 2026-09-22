@@ -1,6 +1,32 @@
 # Development: this file builds the image from the tree. A server runs it with compose.prod.yaml on top,
 # which replaces every `build` with the image CI published (ADR-0013).
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: doomtp
+      POSTGRES_DB: doomtp
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Nothing outside this compose network talks to it. To look at it from the host, tunnel in over SSH
+    # rather than publishing the port (architecture §11).
+    expose: ["5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doomtp -d doomtp"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   doomtp-bot:
     build: .
     image: doomtp-bot:dev
@@ -9,8 +35,12 @@ services:
     # look like a crash to the gap detector (ADR-0008). The default 10s is not.
     stop_grace_period: 45s
     env_file: .env
-    secrets: [twitch_client_secret]
+    secrets: [twitch_client_secret, postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
+      # Only the instance lock lives here now; the databases are Postgres's (ADR-0014).
       - ./data:/data
     ports:
       # LAN/localhost only. Replace 127.0.0.1 with the host's LAN IP to reach the web UI from other machines.
@@ -26,15 +56,27 @@ services:
         limits:
           memory: 256m
 
-  # Optional: browse/query the chat log read-only (architecture §3.2).
-  datasette:
+  # Optional: browse/query the chat log (architecture §3.2). Replaces Datasette, which could only read
+  # SQLite. --readonly is pgweb's own guard.
+  pgweb:
     profiles: ["tools"]
-    image: datasetteproject/datasette:0.65.1
-    command: datasette serve /data/chatlog.db --host 0.0.0.0 --port 8001 --setting sql_time_limit_ms 5000
-    volumes:
-      - ./data:/data:ro
+    image: sosedoff/pgweb:0.16.2
+    restart: unless-stopped
+    # pgweb has no password-file option, and compose cannot put a secret's contents into an environment
+    # variable. So read the file here and hand it over as PGPASSWORD, which the driver picks up for a URL
+    # that carries no password of its own. `$$` escapes compose's own interpolation; the password stays
+    # out of .env, out of the image and out of the process arguments.
+    entrypoint: ["sh", "-c", "PGPASSWORD=$$(cat /run/secrets/postgres_password) exec /usr/bin/pgweb --bind 0.0.0.0 --listen 8001 --readonly"]
+    secrets: [postgres_password]
+    environment:
+      PGWEB_DATABASE_URL: postgresql://doomtp@postgres:5432/doomtp?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8001:8001"
+    security_opt:
+      - no-new-privileges:true
 
   # One-shot coverage check after a deploy (ADR-0008): docker compose --profile tools run --rm coverage
   coverage:
@@ -42,11 +84,11 @@ services:
     build: .
     image: doomtp-bot:dev
     entrypoint: ["python", "/app/scripts/coverage.py"]
-    command: ["--data-dir", "/data"]
-    volumes:
-      # Not `:ro`: the script opens both databases read-only, but SQLite needs the -shm file beside a
-      # WAL database while the bot is running.
-      - ./data:/data
+    env_file: .env
+    secrets: [postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp
@@ -60,22 +102,30 @@ services:
     build: .
     image: doomtp-bot:dev
     entrypoint: ["python", "/app/scripts/starter_pack.py"]
-    command: ["--data-dir", "/data"]
-    volumes:
-      - ./data:/data
+    env_file: .env
+    secrets: [postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
 
-  # One-shot backup (ADR-0003). Run from host cron: docker compose run --rm backup
+  # One-shot backup (ADR-0014). Run from host cron: docker compose --profile tools run --rm backup
+  # It writes pg_dump archives into ./data/backups; getting them off this host is still your job.
   backup:
     profiles: ["tools"]
     build: .
     image: doomtp-bot:dev
     entrypoint: ["python", "/app/scripts/backup.py"]
-    command: ["--data-dir", "/data", "--keep", "7"]
+    command: ["--out-dir", "/data/backups", "--keep", "7"]
+    env_file: .env
+    secrets: [postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/data
     read_only: true
@@ -84,6 +134,29 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # The test suite's database: docker compose --profile test up -d postgres-test
+  # Throwaway on purpose — it keeps its data in a tmpfs and is published on the host so pytest can
+  # reach it without going through the compose network.
+  postgres-test:
+    profiles: ["test"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+
 secrets:
   twitch_client_secret:
     file: ./secrets/twitch_client_secret
+  postgres_password:
+    file: ./secrets/postgres_password

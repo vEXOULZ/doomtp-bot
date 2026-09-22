@@ -1,6 +1,6 @@
 """Variable keys, per-run write buffer and the store protocol (spec §6.5, ADR-0010).
 
-The runtime only depends on `VariableStore` and `VariableAccess`. Part of the implementation (SQLite store,
+The runtime only depends on `VariableStore` and `VariableAccess`. Part of the implementation (Postgres store,
 access matrix) lives in doomtp_bot.variables.
 """
 

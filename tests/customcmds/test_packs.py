@@ -20,7 +20,7 @@ from doomtp_bot.runtime.engine import RunReport, Runtime
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
-from doomtp_bot.variables.store import SqliteVariableStore
+from doomtp_bot.variables.store import PostgresVariableStore
 from tests.customcmds.test_customcmds import (
     BADGES,
     CHANNEL_ID,
@@ -68,7 +68,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     await policy.reload()
     for channel, login in ((CHANNEL_ID, CHANNEL_LOGIN), (OTHER_CHANNEL, "other")):
         await policy.mutate(lambda repo, c=channel, n=login: repo.ensure_channel(c, n, Actor(None, "system")))
-    store = SqliteVariableStore(dbs.bot)
+    store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     service = CustomCommandService(dbs.bot, on_grants_changed=access.reload)

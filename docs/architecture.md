@@ -13,7 +13,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | [variable-access-matrix.md](variable-access-matrix.md) | Read/write access per namespace and actor, grant types, admin actions (reviewed) |
 | [ADR-0001](adr/0001-chat-transport-eventsub-websocket.md) | Read chat through EventSub over WebSocket and send through the Helix API |
 | [ADR-0002](adr/0002-twitch-library-twitchio.md) | Use TwitchIO 3.x behind an adapter |
-| [ADR-0003](adr/0003-storage-sqlite.md) | SQLite with two files: `bot.db` (state) and `chatlog.db` (logs) |
+| [ADR-0003](adr/0003-storage-sqlite.md) | *(superseded by ADR-0014)* SQLite with two files: `bot.db` (state) and `chatlog.db` (logs) |
 | [ADR-0004](adr/0004-modular-monolith.md) | One async process, one container |
 | [ADR-0005](adr/0005-command-pipeline-runtime.md) | Command runtime: an AST, preflight checks, and a three-part `Result` |
 | [ADR-0006](adr/0006-permissions-cooldowns-toggles.md) | Ranked roles, per-tier and per-user cooldowns, layered toggles |
@@ -24,6 +24,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | [ADR-0011](adr/0011-parser-and-web-editor.md) | One authoritative server-side PEG parser. The web editor highlights locally and gets diagnostics from the API. |
 | [ADR-0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications; packs publish a set at once |
 | [ADR-0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes the image; the server pulls it on a timer |
+| [ADR-0014](adr/0014-storage-postgres-one-database-two-schemas.md) | **Postgres**: one database, a `bot` schema and a `chatlog` schema (supersedes ADR-0003) |
 
 ---
 
@@ -72,8 +73,8 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 
 ## 2. High-level design
 
-One process, one container (ADR-0004). Everything below runs on a single event loop; the only threads are
-SQLite's. Solid arrows are the path a chat message takes, dotted ones are everything else.
+One process, one container for the bot, plus the database's (ADR-0004, ADR-0014). Everything below runs
+on a single event loop. Solid arrows are the path a chat message takes, dotted ones are everything else.
 
 ```mermaid
 flowchart TB
@@ -125,10 +126,10 @@ flowchart TB
     API["api/ + webui/<br/>health · OAuth · /api/v1 · /admin"] -.-> BOT
     API -.-> CHAT
 
-    subgraph DATA["/data — one SQLite file each (ADR-0003)"]
+    subgraph DATA["postgres — one database, a schema each (ADR-0014)"]
         direction LR
-        BOT[("bot.db<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · audit · oauth_tokens")]:::store
-        CHAT[("chatlog.db<br/>messages + FTS · mod_events<br/>log_sessions · backfill_runs<br/>command_runs · outbound_msgs")]:::store
+        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · audit · oauth_tokens")]:::store
+        CHAT[("schema chatlog<br/>messages + tsvector · mod_events<br/>log_sessions · backfill_runs<br/>command_runs · outbound_msgs")]:::store
     end
 ```
 
@@ -196,42 +197,53 @@ Both skip themselves where the CLI isn't installed; CI installs it.
 
 Deletions are flags, never row removals. Queries and the web UI choose whether to hide flagged messages. The raw text is kept.
 
-### 3.2 Schema (`chatlog.db`)
+### 3.2 Schema (schema `chatlog`)
+
+Sketch only — `storage/migrations/chatlog/0001_init.sql` is the truth. Timestamps are `bigint`
+milliseconds since the epoch throughout.
 
 ```sql
 messages(
-  message_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL,
-  user_id TEXT NOT NULL, user_login TEXT NOT NULL, display_name TEXT,
-  text TEXT NOT NULL, message_type TEXT, badges TEXT, fragments TEXT,
-  bits INTEGER DEFAULT 0, reply_parent_id TEXT, reward_id TEXT, source_channel_id TEXT,
-  is_self INTEGER DEFAULT 0, is_command INTEGER DEFAULT 0,
-  source TEXT NOT NULL DEFAULT 'eventsub',     -- eventsub | recent-messages
-  raw TEXT,                                    -- original IRC line when backfilled
-  sent_at INTEGER NOT NULL, received_at INTEGER NOT NULL,
-  deleted_at INTEGER, cleared_at INTEGER, mod_event_id INTEGER)
--- indexes: (channel_id, sent_at), (user_id, sent_at); FTS5 external-content table on text
+  message_id text PRIMARY KEY, channel_id text NOT NULL,
+  user_id text NOT NULL, user_login text NOT NULL, display_name text,
+  text text NOT NULL, message_type text, badges text, fragments text,   -- badges/fragments are JSON
+  bits bigint DEFAULT 0, reply_parent_id text, reward_id text, source_channel_id text,
+  is_self boolean DEFAULT false, is_command boolean DEFAULT false,
+  source text NOT NULL DEFAULT 'eventsub',     -- eventsub | recent-messages
+  raw text,                                    -- original IRC line when backfilled
+  sent_at bigint NOT NULL, received_at bigint NOT NULL,
+  deleted_at bigint, cleared_at bigint, mod_event_id bigint,
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', chatlog_unaccent(text))) STORED)
+-- indexes: (channel_id, sent_at), (user_id, sent_at), GIN on tsv
 
-chat_notifications(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, type TEXT,
-                   payload TEXT, source TEXT, sent_at INTEGER)
-mod_events(id INTEGER PRIMARY KEY, channel_id TEXT, type TEXT, message_id TEXT,
-           target_user_id TEXT, moderator_user_id TEXT, duration_s INTEGER, reason TEXT,
-           source TEXT, at INTEGER)
-users(user_id TEXT PRIMARY KEY, login TEXT, display_name TEXT, first_seen INTEGER, last_seen INTEGER)
-user_names(user_id TEXT, login TEXT, display_name TEXT, seen_from INTEGER, PRIMARY KEY (user_id, login))
+chat_notifications(id text PRIMARY KEY, channel_id text, user_id text, type text,
+                   payload text, source text, sent_at bigint)
+mod_events(id bigint IDENTITY PRIMARY KEY, channel_id text, type text, message_id text,
+           target_user_id text, moderator_user_id text, duration_s integer, reason text,
+           source text, at bigint)
+users(user_id text PRIMARY KEY, login text, display_name text, first_seen bigint, last_seen bigint)
+user_names(user_id text, login text, display_name text, seen_from bigint, PRIMARY KEY (user_id, login))
 
-log_sessions(id INTEGER PRIMARY KEY, channel_id TEXT, started_at INTEGER, ended_at INTEGER,
-             end_reason TEXT)                          -- live coverage intervals
-backfill_runs(id INTEGER PRIMARY KEY, channel_id TEXT, gap_from INTEGER, gap_to INTEGER,
-              fetched INTEGER, inserted INTEGER, complete INTEGER, error TEXT, at INTEGER)
+log_sessions(id bigint IDENTITY PRIMARY KEY, channel_id text, started_at bigint, ended_at bigint,
+             end_reason text)                        -- live coverage intervals
+backfill_runs(id bigint IDENTITY PRIMARY KEY, channel_id text, gap_from bigint, gap_to bigint,
+              fetched integer, inserted integer, complete boolean, error text, at bigint)
 
-command_runs(id INTEGER PRIMARY KEY, channel_id TEXT, user_id TEXT, trigger_type TEXT,
-             trigger_id TEXT, expr TEXT, resolved TEXT, code INTEGER, message TEXT,
-             duration_ms INTEGER, cancelled_reason TEXT, run_ref TEXT, at INTEGER)
-outbound_msgs(id INTEGER PRIMARY KEY, channel_id TEXT, run_ref TEXT, text_sent TEXT,
-              text_prefilter TEXT, filter_hits TEXT, twitch_message_id TEXT,
-              dropped_reason TEXT, at INTEGER)
+command_runs(id bigint IDENTITY PRIMARY KEY, channel_id text, user_id text, trigger_type text,
+             trigger_id text, expr text, resolved text, code integer, message text,
+             duration_ms bigint, cancelled_reason text, run_ref text, at bigint)
+outbound_msgs(id bigint IDENTITY PRIMARY KEY, channel_id text, run_ref text, text_sent text,
+              text_prefilter text, filter_hits text, twitch_message_id text,
+              dropped_reason text, at bigint)
 -- run_ref is the runtime's run id: it links every sent or dropped message to the run that produced it
 ```
+
+**Search** is the `tsv` generated column with a GIN index, queried with
+`websearch_to_tsquery('simple', chatlog_unaccent(%s))` — so `cafe` and `café` find each other, and
+`"exact phrase"` and `-excluded` work the way a search box is expected to. The `simple` configuration is
+deliberate: chat is multilingual and English stemming would mangle it. `chatlog_unaccent()` is an
+`IMMUTABLE` wrapper around `unaccent` with the dictionary pinned by name, because a generated column may
+only call immutable functions.
 
 All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 
@@ -391,7 +403,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - The Twitch chat-bot badge is auto-ignored, and the bot always ignores itself.
 - Ignored users' messages are **logged** but never reach commands, listeners, triggers, variable writes or stats counters (configurable).
 
-### 5.5 Audit log (always on, `bot.db`)
+### 5.5 Audit log (always on, schema `bot`)
 
 - Every configuration change is recorded, whether it came from chat, the API or the web UI. That covers:
   - roles and role memberships
@@ -619,8 +631,11 @@ flowchart LR
         timer["systemd timer<br/>nightly"] --> upd["deploy/update.sh"]
         upd --> moved{"digest<br/>moved?"}
         moved -->|no| done["exit 0, nothing touched"]
-        moved -->|yes| restart["compose up -d<br/>SIGTERM, 45 s grace, sessions closed"]
-        restart --> cov["coverage check<br/>its exit code is the unit's"]
+        moved -->|yes| restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
+        restart --> migrate["migrations run at startup<br/>forward-only"]
+        migrate --> cov["coverage check<br/>its exit code is the unit's"]
+        pg[("postgres<br/>never restarted by an update")]
+        migrate -.-> pg
     end
 
     ghcr -.->|docker pull| upd
@@ -629,16 +644,23 @@ flowchart LR
 The deployment setup is unchanged from revision 2, apart from the notes below.
 
 - **Docker Compose:**
-  - `doomtp-bot`: non-root, read-only root filesystem, `/data` volume, LAN-bound port.
-  - `datasette`: optional, read-only on `chatlog.db`.
+  - `doomtp-bot`: non-root, read-only root filesystem, `/data` volume (the instance lock; the
+    databases are Postgres's), LAN-bound port. It waits for the database's healthcheck before it
+    starts (ADR-0014).
+  - `postgres`: the database, on a named volume, published to nothing — only the compose network
+    reaches it. To look at it from outside, tunnel in over SSH (§11).
+  - `pgweb`: optional, read-only, for browsing the log by hand. It replaced Datasette, which could
+    only read SQLite.
   - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
     (ADR-0013). The same file builds locally in development and pulls on a server.
 - **How an update reaches the server (ADR-0013):** CI pushes `:main` and `:<sha>` to GHCR on every push to
   `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
-  hasn't moved, restarts through compose when it has, and finishes with the coverage check. Nothing
-  outside the homelab connects to it, which is the same constraint ADR-0001 was chosen under. Rolling back
-  means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and are forward-only, so roll
-  back only within a schema.
+  hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
+  Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
+  (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
+  chosen under. Rolling back means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and
+  are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
+  before the deploy.
 - **What the image holds:** the locked dependency set and the installed package — templates, static files,
   the built editor bundle and the copy of the grammar the language page shows (force-included into the
   wheel, since `docs/` isn't installed). There is no Node in the image, which is why `web-editor/`'s
@@ -647,7 +669,7 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   and the editor.*
 - **Self-hosted history, optional:** for independence from the public recent-messages service, run a `recent-messages2` container on a separate compose stack. It needs TimescaleDB. Don't restart it together with the bot during updates. Point `HISTORY_PROVIDER_URL` at it.
 - **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is backfilled. `scripts/coverage.py` (compose: `--profile tools run --rm coverage`) says how each channel's last session ended and which gaps no complete backfill run covers — the deploy runbook in the README.
-- **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) snapshots both databases with SQLite's online backup API, gzipped and rotated, safe to run while the bot writes. `bot.db` is critical because it holds custom commands, variables and roles.
+- **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) runs `pg_dump` once per schema, writing a compressed custom-format archive that `pg_restore` can take apart, rotated to the last 7 of each. `pg_dump` snapshots inside one transaction, so it is safe to run while the bot writes. The `bot` schema is the critical one — it holds custom commands, variables, roles and the OAuth tokens. The dumps land on the same host as the database, which is not a backup until a copy leaves the machine; that part is still the operator's job.
 - **Metrics:**
   - `messages_logged_total{source}`
   - `backfill_inserted_total`

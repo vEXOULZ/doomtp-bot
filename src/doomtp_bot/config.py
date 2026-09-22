@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,12 @@ class Settings(BaseSettings):
     bot_owner_ids_csv: str = Field(default="", validation_alias="BOT_OWNER_IDS")
 
     data_dir: Path = Path("./data")
+
+    # Postgres (ADR-0014). One database, schemas `bot` and `chatlog`. The password is kept out of the
+    # URL so it can come from a Docker secret, the same way the Twitch and admin secrets do.
+    database_url: str = "postgresql://doomtp@postgres:5432/doomtp"
+    database_password: SecretStr | None = None
+    database_password_file: Path | None = None
 
     web_host: str = "127.0.0.1"
     web_port: int = 8080
@@ -60,13 +67,27 @@ class Settings(BaseSettings):
             return self.admin_password_file.read_text(encoding="utf-8").strip() or None
         return None
 
-    @property
-    def bot_db_path(self) -> Path:
-        return self.data_dir / "bot.db"
+    def database_dsn(self) -> str:
+        """DATABASE_URL with DATABASE_PASSWORD (or the contents of DATABASE_PASSWORD_FILE) spliced in.
 
-    @property
-    def chatlog_db_path(self) -> Path:
-        return self.data_dir / "chatlog.db"
+        Returned rather than stored so the password never sits on the Settings object, where a repr in
+        a log line or a traceback would print it.
+        """
+        password = None
+        if self.database_password is not None:
+            password = self.database_password.get_secret_value() or None
+        elif self.database_password_file and self.database_password_file.is_file():
+            password = self.database_password_file.read_text(encoding="utf-8").strip() or None
+        if password is None:
+            return self.database_url
+        parts = urlsplit(self.database_url)
+        if parts.password:  # already carries one; don't quietly override what the operator wrote
+            return self.database_url
+        userinfo = quote(parts.username or "", safe="") + ":" + quote(password, safe="")
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return urlunsplit(parts._replace(netloc=f"{userinfo}@{host}"))
 
     @property
     def lock_path(self) -> Path:

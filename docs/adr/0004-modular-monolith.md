@@ -63,6 +63,10 @@ A gets the organization benefits of B (clear boundaries, features that can be to
 - **Easier:** deploying, debugging (one log stream), keeping a correct global rate limit, and adding features as modules.
 - **Harder:** isolating a misbehaving feature. CPU-heavy work (TTS, image generation) would starve the loop.
 - **Revisit:** when a CPU-heavy or long-running feature arrives, move it to a worker process behind a queue. Keep the chat connection and Outbox in the main process.
+- *(2026-09-22, ADR-0014)* Storage is no longer the thing standing in the way of that split. A second
+  process can now write to the database; what it would still need is a connection pool in place of the
+  single per-schema connection, and row locks on the few read-then-write paths. The decision to stay
+  one process is unchanged — it is just no longer partly forced by SQLite.
 
 ## Action Items
 

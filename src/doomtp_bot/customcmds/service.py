@@ -16,7 +16,6 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import aiosqlite
 import structlog
 
 from doomtp_bot.audit.log import write_audit
@@ -27,7 +26,7 @@ from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import to_json
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, Row, transaction
 
 log = structlog.get_logger(__name__)
 
@@ -80,7 +79,7 @@ class CustomCommandService:
 
     def __init__(
         self,
-        conn: aiosqlite.Connection,
+        conn: Connection,
         *,
         quota: int = QUOTA_PER_USER,
         on_grants_changed: Callable[[], Awaitable[None]] | None = None,
@@ -108,12 +107,12 @@ class CustomCommandService:
         return cached
 
     # ── reads ───────────────────────────────────────────────────────────────
-    async def _row(self, sql: str, params: Sequence[Any]) -> aiosqlite.Row | None:
-        async with self.conn.execute(sql, tuple(params)) as cur:
+    async def _row(self, sql: str, params: Sequence[Any]) -> Row | None:
+        async with await self.conn.execute(sql, tuple(params)) as cur:
             return await cur.fetchone()
 
     @staticmethod
-    def _command(row: aiosqlite.Row) -> CustomCommand:
+    def _command(row: Row) -> CustomCommand:
         return CustomCommand(
             id=row["id"],
             owner_user_id=row["owner_user_id"],
@@ -141,7 +140,7 @@ class CustomCommandService:
     )
 
     async def by_id(self, command_id: str, *, include_deleted: bool = False) -> CustomCommand | None:
-        row = await self._row(f"{self._SELECT} WHERE c.id = ?", (command_id,))
+        row = await self._row(f"{self._SELECT} WHERE c.id = %s", (command_id,))
         if row is None:
             return None
         command = self._command(row)
@@ -149,38 +148,38 @@ class CustomCommandService:
 
     async def by_owner(self, owner_user_id: str, name: str) -> CustomCommand | None:
         row = await self._row(
-            f"{self._SELECT} WHERE c.owner_user_id = ? AND c.name = ? AND c.status = 'active'",
+            f"{self._SELECT} WHERE c.owner_user_id = %s AND c.name = %s AND c.status = 'active'",
             (owner_user_id, name.lower()),
         )
         return self._command(row) if row else None
 
     async def owned_by(self, owner_user_id: str) -> list[CustomCommand]:
-        async with self.conn.execute(
-            f"{self._SELECT} WHERE c.owner_user_id = ? AND c.status = 'active' ORDER BY c.name",
+        async with await self.conn.execute(
+            f"{self._SELECT} WHERE c.owner_user_id = %s AND c.status = 'active' ORDER BY c.name",
             (owner_user_id,),
         ) as cur:
             return [self._command(r) for r in await cur.fetchall()]
 
     async def linked_by(self, user_id: str) -> list[tuple[str, CustomCommand]]:
-        async with self.conn.execute(
+        async with await self.conn.execute(
             f"{self._SELECT.replace('SELECT c.*', 'SELECT l.alias AS link_alias, c.*', 1)}"
             " JOIN custom_command_links l ON l.command_id = c.id"
-            " WHERE l.user_id = ? AND c.status = 'active' ORDER BY l.alias",
+            " WHERE l.user_id = %s AND c.status = 'active' ORDER BY l.alias",
             (user_id,),
         ) as cur:
             rows = await cur.fetchall()
         return [(r["link_alias"], self._command(r)) for r in rows]
 
     async def publications_in(self, channel_id: str) -> list[tuple[Publication, CustomCommand]]:
-        async with self.conn.execute(
-            f"{self._SELECT_PUB} WHERE p.channel_id = ? ORDER BY p.name",
+        async with await self.conn.execute(
+            f"{self._SELECT_PUB} WHERE p.channel_id = %s ORDER BY p.name",
             (channel_id,),
         ) as cur:
             rows = await cur.fetchall()
         return [(self._publication(r), self._command(r)) for r in rows]
 
     @staticmethod
-    def _publication(row: aiosqlite.Row) -> Publication:
+    def _publication(row: Row) -> Publication:
         return Publication(
             channel_id=row["pub_channel"],
             name=row["pub_name"],
@@ -193,7 +192,7 @@ class CustomCommandService:
 
     async def publication(self, channel_id: str, name: str) -> tuple[Publication, CustomCommand] | None:
         row = await self._row(
-            f"{self._SELECT_PUB} WHERE p.channel_id = ? AND p.name = ? AND p.status = 'active'"
+            f"{self._SELECT_PUB} WHERE p.channel_id = %s AND p.name = %s AND p.status = 'active'"
             " AND c.status = 'active'",
             (channel_id, name.lower()),
         )
@@ -208,22 +207,22 @@ class CustomCommandService:
     async def personal(self, user_id: str, alias: str) -> CustomCommand | None:
         row = await self._row(
             f"{self._SELECT} JOIN custom_command_links l ON l.command_id = c.id"
-            " WHERE l.user_id = ? AND l.alias = ? AND c.status = 'active'",
+            " WHERE l.user_id = %s AND l.alias = %s AND c.status = 'active'",
             (user_id, alias.lower()),
         )
         return self._command(row) if row else None
 
     async def versions(self, command_id: str) -> list[tuple[int, str, int]]:
-        async with self.conn.execute(
+        async with await self.conn.execute(
             "SELECT version, body, created_at FROM custom_command_versions"
-            " WHERE command_id = ? ORDER BY version DESC",
+            " WHERE command_id = %s ORDER BY version DESC",
             (command_id,),
         ) as cur:
             return [(r["version"], r["body"], r["created_at"]) for r in await cur.fetchall()]
 
     async def count_owned(self, owner_user_id: str) -> int:
         row = await self._row(
-            "SELECT COUNT(*) AS n FROM custom_commands WHERE owner_user_id = ? AND status = 'active'",
+            "SELECT COUNT(*) AS n FROM custom_commands WHERE owner_user_id = %s AND status = 'active'",
             (owner_user_id,),
         )
         return int(row["n"]) if row else 0
@@ -231,10 +230,10 @@ class CustomCommandService:
     async def usage_of(self, command_id: str) -> tuple[int, int]:
         """(links, active publications) — what an edit or delete affects."""
         links = await self._row(
-            "SELECT COUNT(*) AS n FROM custom_command_links WHERE command_id = ?", (command_id,)
+            "SELECT COUNT(*) AS n FROM custom_command_links WHERE command_id = %s", (command_id,)
         )
         pubs = await self._row(
-            "SELECT COUNT(*) AS n FROM custom_command_publications WHERE command_id = ? AND status = 'active'",
+            "SELECT COUNT(*) AS n FROM custom_command_publications WHERE command_id = %s AND status = 'active'",
             (command_id,),
         )
         return (int(links["n"]) if links else 0, int(pubs["n"]) if pubs else 0)
@@ -254,12 +253,12 @@ class CustomCommandService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO custom_commands (id, owner_user_id, owner_login, name, current_version,"
-                " created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+                " created_at, updated_at) VALUES (%s, %s, %s, %s, 1, %s, %s)",
                 (command_id, owner_user_id, owner_login, name, ts, ts),
             )
             await self._add_version(command_id, 1, body)
             await self.conn.execute(
-                "INSERT INTO custom_command_links (user_id, alias, command_id, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO custom_command_links (user_id, alias, command_id, created_at) VALUES (%s, %s, %s, %s)",
                 (owner_user_id, name, command_id, ts),
             )
             await self._audit(actor_via, owner_user_id, "cc.create", command_id, None, {"name": name})
@@ -272,7 +271,7 @@ class CustomCommandService:
         async with transaction(self.conn):
             await self._add_version(command.id, version, body)
             await self.conn.execute(
-                "UPDATE custom_commands SET current_version = ?, updated_at = ? WHERE id = ?",
+                "UPDATE custom_commands SET current_version = %s, updated_at = %s WHERE id = %s",
                 (version, now_ms(), command.id),
             )
             await self._audit(
@@ -284,7 +283,7 @@ class CustomCommandService:
 
     async def revert(self, command: CustomCommand, version: int, *, actor_via: str = "chat") -> CustomCommand:
         row = await self._row(
-            "SELECT body FROM custom_command_versions WHERE command_id = ? AND version = ?",
+            "SELECT body FROM custom_command_versions WHERE command_id = %s AND version = %s",
             (command.id, version),
         )
         if row is None:
@@ -296,15 +295,15 @@ class CustomCommandService:
         affected = await self.usage_of(command.id)
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE custom_commands SET status = 'deleted', updated_at = ? WHERE id = ?",
+                "UPDATE custom_commands SET status = 'deleted', updated_at = %s WHERE id = %s",
                 (now_ms(), command.id),
             )
             await self.conn.execute(
-                "UPDATE custom_command_publications SET status = 'orphaned' WHERE command_id = ?",
+                "UPDATE custom_command_publications SET status = 'orphaned' WHERE command_id = %s",
                 (command.id,),
             )
             await self.conn.execute(
-                "DELETE FROM publication_write_grants WHERE command_id = ?", (command.id,)
+                "DELETE FROM publication_write_grants WHERE command_id = %s", (command.id,)
             )
             await self._audit(actor_via, command.owner_user_id, "cc.delete", command.id, command.name, None)
         await self._grants_changed()
@@ -315,7 +314,7 @@ class CustomCommandService:
     ) -> CustomCommand:
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE custom_commands SET params = ?, updated_at = ? WHERE id = ?",
+                "UPDATE custom_commands SET params = %s, updated_at = %s WHERE id = %s",
                 (to_json(rows), now_ms(), command.id),
             )
             await self._audit(actor_via, command.owner_user_id, "cc.params", command.id, None, rows)
@@ -326,7 +325,7 @@ class CustomCommandService:
     async def set_summary(self, command: CustomCommand, summary: str, *, actor_via: str = "chat") -> None:
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE custom_commands SET summary = ?, updated_at = ? WHERE id = ?",
+                "UPDATE custom_commands SET summary = %s, updated_at = %s WHERE id = %s",
                 (summary, now_ms(), command.id),
             )
             await self._audit(actor_via, command.owner_user_id, "cc.describe", command.id, None, summary)
@@ -336,7 +335,7 @@ class CustomCommandService:
     ) -> None:
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE custom_commands SET visibility = ?, updated_at = ? WHERE id = ?",
+                "UPDATE custom_commands SET visibility = %s, updated_at = %s WHERE id = %s",
                 ("shareable" if shareable else "private", now_ms(), command.id),
             )
             await self._audit(
@@ -353,7 +352,7 @@ class CustomCommandService:
             raise CustomCommandError(f"you already have an alias named {alias}")
         async with transaction(self.conn):
             await self.conn.execute(
-                "INSERT INTO custom_command_links (user_id, alias, command_id, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO custom_command_links (user_id, alias, command_id, created_at) VALUES (%s, %s, %s, %s)",
                 (user_id, alias, command.id, now_ms()),
             )
             await self._audit(actor_via, user_id, "cc.link", command.id, None, {"alias": alias})
@@ -361,7 +360,7 @@ class CustomCommandService:
     async def unlink(self, *, user_id: str, alias: str, actor_via: str = "chat") -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "DELETE FROM custom_command_links WHERE user_id = ? AND alias = ?", (user_id, alias.lower())
+                "DELETE FROM custom_command_links WHERE user_id = %s AND alias = %s", (user_id, alias.lower())
             )
             if cur.rowcount:
                 await self._audit(actor_via, user_id, "cc.unlink", alias, None, None)
@@ -381,7 +380,7 @@ class CustomCommandService:
         if not NAME_RE.match(name):
             raise CustomCommandError("published names: lowercase letters, digits, _ and -, up to 32")
         existing = await self._row(
-            "SELECT command_id FROM custom_command_publications WHERE channel_id = ? AND name = ?",
+            "SELECT command_id FROM custom_command_publications WHERE channel_id = %s AND name = %s",
             (channel_id, name),
         )
         if existing is not None and existing["command_id"] != command.id:
@@ -389,7 +388,7 @@ class CustomCommandService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO custom_command_publications (channel_id, name, command_id, published_by,"
-                " status, required_role, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?)"
+                " status, required_role, created_at) VALUES (%s, %s, %s, %s, 'active', %s, %s)"
                 " ON CONFLICT (channel_id, name) DO UPDATE SET command_id = excluded.command_id,"
                 " published_by = excluded.published_by, status = 'active',"
                 " required_role = excluded.required_role",
@@ -414,7 +413,7 @@ class CustomCommandService:
     ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "UPDATE custom_command_publications SET status = ? WHERE channel_id = ? AND name = ?"
+                "UPDATE custom_command_publications SET status = %s WHERE channel_id = %s AND name = %s"
                 " AND status != 'orphaned'",
                 (status, channel_id, name.lower()),
             )
@@ -429,18 +428,18 @@ class CustomCommandService:
     ) -> str | None:
         """Remove a publication and its write grants. Returns the command id it pointed at."""
         row = await self._row(
-            "SELECT command_id FROM custom_command_publications WHERE channel_id = ? AND name = ?",
+            "SELECT command_id FROM custom_command_publications WHERE channel_id = %s AND name = %s",
             (channel_id, name.lower()),
         )
         if row is None:
             return None
         async with transaction(self.conn):
             await self.conn.execute(
-                "DELETE FROM custom_command_publications WHERE channel_id = ? AND name = ?",
+                "DELETE FROM custom_command_publications WHERE channel_id = %s AND name = %s",
                 (channel_id, name.lower()),
             )
             await self.conn.execute(
-                "DELETE FROM publication_write_grants WHERE channel_id = ? AND command_id = ?",
+                "DELETE FROM publication_write_grants WHERE channel_id = %s AND command_id = %s",
                 (channel_id, row["command_id"]),
             )
             await self._audit(
@@ -455,7 +454,7 @@ class CustomCommandService:
             return
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE custom_command_publications SET last_run_version = ? WHERE channel_id = ? AND name = ?",
+                "UPDATE custom_command_publications SET last_run_version = %s WHERE channel_id = %s AND name = %s",
                 (version, publication.channel_id, publication.name),
             )
 
@@ -467,7 +466,7 @@ class CustomCommandService:
     async def _add_version(self, command_id: str, version: int, body: str) -> None:
         await self.conn.execute(
             "INSERT INTO custom_command_versions (command_id, version, body, syntax_version, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
+            " VALUES (%s, %s, %s, %s, %s)",
             (command_id, version, body, SYNTAX_VERSION, now_ms()),
         )
         for cached in [k for k in self._asts if k[0] == command_id]:

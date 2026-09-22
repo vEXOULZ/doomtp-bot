@@ -23,7 +23,7 @@ from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
-from doomtp_bot.variables.store import SqliteVariableStore
+from doomtp_bot.variables.store import PostgresVariableStore
 from doomtp_bot.webui.auth import SESSION_COOKIE
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -86,7 +86,7 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
             "health": health,
             "channels": ChannelManager(policy, twitch, FakeSessions()),
             "twitch": twitch,
-            "variable_store": SqliteVariableStore(dbs.bot),
+            "variable_store": PostgresVariableStore(dbs.bot),
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,
         },
@@ -183,7 +183,10 @@ async def test_the_admin_page_creates_and_revokes_keys(client: httpx.AsyncClient
     secret = created.text.split("<code>dtb_")[1].split("</code>")[0]
     assert (await client.get("/api/v1/channels", headers=auth("dtb_" + secret))).status_code == 200
 
-    revoked = await client.post("/admin/keys/revoke", data={"key_id": 1, "csrf": csrf})
+    # Not a hard-coded 1: Postgres sequences are not rolled back with the transaction that used them,
+    # so ids carry across tests. Ask the page which key it is showing.
+    key_id = (await client.get("/admin")).text.split('name="key_id" value="')[1].split('"')[0]
+    revoked = await client.post("/admin/keys/revoke", data={"key_id": key_id, "csrf": csrf})
     assert revoked.status_code == 303
     assert (await client.get("/api/v1/channels", headers=auth("dtb_" + secret))).status_code == 401
 
@@ -348,24 +351,25 @@ async def test_runs_messages_and_audit_are_readable(
     chatlog = app_and_keys[0].state.chatlog
     await chatlog.execute(
         "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m1', ?, '400', 'alice', 'hello world', ?, ?)",
+        " VALUES ('m1', %s, '400', 'alice', 'hello world', %s, %s)",
         (CHANNEL_ID, now_ms(), now_ms()),
     )
     await chatlog.execute(
         "INSERT INTO command_runs (channel_id, user_id, trigger_type, expr, code, duration_ms, at)"
-        " VALUES (?, '400', 'chat', '!ping', 0, 3, ?)",
+        " VALUES (%s, '400', 'chat', '!ping', 0, 3, %s)",
         (CHANNEL_ID, now_ms()),
     )
-    await chatlog.commit()
 
     found = await client.get(
         f"/api/v1/channels/{CHANNEL_LOGIN}/messages", params={"q": "world"}, headers=auth(write_key)
     )
     assert [m["text"] for m in found.json()["messages"]] == ["hello world"]
-    bad_query = await client.get(
+    # FTS5 rejected a lone quote as a syntax error; websearch_to_tsquery is built to take whatever a
+    # person types, so an odd query now searches for nothing rather than 400ing at them (ADR-0014).
+    odd_query = await client.get(
         f"/api/v1/channels/{CHANNEL_LOGIN}/messages", params={"q": '"'}, headers=auth(write_key)
     )
-    assert bad_query.status_code == 400
+    assert odd_query.status_code == 200 and odd_query.json()["messages"] == []
 
     runs = await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/runs", headers=auth(write_key))
     assert [r["expr"] for r in runs.json()["runs"]] == ["!ping"]
@@ -382,10 +386,10 @@ async def test_channel_variables_are_readable(
 ) -> None:
     await app_and_keys[0].state.policy.repo.conn.execute(
         "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at, updated_by)"
-        " VALUES ('channel', ?, '', '', 'deaths', '7', ?, '300')",
+        " VALUES ('channel', %s, '', '', 'deaths', '7', %s, '300')",
         (CHANNEL_ID, now_ms()),
     )
-    await app_and_keys[0].state.policy.repo.conn.commit()
+
     body = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/variables", headers=auth(write_key))).json()
     assert body["variables"] == [
         {"name": "deaths", "value": 7, "updated_at": body["variables"][0]["updated_at"], "updated_by": "300"}

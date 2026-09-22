@@ -6,12 +6,11 @@ import dataclasses
 import json
 from dataclasses import dataclass, field
 
-import aiosqlite
-
 from doomtp_bot import clock
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import GLOBAL, Role
 from doomtp_bot.runtime.spec import Cooldown
+from doomtp_bot.storage.db import Connection
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +83,10 @@ class PolicySnapshot:
         return found
 
 
-async def load_snapshot(conn: aiosqlite.Connection) -> PolicySnapshot:
+async def load_snapshot(conn: Connection) -> PolicySnapshot:
     snap = PolicySnapshot()
 
-    async with conn.execute("SELECT * FROM channels") as cur:
+    async with await conn.execute("SELECT * FROM channels") as cur:
         for r in await cur.fetchall():
             snap.channels[r["channel_id"]] = ChannelSettings(
                 channel_id=r["channel_id"],
@@ -112,51 +111,55 @@ async def load_snapshot(conn: aiosqlite.Connection) -> PolicySnapshot:
                 var_admin_role=r["var_admin_role"],
             )
 
-    async with conn.execute("SELECT id, channel_id, name, rank, builtin FROM roles") as cur:
+    async with await conn.execute("SELECT id, channel_id, name, rank, builtin FROM roles") as cur:
         for r in await cur.fetchall():
             role = Role(r["id"], r["channel_id"], r["name"], r["rank"], bool(r["builtin"]))
             snap.roles_by_id[role.id] = role
             snap.roles_by_scope.setdefault(role.channel_id, {})[role.name] = role
 
     memberships: dict[str, list[Membership]] = {}
-    async with conn.execute("SELECT role_id, user_id, expires_at FROM role_members") as cur:
+    async with await conn.execute("SELECT role_id, user_id, expires_at FROM role_members") as cur:
         for r in await cur.fetchall():
             memberships.setdefault(r["user_id"], []).append(Membership(r["role_id"], r["expires_at"]))
     snap.memberships.update({k: tuple(v) for k, v in memberships.items()})
 
-    async with conn.execute("SELECT user_id FROM global_admins") as cur:
+    async with await conn.execute("SELECT user_id FROM global_admins") as cur:
         admins = frozenset(r["user_id"] for r in await cur.fetchall())
 
-    async with conn.execute("SELECT channel_id, module, enabled FROM module_toggles") as cur:
+    async with await conn.execute("SELECT channel_id, module, enabled FROM module_toggles") as cur:
         for r in await cur.fetchall():
             snap.module_toggles[(r["channel_id"], r["module"])] = bool(r["enabled"])
 
-    async with conn.execute("SELECT channel_id, command, enabled, log_level FROM command_toggles") as cur:
+    async with await conn.execute(
+        "SELECT channel_id, command, enabled, log_level FROM command_toggles"
+    ) as cur:
         for r in await cur.fetchall():
             if r["enabled"] is not None:
                 snap.command_toggles[(r["channel_id"], r["command"])] = bool(r["enabled"])
             if r["log_level"] is not None:
                 snap.command_log_levels[(r["channel_id"], r["command"])] = r["log_level"]
 
-    async with conn.execute(
+    async with await conn.execute(
         "SELECT channel_id, command, required_role, allowed_roles FROM command_rules"
     ) as cur:
         for r in await cur.fetchall():
             allowed = tuple(json.loads(r["allowed_roles"])) if r["allowed_roles"] else None
             snap.command_rules[(r["channel_id"], r["command"])] = CommandRule(r["required_role"], allowed)
 
-    async with conn.execute("SELECT channel_id, command, role, tier_s, user_s FROM cooldown_rules") as cur:
+    async with await conn.execute(
+        "SELECT channel_id, command, role, tier_s, user_s FROM cooldown_rules"
+    ) as cur:
         for r in await cur.fetchall():
             snap.cooldown_rules.setdefault((r["channel_id"], r["command"]), {})[r["role"]] = Cooldown(
                 r["tier_s"], r["user_s"]
             )
 
-    async with conn.execute("SELECT channel_id, scope, kind, expr FROM callbacks") as cur:
+    async with await conn.execute("SELECT channel_id, scope, kind, expr FROM callbacks") as cur:
         for r in await cur.fetchall():
             snap.callbacks[(r["channel_id"], r["scope"], r["kind"])] = r["expr"]
 
     ignored: dict[str, set[str]] = {}
-    async with conn.execute("SELECT channel_id, user_id FROM ignore_list") as cur:
+    async with await conn.execute("SELECT channel_id, user_id FROM ignore_list") as cur:
         for r in await cur.fetchall():
             ignored.setdefault(r["channel_id"], set()).add(r["user_id"])
     snap.ignored.update({k: frozenset(v) for k, v in ignored.items()})

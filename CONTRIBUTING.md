@@ -42,6 +42,16 @@ branch.
 
 ## Before you push
 
+The suite runs against a real Postgres rather than a stand-in (ADR-0014), so start one first. It keeps
+its data in a tmpfs and is meant to be thrown away:
+
+```bash
+docker compose --profile test up -d postgres-test
+```
+
+Point `TEST_DATABASE_URL` elsewhere if you would rather use your own server. Each run creates a database
+of its own and drops it at the end, and each test rolls back, so nothing accumulates.
+
 ```bash
 .venv/Scripts/python -m ruff check src tests scripts && .venv/Scripts/python -m ruff format src tests scripts
 ```
@@ -49,6 +59,8 @@ branch.
 ```bash
 .venv/Scripts/python -m mypy && .venv/Scripts/python -m pytest -q
 ```
+
+Two backup tests need `pg_dump` on your PATH and skip without it. CI has it; a dev box need not.
 
 CI runs those plus the web editor's tests, the committed-bundle check, the grammar and railroad diagram
 checks, and a Docker build. Nothing merges that CI hasn't agreed with.

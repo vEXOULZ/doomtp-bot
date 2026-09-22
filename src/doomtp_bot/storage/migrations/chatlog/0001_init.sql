@@ -1,140 +1,139 @@
--- chatlog.db: append-only chat log, moderation events, coverage, usage logs (architecture §3, §4.5)
+-- schema `chatlog`: append-only chat log, moderation events, coverage, usage logs (architecture §3, §4.5)
 -- Rows are never deleted in response to moderation; flags and mod_events are added instead.
--- Timestamps are INTEGER milliseconds since the Unix epoch. Users are keyed by user_id.
+-- Timestamps are bigint milliseconds since the Unix epoch. Users are keyed by user_id.
+
+-- Diacritic folding, to match what FTS5's `remove_diacritics 2` did before the Postgres port. A
+-- generated column may only call IMMUTABLE functions and unaccent() is not one, because it reads a
+-- dictionary that could in principle be changed; pinning the dictionary by name makes it safe to
+-- promise. This is the workaround the Postgres docs themselves give.
+CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public;
+
+CREATE FUNCTION chatlog_unaccent(text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS
+$$ SELECT public.unaccent('public.unaccent'::regdictionary, $1) $$;
 
 CREATE TABLE users (
-    user_id      TEXT PRIMARY KEY,
-    login        TEXT NOT NULL,
-    display_name TEXT,
-    first_seen   INTEGER NOT NULL,
-    last_seen    INTEGER NOT NULL
+    user_id      text PRIMARY KEY,
+    login        text NOT NULL,
+    display_name text,
+    first_seen   bigint NOT NULL,
+    last_seen    bigint NOT NULL
 );
 
 CREATE TABLE user_names (
-    user_id      TEXT NOT NULL,
-    login        TEXT NOT NULL,
-    display_name TEXT,
-    seen_from    INTEGER NOT NULL,
+    user_id      text NOT NULL,
+    login        text NOT NULL,
+    display_name text,
+    seen_from    bigint NOT NULL,
     PRIMARY KEY (user_id, login)
 );
 
 CREATE TABLE messages (
-    message_id        TEXT PRIMARY KEY,      -- Twitch UUID (same for EventSub and IRC backfill)
-    channel_id        TEXT NOT NULL,
-    user_id           TEXT NOT NULL,
-    user_login        TEXT NOT NULL,
-    display_name      TEXT,
-    text              TEXT NOT NULL,
-    message_type      TEXT,
-    badges            TEXT,                  -- JSON
-    fragments         TEXT,                  -- JSON
-    bits              INTEGER NOT NULL DEFAULT 0,
-    reply_parent_id   TEXT,
-    reward_id         TEXT,
-    source_channel_id TEXT,
-    is_self           INTEGER NOT NULL DEFAULT 0,
-    is_command        INTEGER NOT NULL DEFAULT 0,
-    source            TEXT NOT NULL DEFAULT 'eventsub' CHECK (source IN ('eventsub', 'recent-messages')),
-    raw               TEXT,
-    sent_at           INTEGER NOT NULL,
-    received_at       INTEGER NOT NULL,
-    deleted_at        INTEGER,
-    cleared_at        INTEGER,
-    mod_event_id      INTEGER
+    message_id        text PRIMARY KEY,      -- Twitch UUID (same for EventSub and IRC backfill)
+    channel_id        text NOT NULL,
+    user_id           text NOT NULL,
+    user_login        text NOT NULL,
+    display_name      text,
+    text              text NOT NULL,
+    message_type      text,
+    badges            text,                  -- JSON
+    fragments         text,                  -- JSON
+    bits              bigint NOT NULL DEFAULT 0,
+    reply_parent_id   text,
+    reward_id         text,
+    source_channel_id text,
+    is_self           boolean NOT NULL DEFAULT false,
+    is_command        boolean NOT NULL DEFAULT false,
+    source            text NOT NULL DEFAULT 'eventsub' CHECK (source IN ('eventsub', 'recent-messages')),
+    raw               text,
+    sent_at           bigint NOT NULL,
+    received_at       bigint NOT NULL,
+    deleted_at        bigint,
+    cleared_at        bigint,
+    mod_event_id      bigint,
+    -- Full-text search (architecture §3.2). 'simple' rather than 'english': chat is multilingual and
+    -- English stemming would mangle it. Generated, so there is nothing to keep in sync — the three
+    -- FTS5 sync triggers this replaces existed only because SQLite had no such thing.
+    tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', chatlog_unaccent(text))) STORED
 );
 CREATE INDEX ix_messages_channel_time ON messages(channel_id, sent_at);
 CREATE INDEX ix_messages_user_time ON messages(user_id, sent_at);
-
-CREATE VIRTUAL TABLE messages_fts USING fts5(
-    text,
-    content = 'messages',
-    content_rowid = 'rowid',
-    tokenize = 'unicode61 remove_diacritics 2'
-);
-
--- Keep FTS in sync. Text is never edited, but deletes are possible via an explicit admin purge.
-CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-END;
-CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
-END;
-CREATE TRIGGER messages_au AFTER UPDATE OF text ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
-    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-END;
+CREATE INDEX ix_messages_tsv ON messages USING gin (tsv);
 
 CREATE TABLE chat_notifications (
-    id         TEXT PRIMARY KEY,
-    channel_id TEXT NOT NULL,
-    user_id    TEXT,
-    type       TEXT NOT NULL,
-    payload    TEXT NOT NULL,                -- JSON
-    source     TEXT NOT NULL DEFAULT 'eventsub',
-    sent_at    INTEGER NOT NULL
+    id         text PRIMARY KEY,
+    channel_id text NOT NULL,
+    user_id    text,
+    type       text NOT NULL,
+    payload    text NOT NULL,                -- JSON
+    source     text NOT NULL DEFAULT 'eventsub',
+    sent_at    bigint NOT NULL
 );
 CREATE INDEX ix_notifications_channel_time ON chat_notifications(channel_id, sent_at);
 
 CREATE TABLE mod_events (
-    id                INTEGER PRIMARY KEY,
-    channel_id        TEXT NOT NULL,
-    type              TEXT NOT NULL CHECK (type IN ('delete', 'user_clear', 'chat_clear', 'timeout', 'ban', 'unban')),
-    message_id        TEXT,
-    target_user_id    TEXT,
-    moderator_user_id TEXT,
-    duration_s        INTEGER,
-    reason            TEXT,
-    source            TEXT NOT NULL DEFAULT 'eventsub',
-    at                INTEGER NOT NULL
+    id                bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    channel_id        text NOT NULL,
+    type              text NOT NULL CHECK (type IN ('delete', 'user_clear', 'chat_clear', 'timeout', 'ban', 'unban')),
+    message_id        text,
+    target_user_id    text,
+    moderator_user_id text,
+    duration_s        integer,
+    reason            text,
+    source            text NOT NULL DEFAULT 'eventsub',
+    at                bigint NOT NULL
 );
 CREATE INDEX ix_mod_events_channel_time ON mod_events(channel_id, at);
 
 CREATE TABLE log_sessions (
-    id         INTEGER PRIMARY KEY,
-    channel_id TEXT NOT NULL,
-    started_at INTEGER NOT NULL,
-    ended_at   INTEGER,
-    end_reason TEXT                           -- shutdown | update | crash | reconnect | part
+    id         bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    channel_id text NOT NULL,
+    started_at bigint NOT NULL,
+    ended_at   bigint,
+    end_reason text                          -- shutdown | update | crash | reconnect | part
 );
 CREATE INDEX ix_log_sessions_channel ON log_sessions(channel_id, started_at);
 
 CREATE TABLE backfill_runs (
-    id         INTEGER PRIMARY KEY,
-    channel_id TEXT NOT NULL,
-    gap_from   INTEGER NOT NULL,
-    gap_to     INTEGER NOT NULL,
-    fetched    INTEGER NOT NULL DEFAULT 0,
-    inserted   INTEGER NOT NULL DEFAULT 0,
-    complete   INTEGER NOT NULL DEFAULT 0,
-    error      TEXT,
-    at         INTEGER NOT NULL
+    id         bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    channel_id text NOT NULL,
+    gap_from   bigint NOT NULL,
+    gap_to     bigint NOT NULL,
+    fetched    integer NOT NULL DEFAULT 0,
+    inserted   integer NOT NULL DEFAULT 0,
+    complete   boolean NOT NULL DEFAULT false,
+    error      text,
+    at         bigint NOT NULL
 );
 
 CREATE TABLE command_runs (
-    id               INTEGER PRIMARY KEY,
-    channel_id       TEXT NOT NULL,
-    user_id          TEXT,
-    trigger_type     TEXT NOT NULL,          -- chat | timer | redemption | listener | api | ...
-    trigger_id       TEXT,
-    expr             TEXT NOT NULL,
-    resolved         TEXT,                   -- JSON: resolution per invocation
-    code             INTEGER NOT NULL,
-    message          TEXT,
-    duration_ms      INTEGER NOT NULL,
-    cancelled_reason TEXT,
-    at               INTEGER NOT NULL
+    id               bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    channel_id       text NOT NULL,
+    user_id          text,
+    trigger_type     text NOT NULL,          -- chat | timer | redemption | listener | api | ...
+    trigger_id       text,
+    expr             text NOT NULL,
+    resolved         text,                   -- JSON: resolution per invocation
+    code             integer NOT NULL,
+    message          text,
+    duration_ms      bigint NOT NULL,
+    cancelled_reason text,
+    run_ref          text,                   -- the runtime's run id (hex string)
+    at               bigint NOT NULL
 );
 CREATE INDEX ix_command_runs_channel_time ON command_runs(channel_id, at);
+CREATE INDEX ix_command_runs_run_ref ON command_runs(run_ref);
 
 CREATE TABLE outbound_msgs (
-    id                INTEGER PRIMARY KEY,
-    channel_id        TEXT NOT NULL,
-    run_id            INTEGER,
-    text_sent         TEXT,
-    text_prefilter    TEXT,
-    filter_hits       TEXT,                   -- JSON
-    twitch_message_id TEXT,
-    dropped_reason    TEXT,                   -- moderated | ttl | rate_limited | twitch_rejected | filter_block
-    at                INTEGER NOT NULL
+    id                bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    channel_id        text NOT NULL,
+    text_sent         text,
+    text_prefilter    text,
+    filter_hits       text,                  -- JSON
+    twitch_message_id text,
+    dropped_reason    text,                  -- moderated | ttl | rate_limited | twitch_rejected | filter_block
+    run_ref           text,
+    at                bigint NOT NULL
 );
 CREATE INDEX ix_outbound_channel_time ON outbound_msgs(channel_id, at);
+CREATE INDEX ix_outbound_run_ref ON outbound_msgs(run_ref);

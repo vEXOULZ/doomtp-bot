@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import aiosqlite
-
 from doomtp_bot.clock import now_ms
 from doomtp_bot.runtime.result import to_json
+from doomtp_bot.storage.db import Connection
 
 
 def _encode(value: Any) -> str | None:
@@ -17,7 +16,7 @@ def _encode(value: Any) -> str | None:
 
 
 async def write_audit(
-    conn: aiosqlite.Connection,
+    conn: Connection,
     *,
     action: str,
     actor_user_id: str | None,
@@ -30,7 +29,7 @@ async def write_audit(
     """Insert one audit row. Callers run this inside the same transaction as the change it records."""
     await conn.execute(
         "INSERT INTO audit_log (channel_id, actor_user_id, via, action, target, before, after, at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (
             channel_id,
             actor_user_id,

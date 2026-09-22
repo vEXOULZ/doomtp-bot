@@ -431,8 +431,8 @@ async def _audit_rows(request: Request, limit: int = 25) -> list[dict[str, Any]]
     policy = _state(request, "policy")
     if policy is None:
         return []
-    async with policy.repo.conn.execute(
-        "SELECT action, channel_id, actor_user_id, target, via, at FROM audit_log ORDER BY id DESC LIMIT ?",
+    async with await policy.repo.conn.execute(
+        "SELECT action, channel_id, actor_user_id, target, via, at FROM audit_log ORDER BY id DESC LIMIT %s",
         (limit,),
     ) as cur:
         return [

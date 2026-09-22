@@ -15,10 +15,8 @@ import json
 import secrets
 from dataclasses import dataclass
 
-import aiosqlite
-
 from doomtp_bot.clock import now_ms
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, Row, fetch_value, transaction
 
 PREFIX = "dtb_"
 SCOPES = ("read", "write")
@@ -52,7 +50,7 @@ def fingerprint(key: str) -> str:
 
 
 class ApiKeyService:
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(self, conn: Connection) -> None:
         self.conn = conn
 
     async def create(
@@ -67,43 +65,43 @@ class ApiKeyService:
             raise ApiKeyError(f"scopes must be some of: {', '.join(SCOPES)}")
         secret = PREFIX + secrets.token_urlsafe(32)
         async with transaction(self.conn):
-            cur = await self.conn.execute(
+            key_id = await fetch_value(
+                self.conn,
                 "INSERT INTO api_keys (name, key_hash, owner_user_id, scopes, created_at)"
-                " VALUES (?, ?, ?, ?, ?)",
+                " VALUES (%s, %s, %s, %s, %s) RETURNING id",
                 (name, fingerprint(secret), owner_user_id, json.dumps(sorted(scopes)), now_ms()),
             )
-        key = ApiKey(int(cur.lastrowid or 0), name, frozenset(scopes), owner_user_id, now_ms())
+        key = ApiKey(int(key_id or 0), name, frozenset(scopes), owner_user_id, now_ms())
         return key, secret
 
     async def verify(self, presented: str) -> ApiKey | None:
         """The key behind a `Authorization: Bearer …` header, or None. Records that it was used."""
         if not presented.startswith(PREFIX):
             return None
-        async with self.conn.execute(
-            f"{_SELECT} WHERE key_hash = ? AND revoked_at IS NULL", (fingerprint(presented),)
+        async with await self.conn.execute(
+            f"{_SELECT} WHERE key_hash = %s AND revoked_at IS NULL", (fingerprint(presented),)
         ) as cur:
             row = await cur.fetchone()
         if row is None:
             return None
-        await self.conn.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (now_ms(), row["id"]))
-        await self.conn.commit()
+        await self.conn.execute("UPDATE api_keys SET last_used_at = %s WHERE id = %s", (now_ms(), row["id"]))
         return _key(row)
 
     async def list(self, *, include_revoked: bool = False) -> list[ApiKey]:
         where = "" if include_revoked else " WHERE revoked_at IS NULL"
-        async with self.conn.execute(f"{_SELECT}{where} ORDER BY id") as cur:
+        async with await self.conn.execute(f"{_SELECT}{where} ORDER BY id") as cur:
             return [_key(row) for row in await cur.fetchall()]
 
     async def revoke(self, key_id: int) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                "UPDATE api_keys SET revoked_at = %s WHERE id = %s AND revoked_at IS NULL",
                 (now_ms(), key_id),
             )
         return bool(cur.rowcount)
 
 
-def _key(row: aiosqlite.Row) -> ApiKey:
+def _key(row: Row) -> ApiKey:
     return ApiKey(
         id=row["id"],
         name=row["name"],

@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-import aiosqlite
-
 from doomtp_bot.clock import now_ms
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, Row, transaction
 
 BOT_IDENTITY = "bot"
 
@@ -30,21 +28,25 @@ class StoredToken:
 
 
 class TokenStore:
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(self, conn: Connection) -> None:
         self.conn = conn
 
     async def broadcasters(self) -> list[StoredToken]:
         """Every broadcaster token, to hand to the Twitch client when it starts."""
-        async with self.conn.execute("SELECT * FROM oauth_tokens WHERE identity LIKE 'broadcaster:%'") as cur:
+        async with await self.conn.execute(
+            "SELECT * FROM oauth_tokens WHERE identity LIKE 'broadcaster:%'"
+        ) as cur:
             return [_token(row) for row in await cur.fetchall()]
 
     async def forget(self, identity: str) -> bool:
         async with transaction(self.conn):
-            cur = await self.conn.execute("DELETE FROM oauth_tokens WHERE identity = ?", (identity,))
+            cur = await self.conn.execute("DELETE FROM oauth_tokens WHERE identity = %s", (identity,))
         return bool(cur.rowcount)
 
     async def get(self, identity: str = BOT_IDENTITY) -> StoredToken | None:
-        async with self.conn.execute("SELECT * FROM oauth_tokens WHERE identity = ?", (identity,)) as cur:
+        async with await self.conn.execute(
+            "SELECT * FROM oauth_tokens WHERE identity = %s", (identity,)
+        ) as cur:
             row = await cur.fetchone()
         return _token(row) if row is not None else None
 
@@ -64,7 +66,7 @@ class TokenStore:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO oauth_tokens (identity, user_id, login, access_token, refresh_token, scopes, expires_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                 " ON CONFLICT (identity) DO UPDATE SET user_id = excluded.user_id, login = excluded.login,"
                 " access_token = excluded.access_token, refresh_token = excluded.refresh_token, scopes = excluded.scopes,"
                 " expires_at = excluded.expires_at, updated_at = excluded.updated_at",
@@ -86,12 +88,12 @@ class TokenStore:
         now = now_ms()
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE oauth_tokens SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ? WHERE user_id = ?",
+                "UPDATE oauth_tokens SET access_token = %s, refresh_token = %s, expires_at = %s, updated_at = %s WHERE user_id = %s",
                 (access_token, refresh_token, now + expires_in * 1000, now, user_id),
             )
 
 
-def _token(row: aiosqlite.Row) -> StoredToken:
+def _token(row: Row) -> StoredToken:
     return StoredToken(
         row["identity"],
         row["user_id"],

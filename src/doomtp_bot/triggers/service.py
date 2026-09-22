@@ -12,7 +12,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import aiosqlite
 import structlog
 
 from doomtp_bot.audit.log import write_audit
@@ -20,7 +19,7 @@ from doomtp_bot.clock import now_ms
 from doomtp_bot.core import capabilities
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.runtime.spec import LogLevel
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, fetch_value, transaction
 from doomtp_bot.triggers.cron import Cron, CronError, parse_cron
 
 log = structlog.get_logger(__name__)
@@ -122,7 +121,7 @@ def match_fields(pattern: re.Pattern[str], text: str) -> dict[str, Any] | None:
 class TriggerService:
     """Storage plus an in-memory copy, like the policy snapshot."""
 
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(self, conn: Connection) -> None:
         self.conn = conn
         self._by_channel: dict[str, list[Trigger]] = {}
         self._listeners: dict[int, re.Pattern[str]] = {}
@@ -132,7 +131,7 @@ class TriggerService:
         by_channel: dict[str, list[Trigger]] = {}
         listeners: dict[int, re.Pattern[str]] = {}
         crons: dict[int, Cron] = {}
-        async with self.conn.execute("SELECT * FROM triggers ORDER BY id") as cur:
+        async with await self.conn.execute("SELECT * FROM triggers ORDER BY id") as cur:
             for row in await cur.fetchall():
                 trigger = Trigger(
                     id=row["id"],
@@ -236,10 +235,11 @@ class TriggerService:
             except CronError as exc:
                 raise TriggerError(str(exc)) from exc
         async with transaction(self.conn):
-            cur = await self.conn.execute(
+            trigger_id = await fetch_value(
+                self.conn,
                 "INSERT INTO triggers (channel_id, type, match, schedule, expr, syntax_version,"
                 " run_as_rank, log_level, created_by, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (channel_id, type_, json.dumps(match or {}), json.dumps(schedule or {}), expr,
                  SYNTAX_VERSION, run_as_rank, log_level.value, created_by or "system", now_ms(), now_ms()),
             )  # fmt: skip
@@ -249,17 +249,17 @@ class TriggerService:
                 actor_user_id=created_by,
                 via="chat",
                 channel_id=channel_id,
-                target=f"{type_}:{cur.lastrowid}",
+                target=f"{type_}:{trigger_id}",
                 after={"expr": expr, "match": match or {}, "schedule": schedule or {}},
             )
         await self.reload()
-        found = next(t for t in self.in_channel(channel_id) if t.id == int(cur.lastrowid or 0))
+        found = next(t for t in self.in_channel(channel_id) if t.id == int(trigger_id or 0))
         return found
 
     async def remove(self, *, channel_id: str, trigger_id: int, actor_user_id: str | None) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "DELETE FROM triggers WHERE id = ? AND channel_id = ?", (trigger_id, channel_id)
+                "DELETE FROM triggers WHERE id = %s AND channel_id = %s", (trigger_id, channel_id)
             )
             if cur.rowcount:
                 await write_audit(
@@ -279,8 +279,8 @@ class TriggerService:
     ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "UPDATE triggers SET enabled = ?, updated_at = ? WHERE id = ? AND channel_id = ?",
-                (int(enabled), now_ms(), trigger_id, channel_id),
+                "UPDATE triggers SET enabled = %s, updated_at = %s WHERE id = %s AND channel_id = %s",
+                (enabled, now_ms(), trigger_id, channel_id),
             )
             if cur.rowcount:
                 await write_audit(
