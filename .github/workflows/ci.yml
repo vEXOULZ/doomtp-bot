@@ -58,7 +58,7 @@ jobs:
           curl -fsSL "$url" | tar -xz
           sudo install "twitch-cli_${version}_Linux_x86_64/twitch" /usr/local/bin/twitch
           twitch version || true  # the CLI's own update check can crash it after it has done the job
-      - name: Test
+      - name: Postgres client
         # pg_dump, so the backup script's tests run here rather than skipping. It must be at least the
         # server's version or it refuses to dump, and the runner ships 16 against a 17 service — so take
         # the client from PostgreSQL's own apt repo, which the runner does not have configured. Same
@@ -68,7 +68,13 @@ jobs:
           sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-client-17
+          # The runner already carries 16 and puts its bin directory ahead of the wrapper in /usr/bin,
+          # so installing 17 is not enough to be the one that runs. Name the version explicitly.
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - name: Test
+        run: |
           pg_dump --version  # name a mismatch here, not as a test failure fifty lines later
+          pg_restore --version
           uv run pytest -q
       - name: Grammar copy in sync with spec
         run: uv run python scripts/check_railroad.py
