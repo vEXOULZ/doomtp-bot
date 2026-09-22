@@ -114,7 +114,12 @@ being immediate.
 2. [x] Publish `:main` and `:<sha>` to GHCR from the `docker` job on pushes to `main`. *(2026-09-21)*
 3. [x] `compose.prod.yaml`, `deploy/update.sh` and the systemd timer, with the README section that installs
    them. *(2026-09-21)*
-4. [ ] Run it for real on the Proxmox guest: `BOT_IMAGE` set, first pull, first timed update. Needs a git
-   remote and a GHCR package to exist, neither of which does yet.
+4. [x] Publish to GHCR for real. *(2026-09-22: the repository got a remote, and the first green run pushed
+   `:main` and `:<sha>` to `ghcr.io/vexoulz/doomtp-bot`. Both tags resolve to one digest, the image pulls,
+   and it migrates and serves against a Postgres 17 container. Four red runs came first — CI had never run
+   on this repository, so its `pg_dump` version and its missing `.env` had never been exercised.)*
 5. [ ] Raise the guest's shutdown timeout (`DefaultTimeoutStopSec` and the VM's own) past the 45 s grace
    period, and install `qemu-guest-agent`, so a host reboot isn't recorded as an unclean shutdown.
+6. [ ] Run the timed update on the guest itself: `BOT_IMAGE` set, first pull, first `update.sh` tick, and
+   a second one that correctly does nothing. The publish half is proven; the pull half has only ever run
+   against a local registry standing in for GHCR.
