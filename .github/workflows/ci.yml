@@ -119,7 +119,11 @@ jobs:
         # Nothing else parses the production override, and it is only ever run on the box it matters on.
         env:
           BOT_IMAGE: ${{ steps.image.outputs.repo }}:main
-        run: docker compose -f compose.yaml -f compose.prod.yaml --profile tools config --quiet
+        run: |
+          # Services name `.env`, which is gitignored and so absent here. The example is what a server
+          # copies anyway, and this step is checking that the files parse, not what is in them.
+          cp .env.example .env
+          docker compose -f compose.yaml -f compose.prod.yaml --profile tools config --quiet
       - name: Log in to GHCR
         if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
