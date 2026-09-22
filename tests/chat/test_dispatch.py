@@ -101,8 +101,8 @@ class Harness:
         self.writer.start()
 
     async def rows(self, sql: str) -> list[tuple[object, ...]]:
-        async with self.dbs.chatlog.execute(sql) as cur:
-            return [tuple(r) for r in await cur.fetchall()]
+        async with await self.dbs.chatlog.execute(sql) as cur:
+            return [tuple(r.values()) for r in await cur.fetchall()]
 
 
 @pytest.fixture

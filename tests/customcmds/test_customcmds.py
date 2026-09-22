@@ -21,7 +21,7 @@ from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
-from doomtp_bot.variables.store import SqliteVariableStore
+from doomtp_bot.variables.store import PostgresVariableStore
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {
@@ -53,7 +53,7 @@ class Harness:
     dbs: Databases
     policy: PolicyService
     service: CustomCommandService
-    store: SqliteVariableStore
+    store: PostgresVariableStore
     access: VariableAccessPolicy
     runtime: Runtime
 
@@ -90,7 +90,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    store = SqliteVariableStore(dbs.bot)
+    store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     service = CustomCommandService(dbs.bot, on_grants_changed=access.reload)

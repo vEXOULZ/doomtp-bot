@@ -1,8 +1,13 @@
 # ADR-0003: Storage — SQLite (WAL) on a volume
 
-**Status:** Accepted (implemented; see Action Items) — 2026-09-17
+**Status:** Superseded by [ADR-0014](0014-storage-postgres-one-database-two-schemas.md) — 2026-09-22
 **Date:** 2026-09-16
 **Deciders:** Project owner
+
+> **Superseded.** The engine is Postgres; ADR-0014 has the decision and the reasoning. What survives from
+> here is everything below the engine: the split between state and log, the data model, hand-written
+> repositories over numbered migrations, and no ORM. The revisit condition this ADR set for itself —
+> "when a second writer shows up" — is what fired. Kept as the record of why SQLite was right first.
 
 ## Context
 

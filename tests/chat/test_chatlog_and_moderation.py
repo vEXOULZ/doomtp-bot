@@ -18,8 +18,8 @@ def msg(
 
 
 async def rows(dbs: Databases, sql: str) -> list[tuple[object, ...]]:
-    async with dbs.chatlog.execute(sql) as cur:
-        return [tuple(r) for r in await cur.fetchall()]
+    async with await dbs.chatlog.execute(sql) as cur:
+        return [tuple(r.values()) for r in await cur.fetchall()]
 
 
 async def test_writer_batches_and_is_idempotent(dbs: Databases) -> None:
@@ -30,10 +30,15 @@ async def test_writer_batches_and_is_idempotent(dbs: Databases) -> None:
     await writer.message(msg("m2", text="the doom slayer"))
     await writer.stop()
     assert await rows(dbs, "SELECT message_id, is_command, badges FROM messages ORDER BY message_id") == [
-        ("m1", 1, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
-        ("m2", 0, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
+        ("m1", True, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
+        ("m2", False, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
     ]
-    assert await rows(dbs, "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'slayer'") != []
+    assert (
+        await rows(
+            dbs, "SELECT message_id FROM messages WHERE tsv @@ websearch_to_tsquery('simple', 'slayer')"
+        )
+        != []
+    )
 
 
 async def test_one_bad_row_does_not_lose_the_batch(dbs: Databases) -> None:
@@ -98,7 +103,7 @@ async def test_sessions_runs_and_outbound(dbs: Databases) -> None:
 
 
 async def test_stale_sessions_closed_at_last_message_before_next_session(dbs: Databases) -> None:
-    await dbs.chatlog.executescript(
+    await dbs.chatlog.execute(
         """
         INSERT INTO log_sessions (channel_id, started_at) VALUES ('c1', 1000);  -- killed process
         INSERT INTO log_sessions (channel_id, started_at) VALUES ('c1', 5000);  -- killed again
@@ -106,7 +111,6 @@ async def test_stale_sessions_closed_at_last_message_before_next_session(dbs: Da
         INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason) VALUES ('c3', 1, 2, 'shutdown');
         """
     )
-    await dbs.chatlog.commit()
     writer = ChatLogWriter(dbs.chatlog)
     for mid, at in (("a", 1500), ("b", 4000), ("c", 6000)):
         await writer.message(msg(mid, at=at, channel="c1"))  # received_at = at + 5

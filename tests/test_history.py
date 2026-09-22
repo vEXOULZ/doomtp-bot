@@ -98,7 +98,7 @@ def test_moderation_and_notice_lines_map_to_their_events(raw: str, kind: type) -
 
 # ── gaps ───────────────────────────────────────────────────────────────────
 async def test_gaps_are_the_holes_between_sessions(dbs: Databases) -> None:
-    await dbs.chatlog.executescript(
+    await dbs.chatlog.execute(
         """
         INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason)
              VALUES ('100', 1000, 2000, 'shutdown'), ('100', 9000, 9500, 'shutdown');
@@ -107,20 +107,18 @@ async def test_gaps_are_the_holes_between_sessions(dbs: Databases) -> None:
              VALUES ('200', 1000, 2000, 'shutdown');
         """
     )
-    await dbs.chatlog.commit()
     gaps = await find_gaps(dbs.chatlog, CHANNEL_ID, CHANNEL_LOGIN)
     assert [(g.from_ms, g.to_ms) for g in gaps] == [(2000, 9000), (9500, 20000)]
 
 
 async def test_short_interruptions_are_not_gaps(dbs: Databases) -> None:
-    await dbs.chatlog.executescript(
+    await dbs.chatlog.execute(
         """
         INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason)
              VALUES ('100', 1000, 2000, 'shutdown');
         INSERT INTO log_sessions (channel_id, started_at) VALUES ('100', 2100);
         """
     )
-    await dbs.chatlog.commit()
     assert await find_gaps(dbs.chatlog, CHANNEL_ID, CHANNEL_LOGIN) == []
 
 
@@ -142,7 +140,7 @@ async def backfill_for(dbs: Databases, provider: FakeProvider, *, opted_in: bool
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
     await policy.mutate(
-        lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", int(opted_in), Actor(None, "s"))
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", opted_in, Actor(None, "s"))
     )
     writer = ChatLogWriter(dbs.chatlog)
     return BackfillService(conn=dbs.chatlog, writer=writer, provider=provider, policy=policy)
@@ -158,13 +156,17 @@ async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None
 
     assert provider.calls == [(CHANNEL_LOGIN, 0, 800)]  # asked from 5s before the gap, clamped at 0
     assert (outcome.fetched, outcome.inserted, outcome.complete) == (3, 3, True)
-    async with dbs.chatlog.execute("SELECT message_id, source, raw FROM messages") as cur:
-        rows = [tuple(r) for r in await cur.fetchall()]
+    async with await dbs.chatlog.execute("SELECT message_id, source, raw FROM messages") as cur:
+        rows = [tuple(r.values()) for r in await cur.fetchall()]
     assert rows == [("abc-123", "recent-messages", PRIVMSG)]
-    async with dbs.chatlog.execute("SELECT deleted_at FROM messages WHERE message_id = 'abc-123'") as cur:
-        assert (await cur.fetchone())[0] == 2000  # the CLEARMSG flagged it, without deleting the row
-    async with dbs.chatlog.execute("SELECT fetched, inserted, complete FROM backfill_runs") as cur:
-        assert [tuple(r) for r in await cur.fetchall()] == [(3, 3, 1)]
+    async with await dbs.chatlog.execute(
+        "SELECT deleted_at FROM messages WHERE message_id = 'abc-123'"
+    ) as cur:
+        assert (await cur.fetchone())[
+            "deleted_at"
+        ] == 2000  # the CLEARMSG flagged it, without deleting the row
+    async with await dbs.chatlog.execute("SELECT fetched, inserted, complete FROM backfill_runs") as cur:
+        assert [tuple(r.values()) for r in await cur.fetchall()] == [(3, 3, 1)]
 
 
 @pytest.mark.parametrize(
@@ -182,8 +184,8 @@ async def test_a_gap_that_cannot_be_proven_covered_is_incomplete(
     outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, gap_from, 6000))
     await service.writer.stop()
     assert not outcome.complete, why
-    async with dbs.chatlog.execute("SELECT complete FROM backfill_runs") as cur:
-        assert [r[0] for r in await cur.fetchall()] == [0]
+    async with await dbs.chatlog.execute("SELECT complete FROM backfill_runs") as cur:
+        assert [r["complete"] for r in await cur.fetchall()] == [False]
 
 
 async def test_a_service_error_leaves_the_gap_open(dbs: Databases) -> None:
@@ -191,8 +193,8 @@ async def test_a_service_error_leaves_the_gap_open(dbs: Databases) -> None:
     service = await backfill_for(dbs, provider)
     outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 0, 6000))
     assert (outcome.complete, outcome.error) == (False, "channel_not_joined")
-    async with dbs.chatlog.execute("SELECT error FROM backfill_runs") as cur:
-        assert [r[0] for r in await cur.fetchall()] == ["channel_not_joined"]
+    async with await dbs.chatlog.execute("SELECT error FROM backfill_runs") as cur:
+        assert [r["error"] for r in await cur.fetchall()] == ["channel_not_joined"]
 
 
 async def test_only_opted_in_channels_are_backfilled_or_kept_warm(dbs: Databases) -> None:
@@ -207,14 +209,13 @@ async def test_only_opted_in_channels_are_backfilled_or_kept_warm(dbs: Databases
 async def test_a_completed_gap_is_not_fetched_twice(dbs: Databases) -> None:
     provider = FakeProvider(HistoryResponse(lines=(PRIVMSG,)))
     service = await backfill_for(dbs, provider)
-    await dbs.chatlog.executescript(
+    await dbs.chatlog.execute(
         """
         INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason)
              VALUES ('100', 0, 1100, 'shutdown');
         INSERT INTO log_sessions (channel_id, started_at) VALUES ('100', 60000);
         """
     )
-    await dbs.chatlog.commit()
 
     assert len(await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN)) == 1
     assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []  # already filled

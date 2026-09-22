@@ -22,6 +22,21 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+    services:
+      # The suite runs against a real Postgres, not a stand-in (ADR-0014). Same major as compose runs.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -44,7 +59,10 @@ jobs:
           sudo install "twitch-cli_${version}_Linux_x86_64/twitch" /usr/local/bin/twitch
           twitch version || true  # the CLI's own update check can crash it after it has done the job
       - name: Test
-        run: uv run pytest -q
+        # postgresql-client so the backup script's pg_dump tests run here rather than skipping.
+        run: |
+          sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-client
+          uv run pytest -q
       - name: Grammar copy in sync with spec
         run: uv run python scripts/check_railroad.py
       - name: Railroad diagrams in sync with the grammar

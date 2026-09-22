@@ -21,6 +21,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     WEB_HOST=0.0.0.0 \
     WEB_PORT=8080 \
     LOG_FORMAT=json
+# postgresql-client is here for pg_dump: scripts/backup.py shells out to it (ADR-0014), and the
+# backup one-shot runs from this image. pg_dump must be at least the server's version, so it is
+# pinned to the major that compose runs.
+RUN apt-get update && apt-get install --yes --no-install-recommends postgresql-client-17 && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 bot && useradd --system --uid 10001 --gid bot --no-create-home bot \
     && mkdir -p /data && chown bot:bot /data
 COPY --from=build /opt/venv /opt/venv

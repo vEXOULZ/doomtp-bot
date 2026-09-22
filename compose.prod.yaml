@@ -5,6 +5,9 @@
 #
 # `deploy/update.sh` does both, and BOT_IMAGE in .env says which image and tag to run.
 services:
+  # Postgres is pinned by tag and is not built from anything, so it needs no override here. It is
+  # deliberately left out of `update.sh`'s restart: the bot's image moves on every deploy, the
+  # database's does not, and bouncing it would cost a connection drop for nothing.
   doomtp-bot:
     image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
     # Always ask the registry: the tag moves, and an image already on disk would otherwise win.

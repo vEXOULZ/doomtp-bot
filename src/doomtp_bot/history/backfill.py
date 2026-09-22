@@ -12,7 +12,6 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import aiosqlite
 import structlog
 
 from doomtp_bot.chatlog.writer import ChatLogWriter
@@ -21,7 +20,7 @@ from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotifica
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
 from doomtp_bot.history.irc_parse import IrcLine, badges, parse_line
 from doomtp_bot.history.provider import DEFAULT_LIMIT, KEEP_WARM_LIMIT, HistoryProvider
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, transaction
 
 if TYPE_CHECKING:
     from doomtp_bot.policy.service import PolicyService
@@ -54,10 +53,10 @@ class BackfillOutcome:
     error: str = ""
 
 
-async def find_gaps(conn: aiosqlite.Connection, channel_id: str, channel_login: str) -> list[Gap]:
+async def find_gaps(conn: Connection, channel_id: str, channel_login: str) -> list[Gap]:
     """Coverage gaps for one channel: between each session's end and the next session's start."""
-    async with conn.execute(
-        "SELECT started_at, ended_at FROM log_sessions WHERE channel_id = ? ORDER BY started_at",
+    async with await conn.execute(
+        "SELECT started_at, ended_at FROM log_sessions WHERE channel_id = %s ORDER BY started_at",
         (channel_id,),
     ) as cur:
         sessions = [(int(r["started_at"]), r["ended_at"]) for r in await cur.fetchall()]
@@ -126,7 +125,7 @@ class BackfillService:
     def __init__(
         self,
         *,
-        conn: aiosqlite.Connection,
+        conn: Connection,
         writer: ChatLogWriter,
         provider: HistoryProvider,
         policy: PolicyService,
@@ -209,8 +208,8 @@ class BackfillService:
                 await self.writer.moderation(event)
 
     async def _already_filled(self, gap: Gap) -> bool:
-        async with self.conn.execute(
-            "SELECT complete FROM backfill_runs WHERE channel_id = ? AND gap_from = ? AND gap_to = ?",
+        async with await self.conn.execute(
+            "SELECT complete FROM backfill_runs WHERE channel_id = %s AND gap_from = %s AND gap_to = %s",
             (gap.channel_id, gap.from_ms, gap.to_ms),
         ) as cur:
             row = await cur.fetchone()
@@ -220,9 +219,9 @@ class BackfillService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, fetched, inserted, complete,"
-                " error, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " error, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (outcome.gap.channel_id, outcome.gap.from_ms, outcome.gap.to_ms, outcome.fetched,
-                 outcome.inserted, int(outcome.complete), outcome.error or None, now_ms()),
+                 outcome.inserted, outcome.complete, outcome.error or None, now_ms()),
             )  # fmt: skip
 
     # ── keep warm (ADR-0008): the service only collects channels it's asked about ──

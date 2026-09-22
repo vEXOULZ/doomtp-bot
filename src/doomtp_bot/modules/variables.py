@@ -21,7 +21,7 @@ from doomtp_bot.runtime.values import MISSING, descend, render
 from doomtp_bot.runtime.variables import Space, VarKey, WriteOp, key_for
 
 if TYPE_CHECKING:
-    from doomtp_bot.variables.store import SqliteVariableStore
+    from doomtp_bot.variables.store import PostgresVariableStore
 
 MODULE = "variables"
 USAGE = (
@@ -75,7 +75,7 @@ def _var_admin(ctx: CommandContext) -> bool:
     return policy is not None and bool(policy.reaches_setting_role(ctx.exec, "var_admin_role"))
 
 
-def _store(ctx: CommandContext) -> SqliteVariableStore:
+def _store(ctx: CommandContext) -> PostgresVariableStore:
     return ctx.service("variable_store")  # type: ignore[no-any-return]
 
 

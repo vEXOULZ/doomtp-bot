@@ -24,13 +24,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
-
 from doomtp_bot.customcmds import params
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import connect
+from doomtp_bot.storage.db import Connection, connect
 
 PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
@@ -92,7 +90,7 @@ STARTER: tuple[Derived, ...] = (
 
 
 async def install(
-    conn: aiosqlite.Connection, *, owner_user_id: str, owner_login: str, dry_run: bool = False
+    conn: Connection, *, owner_user_id: str, owner_login: str, dry_run: bool = False
 ) -> list[str]:
     """Create or update the starter commands and publish the pack globally. Returns what it did."""
     commands = CustomCommandService(conn)
@@ -144,9 +142,9 @@ async def install(
     return done
 
 
-async def bot_account(conn: aiosqlite.Connection) -> tuple[str, str] | None:
+async def bot_account(conn: Connection) -> tuple[str, str] | None:
     """The bot's own account, which is who these commands come from."""
-    async with conn.execute("SELECT user_id, login FROM oauth_tokens WHERE identity = 'bot'") as cur:
+    async with await conn.execute("SELECT user_id, login FROM oauth_tokens WHERE identity = 'bot'") as cur:
         row = await cur.fetchone()
     return (row["user_id"], row["login"]) if row else None
 

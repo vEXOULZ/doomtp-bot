@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-import aiosqlite
-
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, Row, fetch_value, transaction
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +18,12 @@ class Actor:
     via: str = "chat"  # chat | api | web | system
 
 
+# Channel settings stored as boolean rather than 0/1 (ADR-0014).
+_BOOL_SETTINGS = frozenset({"active", "log_enabled", "history_backfill", "quiet_errors", "cc_edit_notice"})
+
+
 class PolicyRepository:
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(self, conn: Connection) -> None:
         self.conn = conn
 
     async def _audit(
@@ -38,8 +40,8 @@ class PolicyRepository:
             after=after,
         )
 
-    async def _one(self, sql: str, params: tuple[object, ...]) -> aiosqlite.Row | None:
-        async with self.conn.execute(sql, params) as cur:
+    async def _one(self, sql: str, params: tuple[object, ...]) -> Row | None:
+        async with await self.conn.execute(sql, params) as cur:
             return await cur.fetchone()
 
     # ── channels ────────────────────────────────────────────────────────────
@@ -48,17 +50,17 @@ class PolicyRepository:
     ) -> bool:
         """Create the channel row if missing. Returns True if it was created."""
         async with transaction(self.conn):
-            existing = await self._one("SELECT login FROM channels WHERE channel_id = ?", (channel_id,))
+            existing = await self._one("SELECT login FROM channels WHERE channel_id = %s", (channel_id,))
             ts = now_ms()
             if existing is not None:
                 if existing["login"] != login:
                     await self.conn.execute(
-                        "UPDATE channels SET login = ?, updated_at = ? WHERE channel_id = ?",
+                        "UPDATE channels SET login = %s, updated_at = %s WHERE channel_id = %s",
                         (login, ts, channel_id),
                     )
                 return False
             await self.conn.execute(
-                "INSERT INTO channels (channel_id, login, prefix, joined_by, added_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO channels (channel_id, login, prefix, joined_by, added_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
                 (channel_id, login, prefix, actor.user_id, ts, ts),
             )
             await self._audit(actor, "channel.join", channel_id, login, None, {"login": login})
@@ -74,15 +76,18 @@ class PolicyRepository:
             raise ValueError(f"unknown channel setting {column}")
         async with transaction(self.conn):
             before = await self._one(
-                f"SELECT {column} AS v FROM channels WHERE channel_id = ?", (channel_id,)
+                f"SELECT {column} AS v FROM channels WHERE channel_id = %s", (channel_id,)
             )
-            stored = (
-                json.dumps(sorted(value))
-                if column == "capabilities" and isinstance(value, (set, frozenset, list))
-                else value
-            )
+            if column in _BOOL_SETTINGS:
+                # These were 0/1 integers under SQLite and callers still pass either; Postgres wants a
+                # boolean and says so. Coercing here means no caller has to remember which is which.
+                stored: object = bool(value)
+            elif column == "capabilities" and isinstance(value, (set, frozenset, list)):
+                stored = json.dumps(sorted(value))
+            else:
+                stored = value
             await self.conn.execute(
-                f"UPDATE channels SET {column} = ?, updated_at = ? WHERE channel_id = ?",
+                f"UPDATE channels SET {column} = %s, updated_at = %s WHERE channel_id = %s",
                 (stored, now_ms(), channel_id),
             )
             await self._audit(
@@ -92,21 +97,23 @@ class PolicyRepository:
     # ── roles ───────────────────────────────────────────────────────────────
     async def create_role(self, channel_id: str, name: str, rank: int, actor: Actor) -> int:
         async with transaction(self.conn):
-            cur = await self.conn.execute(
-                "INSERT INTO roles (channel_id, name, rank, builtin, created_by, created_at) VALUES (?, ?, ?, 0, ?, ?)",
+            role_id = await fetch_value(
+                self.conn,
+                "INSERT INTO roles (channel_id, name, rank, builtin, created_by, created_at)"
+                " VALUES (%s, %s, %s, false, %s, %s) RETURNING id",
                 (channel_id, name, rank, actor.user_id, now_ms()),
             )
             await self._audit(actor, "role.create", channel_id, name, None, {"rank": rank})
-            return int(cur.lastrowid or 0)
+            return int(role_id or 0)
 
     async def delete_role(self, role_id: int, actor: Actor) -> None:
         async with transaction(self.conn):
             row = await self._one(
-                "SELECT channel_id, name, rank FROM roles WHERE id = ? AND builtin = 0", (role_id,)
+                "SELECT channel_id, name, rank FROM roles WHERE id = %s AND builtin = 0", (role_id,)
             )
             if row is None:
                 return
-            await self.conn.execute("DELETE FROM roles WHERE id = ?", (role_id,))
+            await self.conn.execute("DELETE FROM roles WHERE id = %s", (role_id,))
             await self._audit(
                 actor, "role.delete", row["channel_id"], row["name"], {"rank": row["rank"]}, None
             )
@@ -124,7 +131,7 @@ class PolicyRepository:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO role_members (role_id, user_id, user_login, granted_by, granted_at, expires_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)"
+                " VALUES (%s, %s, %s, %s, %s, %s)"
                 " ON CONFLICT (role_id, user_id) DO UPDATE SET user_login = excluded.user_login,"
                 " granted_by = excluded.granted_by, granted_at = excluded.granted_at, expires_at = excluded.expires_at",
                 (role_id, user_id, user_login, actor.user_id, now_ms(), expires_at),
@@ -143,7 +150,7 @@ class PolicyRepository:
     ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "DELETE FROM role_members WHERE role_id = ? AND user_id = ?", (role_id, user_id)
+                "DELETE FROM role_members WHERE role_id = %s AND user_id = %s", (role_id, user_id)
             )
             if cur.rowcount:
                 await self._audit(
@@ -152,8 +159,8 @@ class PolicyRepository:
             return bool(cur.rowcount)
 
     async def members(self, role_id: int) -> list[tuple[str, str | None, int | None]]:
-        async with self.conn.execute(
-            "SELECT user_id, user_login, expires_at FROM role_members WHERE role_id = ? ORDER BY user_login",
+        async with await self.conn.execute(
+            "SELECT user_id, user_login, expires_at FROM role_members WHERE role_id = %s ORDER BY user_login",
             (role_id,),
         ) as cur:
             return [(r["user_id"], r["user_login"], r["expires_at"]) for r in await cur.fetchall()]
@@ -162,11 +169,14 @@ class PolicyRepository:
         async with transaction(self.conn):
             if enabled:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO global_admins (user_id, user_login, granted_by, granted_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO global_admins (user_id, user_login, granted_by, granted_at) VALUES (%s, %s, %s, %s)"
+                    " ON CONFLICT (user_id) DO UPDATE SET"
+                    " user_login = EXCLUDED.user_login, granted_by = EXCLUDED.granted_by,"
+                    " granted_at = EXCLUDED.granted_at",
                     (user_id, user_login, actor.user_id or "system", now_ms()),
                 )
             else:
-                await self.conn.execute("DELETE FROM global_admins WHERE user_id = ?", (user_id,))
+                await self.conn.execute("DELETE FROM global_admins WHERE user_id = %s", (user_id,))
             await self._audit(
                 actor,
                 "admin.grant" if enabled else "admin.revoke",
@@ -183,12 +193,13 @@ class PolicyRepository:
         async with transaction(self.conn):
             if enabled is None:
                 await self.conn.execute(
-                    "DELETE FROM module_toggles WHERE channel_id = ? AND module = ?", (channel_id, module)
+                    "DELETE FROM module_toggles WHERE channel_id = %s AND module = %s", (channel_id, module)
                 )
             else:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO module_toggles (channel_id, module, enabled) VALUES (?, ?, ?)",
-                    (channel_id, module, int(enabled)),
+                    "INSERT INTO module_toggles (channel_id, module, enabled) VALUES (%s, %s, %s)"
+                    " ON CONFLICT (channel_id, module) DO UPDATE SET enabled = EXCLUDED.enabled",
+                    (channel_id, module, enabled),
                 )
             await self._audit(actor, "module.toggle", channel_id, module, None, enabled)
 
@@ -204,7 +215,7 @@ class PolicyRepository:
     ) -> None:
         async with transaction(self.conn):
             row = await self._one(
-                "SELECT enabled, log_level FROM command_toggles WHERE channel_id = ? AND command = ?",
+                "SELECT enabled, log_level FROM command_toggles WHERE channel_id = %s AND command = %s",
                 (channel_id, command),
             )
             new_enabled = (
@@ -215,12 +226,15 @@ class PolicyRepository:
             new_level = log_level if log_level is not None else (row["log_level"] if row else None)
             if new_enabled is None and new_level is None:
                 await self.conn.execute(
-                    "DELETE FROM command_toggles WHERE channel_id = ? AND command = ?", (channel_id, command)
+                    "DELETE FROM command_toggles WHERE channel_id = %s AND command = %s",
+                    (channel_id, command),
                 )
             else:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO command_toggles (channel_id, command, enabled, log_level) VALUES (?, ?, ?, ?)",
-                    (channel_id, command, None if new_enabled is None else int(new_enabled), new_level),
+                    "INSERT INTO command_toggles (channel_id, command, enabled, log_level) VALUES (%s, %s, %s, %s)"
+                    " ON CONFLICT (channel_id, command) DO UPDATE SET"
+                    " enabled = EXCLUDED.enabled, log_level = EXCLUDED.log_level",
+                    (channel_id, command, new_enabled, new_level),
                 )
             await self._audit(
                 actor,
@@ -242,11 +256,13 @@ class PolicyRepository:
         async with transaction(self.conn):
             if required_role is None and allowed_roles is None:
                 await self.conn.execute(
-                    "DELETE FROM command_rules WHERE channel_id = ? AND command = ?", (channel_id, command)
+                    "DELETE FROM command_rules WHERE channel_id = %s AND command = %s", (channel_id, command)
                 )
             else:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO command_rules (channel_id, command, required_role, allowed_roles) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO command_rules (channel_id, command, required_role, allowed_roles) VALUES (%s, %s, %s, %s)"
+                    " ON CONFLICT (channel_id, command) DO UPDATE SET"
+                    " required_role = EXCLUDED.required_role, allowed_roles = EXCLUDED.allowed_roles",
                     (
                         channel_id,
                         command,
@@ -269,12 +285,14 @@ class PolicyRepository:
         async with transaction(self.conn):
             if tier_s is None or user_s is None:
                 await self.conn.execute(
-                    "DELETE FROM cooldown_rules WHERE channel_id = ? AND command = ? AND role = ?",
+                    "DELETE FROM cooldown_rules WHERE channel_id = %s AND command = %s AND role = %s",
                     (channel_id, command, role),
                 )
             else:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO cooldown_rules (channel_id, command, role, tier_s, user_s) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO cooldown_rules (channel_id, command, role, tier_s, user_s) VALUES (%s, %s, %s, %s, %s)"
+                    " ON CONFLICT (channel_id, command, role) DO UPDATE SET"
+                    " tier_s = EXCLUDED.tier_s, user_s = EXCLUDED.user_s",
                     (channel_id, command, role, tier_s, user_s),
                 )
             await self._audit(
@@ -292,13 +310,16 @@ class PolicyRepository:
         async with transaction(self.conn):
             if expr is None:
                 await self.conn.execute(
-                    "DELETE FROM callbacks WHERE channel_id = ? AND scope = ? AND kind = ?",
+                    "DELETE FROM callbacks WHERE channel_id = %s AND scope = %s AND kind = %s",
                     (channel_id, scope, kind),
                 )
             else:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO callbacks (channel_id, scope, kind, expr, syntax_version, updated_by, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO callbacks (channel_id, scope, kind, expr, syntax_version, updated_by, updated_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT (channel_id, scope, kind) DO UPDATE SET"
+                    " expr = EXCLUDED.expr, syntax_version = EXCLUDED.syntax_version,"
+                    " updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
                     (channel_id, scope, kind, expr, syntax_version, actor.user_id, now_ms()),
                 )
             await self._audit(actor, "callback.set", channel_id, f"{scope}:{kind}", None, expr)
@@ -315,13 +336,16 @@ class PolicyRepository:
         async with transaction(self.conn):
             if ignored:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO ignore_list (channel_id, user_id, user_login, reason, added_by, added_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO ignore_list (channel_id, user_id, user_login, reason, added_by, added_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT (channel_id, user_id) DO UPDATE SET"
+                    " user_login = EXCLUDED.user_login, reason = EXCLUDED.reason,"
+                    " added_by = EXCLUDED.added_by, added_at = EXCLUDED.added_at",
                     (channel_id, user_id, user_login, reason, actor.user_id, now_ms()),
                 )
             else:
                 await self.conn.execute(
-                    "DELETE FROM ignore_list WHERE channel_id = ? AND user_id = ?", (channel_id, user_id)
+                    "DELETE FROM ignore_list WHERE channel_id = %s AND user_id = %s", (channel_id, user_id)
                 )
             await self._audit(
                 actor,

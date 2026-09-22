@@ -129,8 +129,8 @@ async def test_entries_are_stored_audited_and_applied(service: FilterService, db
     added = await service.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300")
     assert service.apply(CHANNEL, "you bad person") == ("you *** person", ["bad"])
 
-    async with dbs.bot.execute("SELECT action, target FROM audit_log") as cur:
-        assert [tuple(r) for r in await cur.fetchall()] == [("filter.add", "bad")]
+    async with await dbs.bot.execute("SELECT action, target FROM audit_log") as cur:
+        assert [tuple(r.values()) for r in await cur.fetchall()] == [("filter.add", "bad")]
 
     assert await service.set_enabled(
         channel_id=CHANNEL, entry_id=added.id, enabled=False, actor_user_id="300"
@@ -196,12 +196,12 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
     from doomtp_bot.policy.service import PolicyService
     from doomtp_bot.runtime.engine import Runtime
     from doomtp_bot.variables.access import VariableAccessPolicy
-    from doomtp_bot.variables.store import SqliteVariableStore
+    from doomtp_bot.variables.store import PostgresVariableStore
 
     policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL, "doomtp", Actor(None, "system")))
-    store = SqliteVariableStore(dbs.bot)
+    store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     commands = CustomCommandService(dbs.bot, on_grants_changed=access.reload)

@@ -6,12 +6,10 @@ import enum
 import re
 from typing import TYPE_CHECKING
 
-import aiosqlite
-
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.lang.parser import Context
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, transaction
 
 if TYPE_CHECKING:
     from doomtp_bot.policy.service import PolicyService
@@ -44,16 +42,18 @@ def actor_of(ctx: ExecContext) -> Actor:
 class VariableAccessPolicy:
     """Implements runtime.variables.VariableAccess using PolicyService ranks and publication write grants."""
 
-    def __init__(self, policy: PolicyService, conn: aiosqlite.Connection) -> None:
+    def __init__(self, policy: PolicyService, conn: Connection) -> None:
         self.policy = policy
         self.conn = conn
         self._grants: frozenset[tuple[str, str, str]] = frozenset()  # (channel, command id, variable)
 
     async def reload(self) -> None:
-        async with self.conn.execute(
+        async with await self.conn.execute(
             "SELECT channel_id, command_id, variable FROM publication_write_grants"
         ) as cur:
-            self._grants = frozenset((r[0], r[1], r[2]) for r in await cur.fetchall())
+            self._grants = frozenset(
+                (r["channel_id"], r["command_id"], r["variable"]) for r in await cur.fetchall()
+            )
 
     def _has_grant(self, ctx: ExecContext, namespace: str, name: str) -> bool:
         """Grants are per command, not per published name: republishing something else under the same
@@ -92,13 +92,15 @@ class VariableAccessPolicy:
         async with transaction(self.conn):
             if granted:
                 await self.conn.execute(
-                    "INSERT OR REPLACE INTO publication_write_grants"
-                    " (channel_id, command_id, variable, granted_by, granted_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO publication_write_grants"
+                    " (channel_id, command_id, variable, granted_by, granted_at) VALUES (%s, %s, %s, %s, %s)"
+                    " ON CONFLICT (channel_id, command_id, variable) DO UPDATE SET"
+                    " granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at",
                     (channel_id, command_id, variable, actor_user_id or "system", now_ms()),
                 )
             else:
                 await self.conn.execute(
-                    "DELETE FROM publication_write_grants WHERE channel_id = ? AND command_id = ? AND variable = ?",
+                    "DELETE FROM publication_write_grants WHERE channel_id = %s AND command_id = %s AND variable = %s",
                     (channel_id, command_id, variable),
                 )
             await write_audit(

@@ -9,7 +9,6 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
-import aiosqlite
 import structlog
 
 from doomtp_bot.clock import now_ms
@@ -21,7 +20,7 @@ from doomtp_bot.core.events import (
     ModerationAction,
     UserMessagesCleared,
 )
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, fetch_value, transaction
 
 log = structlog.get_logger(__name__)
 
@@ -35,7 +34,7 @@ Op = tuple[str, tuple[Any, ...]]
 class ChatLogWriter:
     def __init__(
         self,
-        conn: aiosqlite.Connection,
+        conn: Connection,
         *,
         flush_interval: float = FLUSH_INTERVAL_S,
         batch: int = FLUSH_BATCH,
@@ -69,15 +68,15 @@ class ChatLogWriter:
     # ── producers ───────────────────────────────────────────────────────────
     async def message(self, msg: ChatMessage, *, is_command: bool = False) -> None:
         user = (msg.user_id, msg.user_login, msg.display_name, msg.sent_at)
-        await self._put("user", user)
+        await self._put("user", (*user, msg.sent_at))
         await self._put("user_name", user)
         await self._put(
             "message",
             (
                 msg.message_id, msg.channel_id, msg.user_id, msg.user_login, msg.display_name, msg.text,
                 msg.message_type, json.dumps([asdict(b) for b in msg.badges]), json.dumps(list(msg.fragments)),
-                msg.bits, msg.reply_parent_id, msg.reward_id, msg.source_channel_id, int(msg.is_self),
-                int(is_command), msg.source, msg.raw, msg.sent_at, msg.received_at,
+                msg.bits, msg.reply_parent_id, msg.reward_id, msg.source_channel_id, msg.is_self,
+                is_command, msg.source, msg.raw, msg.sent_at, msg.received_at,
             ),
         )  # fmt: skip
 
@@ -180,10 +179,12 @@ class ChatLogWriter:
         if channel_id in self._sessions:
             return
         async with transaction(self.conn):
-            cur = await self.conn.execute(
-                "INSERT INTO log_sessions (channel_id, started_at) VALUES (?, ?)", (channel_id, now_ms())
+            session_id = await fetch_value(
+                self.conn,
+                "INSERT INTO log_sessions (channel_id, started_at) VALUES (%s, %s) RETURNING id",
+                (channel_id, now_ms()),
             )
-        self._sessions[channel_id] = int(cur.lastrowid or 0)
+        self._sessions[channel_id] = int(session_id or 0)
 
     async def end_session(self, channel_id: str, reason: str) -> None:
         session_id = self._sessions.pop(channel_id, None)
@@ -191,7 +192,7 @@ class ChatLogWriter:
             return
         async with transaction(self.conn):
             await self.conn.execute(
-                "UPDATE log_sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
+                "UPDATE log_sessions SET ended_at = %s, end_reason = %s WHERE id = %s",
                 (now_ms(), reason, session_id),
             )
 
@@ -288,35 +289,41 @@ class ChatLogWriter:
 
 _SQL: dict[str, str] = {
     "user": (
-        "INSERT INTO users (user_id, login, display_name, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)"
-        " ON CONFLICT (user_id) DO UPDATE SET login = excluded.login, display_name = excluded.display_name,"
-        " last_seen = MAX(users.last_seen, excluded.last_seen)"
+        "INSERT INTO users (user_id, login, display_name, first_seen, last_seen) VALUES (%s, %s, %s, %s, %s)"
+        " ON CONFLICT (user_id) DO UPDATE SET login = EXCLUDED.login, display_name = EXCLUDED.display_name,"
+        # GREATEST, not MAX: MAX takes two arguments in SQLite but is an aggregate in Postgres.
+        " last_seen = GREATEST(users.last_seen, EXCLUDED.last_seen)"
     ),
-    "user_name": "INSERT OR IGNORE INTO user_names (user_id, login, display_name, seen_from) VALUES (?, ?, ?, ?)",
+    "user_name": (
+        "INSERT INTO user_names (user_id, login, display_name, seen_from) VALUES (%s, %s, %s, %s)"
+        " ON CONFLICT DO NOTHING"
+    ),
     "message": (
-        "INSERT OR IGNORE INTO messages (message_id, channel_id, user_id, user_login, display_name, text, message_type,"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, display_name, text, message_type,"
         " badges, fragments, bits, reply_parent_id, reward_id, source_channel_id, is_self, is_command, source, raw,"
-        " sent_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " sent_at, received_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        # Backfill re-offers messages EventSub already logged; the first one wins (ADR-0008).
+        " ON CONFLICT DO NOTHING"
     ),
     "notification": (
-        "INSERT OR IGNORE INTO chat_notifications (id, channel_id, user_id, type, payload, source, sent_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, source, sent_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
     ),
     "mod_event": (
         "INSERT INTO mod_events (channel_id, type, message_id, target_user_id, moderator_user_id, duration_s, reason,"
-        " source, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " source, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
     ),
-    "flag_deleted": "UPDATE messages SET deleted_at = COALESCE(deleted_at, ?) WHERE message_id = ?",
+    "flag_deleted": "UPDATE messages SET deleted_at = COALESCE(deleted_at, %s) WHERE message_id = %s",
     "flag_user_cleared": (
-        "UPDATE messages SET cleared_at = ? WHERE channel_id = ? AND user_id = ? AND sent_at <= ? AND cleared_at IS NULL"
+        "UPDATE messages SET cleared_at = %s WHERE channel_id = %s AND user_id = %s AND sent_at <= %s AND cleared_at IS NULL"
     ),
-    "flag_chat_cleared": "UPDATE messages SET cleared_at = ? WHERE channel_id = ? AND sent_at <= ? AND cleared_at IS NULL",
+    "flag_chat_cleared": "UPDATE messages SET cleared_at = %s WHERE channel_id = %s AND sent_at <= %s AND cleared_at IS NULL",
     "command_run": (
         "INSERT INTO command_runs (channel_id, user_id, trigger_type, trigger_id, expr, resolved, code, message,"
-        " duration_ms, cancelled_reason, run_ref, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " duration_ms, cancelled_reason, run_ref, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     ),
     "outbound": (
         "INSERT INTO outbound_msgs (channel_id, text_sent, text_prefilter, filter_hits, twitch_message_id,"
-        " dropped_reason, run_ref, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        " dropped_reason, run_ref, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
     ),
 }

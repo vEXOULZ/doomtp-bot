@@ -23,9 +23,12 @@ if [ "$before" = "$after" ]; then
 fi
 
 echo "updating: ${before:0:19} -> ${after:0:19}"
+# Only the bot. Postgres is named as a dependency so it gets started if it is down, but an unchanged,
+# healthy one is left exactly as it is: its image never moves, and restarting it would drop the bot's
+# connections to no purpose (ADR-0014).
 # Compose stops the old container with SIGTERM and waits out stop_grace_period, which is what lets the
 # bot close its log sessions instead of leaving a gap that looks like a crash (ADR-0008).
-"${compose[@]}" up -d
+"${compose[@]}" up -d doomtp-bot
 docker image prune --force >/dev/null  # dangling images: after an update, the one it replaced
 
 # Give backfill its pass before asking what it covered.

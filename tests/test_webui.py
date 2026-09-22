@@ -274,8 +274,10 @@ async def test_toggling_a_module_from_the_admin_page(
     assert response.status_code == 303
     assert policy.snapshot.module_toggles[(CHANNEL_ID, "basic")] is False
 
-    async with policy.repo.conn.execute("SELECT via FROM audit_log WHERE action = 'module.toggle'") as cur:
-        assert [r[0] for r in await cur.fetchall()] == ["web"]  # the change is audited as a web action
+    async with await policy.repo.conn.execute(
+        "SELECT via FROM audit_log WHERE action = 'module.toggle'"
+    ) as cur:
+        assert [r["via"] for r in await cur.fetchall()] == ["web"]  # the change is audited as a web action
 
 
 async def test_a_write_without_a_valid_csrf_token_is_refused(

@@ -1,6 +1,6 @@
 # Roadmap and progress
 
-**As of 2026-09-21.** Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-22.** Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
 
@@ -10,7 +10,7 @@ hand — when an item closes, tick it in its ADR and update the row here in the 
 |-----|----------|-------|-------|
 | [0001](adr/0001-chat-transport-eventsub-websocket.md) | EventSub WebSocket in, Helix out | 6/6 | Complete |
 | [0002](adr/0002-twitch-library-twitchio.md) | TwitchIO 3.x behind an adapter | 4/4 | Complete |
-| [0003](adr/0003-storage-sqlite.md) | SQLite: `bot.db` and `chatlog.db` | 5/5 | Complete |
+| [0003](adr/0003-storage-sqlite.md) | SQLite: `bot.db` and `chatlog.db` | 5/5 | Superseded by 0014 |
 | [0004](adr/0004-modular-monolith.md) | One async process, one container | 4/4 | Complete |
 | [0005](adr/0005-command-pipeline-runtime.md) | Parse → resolve → preflight → execute | 6/6 | Complete |
 | [0006](adr/0006-permissions-cooldowns-toggles.md) | Ranked roles, two cooldowns, layered toggles | 4/5 | One deferred to v1.x |
@@ -21,13 +21,14 @@ hand — when an item closes, tick it in its ADR and update the row here in the 
 | [0011](adr/0011-parser-and-web-editor.md) | One server-side PEG parser, a local highlighter | 6/6 | Complete |
 | [0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications | 6/6 | Complete |
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 3/5 | Two need the server |
+| [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 
-**64 of 68 action items are closed.** The four that aren't are below, and none of them is waiting on
+**73 of 78 action items are closed.** The five that aren't are below, and none of them is waiting on
 code that hasn't been thought through — they are waiting on a person, a server, or a version boundary.
 
 ## What is left, and why
 
-### Waiting on the server — ADR-0013 items 4 and 5
+### Waiting on the server — ADR-0013 items 4 and 5, ADR-0014 item 10
 
 The deploy path is built and tested against a local registry standing in for GHCR: a directory holding
 only the compose files pulls the image rather than building it, `deploy/update.sh` does nothing when the
@@ -39,6 +40,10 @@ never run is the real thing:
 - **Raise the guest's shutdown timeouts** past the 45 s stop grace period, and install
   `qemu-guest-agent`. Until that is done, a host reboot can kill the bot mid-flush and the next startup
   records an unclean shutdown — a wider gap in the chat log than the deploy needed to cost.
+- **Prove a restore on the guest.** The round-trip works locally: the backup service dumps both schemas
+  from a password-protected server, and dropping the `bot` schema and running `pg_restore` brings it
+  back whole. What has not happened is the same thing on the guest's own volume, on its own cron, with a
+  copy then leaving the machine — and a backup nobody has carried off the box is half a backup.
 
 ### Waiting on a reply — ADR-0008 item 4
 
@@ -76,9 +81,14 @@ packs, derived commands, triggers and timers, the badword filter, moderation-awa
 and web UI with the CodeMirror editor, OAuth for the bot and for broadcasters, capability tiers, backups,
 and the deploy path.
 
-The test suite is 544 pytest cases plus 36 vitest ones, with the parser corpus shared between them, the
+The test suite is 550 pytest cases plus 36 vitest ones, with the parser corpus shared between them, the
 EventSub adapter pinned to payloads recorded from Twitch's own simulator, and the railroad diagrams
-checked against the grammar.
+checked against the grammar. The pytest half runs against a real Postgres rather than a stand-in — start
+one with `docker compose --profile test up -d postgres-test`, which is what CI does too.
+
+Storage moved from SQLite to Postgres on 2026-09-22 ([ADR-0014](adr/0014-storage-postgres-one-database-two-schemas.md)),
+while there was still no production data to migrate. One database, a `bot` schema and a `chatlog` schema,
+psycopg in place of aiosqlite, and full-text search on a `tsvector` column instead of FTS5.
 
 ## Next, in the order it makes sense
 

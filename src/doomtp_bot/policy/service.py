@@ -10,7 +10,6 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-import aiosqlite
 import structlog
 
 from doomtp_bot.policy.cooldowns import CooldownState, CooldownTracker
@@ -28,6 +27,7 @@ from doomtp_bot.runtime.context import ChannelInfo, Chatter
 from doomtp_bot.runtime.policy import Decision
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, LogLevel
+from doomtp_bot.storage.db import Connection
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
@@ -41,7 +41,7 @@ CALLBACK_PRUNE_AT = 10_000
 class PolicyService:
     def __init__(
         self,
-        conn: aiosqlite.Connection,
+        conn: Connection,
         *,
         bot_owner_ids: frozenset[str] = frozenset(),
         clock: Callable[[], float] = time.monotonic,

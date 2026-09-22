@@ -1,79 +1,86 @@
-"""Consistent SQLite backups with rotation (ADR-0003).
+"""Consistent Postgres backups with rotation (ADR-0014).
 
-Uses SQLite's online backup API, so it is safe to run while the bot is writing: the copy is a
-transactionally consistent snapshot, WAL and all. Run it from host cron or as a compose one-shot:
+`pg_dump` takes its snapshot inside a single transaction, so it is safe to run while the bot is
+writing. Run it from host cron or as a compose one-shot:
 
-    python scripts/backup.py --data-dir /data --keep 7
-    docker compose run --rm backup
+    python scripts/backup.py --keep 7
+    docker compose --profile tools run --rm backup
 
-Each run writes `<name>-<UTC timestamp>.db.gz` into `<data-dir>/backups` and deletes the oldest
-copies of that database beyond `--keep`.
+Each schema is dumped on its own — `bot` holds the state you cannot lose and `chatlog` holds the log
+that grows without bound, and ADR-0003 split them precisely so their backup and retention need not
+be the same decision. Each run writes `<schema>-<UTC timestamp>.dump` into `<out-dir>` and deletes
+the oldest copies of that schema beyond `--keep`. Restore one with `pg_restore`.
+
+The dumps land on the same host the database runs on, which is not a backup until a copy leaves the
+machine. Getting them off the box is still the operator's job (README, "Deploying to a server").
 """
 
 from __future__ import annotations
 
 import argparse
-import gzip
 import shutil
-import sqlite3
+import subprocess
 import sys
-import tempfile
 from collections.abc import Sequence
-from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
-DATABASES = ("bot.db", "chatlog.db")
+from doomtp_bot.config import Settings
+
+SCHEMAS = ("bot", "chatlog")
 KEEP_DEFAULT = 7
-SUFFIX = ".db.gz"
+SUFFIX = ".dump"
+
+
+class BackupError(RuntimeError):
+    """pg_dump refused, or is not installed."""
 
 
 def timestamp(now: datetime | None = None) -> str:
     return (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
 
 
-def backup_database(source: Path, out_dir: Path, *, stamp: str | None = None) -> Path:
-    """Snapshot `source` into `out_dir`, gzipped. Returns the file written."""
+def backup_schema(dsn: str, schema: str, out_dir: Path, *, stamp: str | None = None) -> Path:
+    """Dump one schema into `out_dir`. Returns the file written."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"{source.stem}-{stamp or timestamp()}{SUFFIX}"
-    with tempfile.TemporaryDirectory(dir=out_dir) as tmp:
-        raw = Path(tmp) / source.name
-        # closing(), not `with sqlite3.connect(...)`: that commits a transaction but leaves the file open,
-        # and Windows refuses to delete an open file.
-        with (
-            closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as src,
-            closing(sqlite3.connect(raw)) as dst,
-        ):
-            src.backup(dst)  # online backup API: consistent snapshot, no writer lock held
-        with raw.open("rb") as plain, gzip.open(target, "wb") as compressed:
-            shutil.copyfileobj(plain, compressed)
+    target = out_dir / f"{schema}-{stamp or timestamp()}{SUFFIX}"
+    pg_dump = shutil.which("pg_dump")
+    if pg_dump is None:
+        raise BackupError("pg_dump is not installed")
+    # --format=custom so pg_restore can pick pieces out of it, and compresses on the way; a partial
+    # file from a failed run is removed rather than left looking like a backup.
+    result = subprocess.run(
+        [pg_dump, "--dbname", dsn, "--schema", schema, "--format", "custom",
+         "--compress", "6", "--file", str(target)],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )  # fmt: skip
+    if result.returncode != 0:
+        target.unlink(missing_ok=True)
+        raise BackupError(result.stderr.strip() or f"pg_dump exited {result.returncode}")
     return target
 
 
-def rotate(out_dir: Path, name: str, keep: int) -> list[Path]:
-    """Delete all but the newest `keep` backups of one database. Returns what was removed."""
-    existing = sorted(out_dir.glob(f"{name}-*{SUFFIX}"))  # timestamps sort chronologically
+def rotate(out_dir: Path, schema: str, keep: int) -> list[Path]:
+    """Delete all but the newest `keep` backups of one schema. Returns what was removed."""
+    existing = sorted(out_dir.glob(f"{schema}-*{SUFFIX}"))  # timestamps sort chronologically
     stale = existing[: max(0, len(existing) - keep)] if keep >= 0 else []
     for path in stale:
         path.unlink()
     return stale
 
 
-def run(data_dir: Path, keep: int, databases: Sequence[str] = DATABASES) -> int:
-    out_dir = data_dir / "backups"
+def run(dsn: str, out_dir: Path, keep: int, schemas: Sequence[str] = SCHEMAS) -> int:
     failures = 0
-    for name in databases:
-        source = data_dir / name
-        if not source.is_file():
-            print(f"skipped {source}: not found", file=sys.stderr)
-            continue
+    for schema in schemas:
         try:
-            written = backup_database(source, out_dir)
-        except sqlite3.Error as exc:
+            written = backup_schema(dsn, schema, out_dir)
+        except BackupError as exc:
             failures += 1
-            print(f"failed {source}: {exc}", file=sys.stderr)
+            print(f"failed {schema}: {exc}", file=sys.stderr)
             continue
-        removed = rotate(out_dir, source.stem, keep)
+        removed = rotate(out_dir, schema, keep)
         size_mb = written.stat().st_size / 1_048_576
         print(f"{written} ({size_mb:.1f} MiB){f', removed {len(removed)} old' if removed else ''}")
     return failures
@@ -84,16 +91,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--data-dir", type=Path, default=Path("/data"), help="where bot.db and chatlog.db live"
+        "--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)"
+    )
+    parser.add_argument(
+        "--out-dir", type=Path, default=Path("/data/backups"), help="where the dumps are written"
     )
     parser.add_argument(
         "--keep",
         type=int,
         default=KEEP_DEFAULT,
-        help=f"backups to keep per database (default {KEEP_DEFAULT})",
+        help=f"backups to keep per schema (default {KEEP_DEFAULT})",
     )
     args = parser.parse_args(argv)
-    return run(args.data_dir, args.keep)
+    dsn = args.database_url or Settings().database_dsn()
+    return run(dsn, args.out_dir, args.keep)
 
 
 if __name__ == "__main__":

@@ -98,7 +98,11 @@ being immediate.
   locally now needs `--build` because they are baked into the image rather than mounted over it.
 - **Sharp edge:** **migrations are forward-only and run at startup.** Rolling back to an image from before
   a migration will meet a schema it doesn't know. Roll back to a sha from the same schema, or restore a
-  backup taken before the deploy.
+  backup taken before the deploy. *(2026-09-22, ADR-0014)* That backup is now a `pg_dump` archive restored
+  with `pg_restore`, and the database lives in its own container on its own volume — so an image rollback
+  no longer touches the data at all, which makes it safer and makes the schema mismatch the only hazard.
+- *(2026-09-22, ADR-0014)* `update.sh` restarts the bot alone. Postgres is named as a dependency so a
+  stopped one is started, but a healthy one is never bounced for a bot update.
 - **Operational:** the image is only as fresh as its base, so a monthly rebuild of `main` is worth having
   even when nothing changed. Old images are pruned by the update script when they stop being referenced.
 - **Revisit:** if deploys ever need to land on push, Option C behind a dedicated unprivileged runner is

@@ -1,4 +1,4 @@
-"""SQLite variable store (ADR-0010). Commits are atomic; channel writes and writes to other users' rows are audited."""
+"""Postgres variable store (ADR-0010). Commits are atomic; channel writes and writes to other users' rows are audited."""
 
 from __future__ import annotations
 
@@ -7,15 +7,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import aiosqlite
-
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.runtime.namespaces import CHATTER_KEY
 from doomtp_bot.runtime.result import to_json
 from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import Space, VarKey, WriteOp, apply_op
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, fetch_all, transaction
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
@@ -34,34 +32,37 @@ def _chatter_of(key: VarKey) -> str | None:
     return getattr(key, column) if column else None
 
 
-class SqliteVariableStore:
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+class PostgresVariableStore:
+    def __init__(self, conn: Connection) -> None:
         self.conn = conn
 
     async def get(self, key: VarKey) -> Any:
-        async with self.conn.execute(
-            "SELECT value FROM variables WHERE ns = ? AND key1 = ? AND key2 = ? AND key3 = ? AND name = ?",
+        async with await self.conn.execute(
+            "SELECT value FROM variables WHERE ns = %s AND key1 = %s AND key2 = %s AND key3 = %s AND name = %s",
             (key.ns, key.key1, key.key2, key.key3, key.name),
         ) as cur:
             row = await cur.fetchone()
-        return MISSING if row is None else json.loads(row[0])
+        return MISSING if row is None else json.loads(row["value"])
 
     async def names_in(self, space: Space) -> set[str]:
-        async with self.conn.execute(
-            "SELECT name FROM variables WHERE ns = ? AND key1 = ? AND key2 = ? AND key3 = ?",
+        async with await self.conn.execute(
+            "SELECT name FROM variables WHERE ns = %s AND key1 = %s AND key2 = %s AND key3 = %s",
             (space.ns, space.key1, space.key2, space.key3),
         ) as cur:
-            return {r[0] for r in await cur.fetchall()}
+            return {r["name"] for r in await cur.fetchall()}
 
     async def entries(self, space: Space) -> list[Entry]:
-        async with self.conn.execute(
+        async with await self.conn.execute(
             "SELECT name, value, updated_at, updated_by FROM variables"
-            " WHERE ns = ? AND key1 = ? AND key2 = ? AND key3 = ? ORDER BY name",
+            " WHERE ns = %s AND key1 = %s AND key2 = %s AND key3 = %s ORDER BY name",
             (space.ns, space.key1, space.key2, space.key3),
         ) as cur:
             return [
                 Entry(
-                    VarKey(space.ns, space.key1, space.key2, space.key3, r[0]), json.loads(r[1]), r[2], r[3]
+                    VarKey(space.ns, space.key1, space.key2, space.key3, r["name"]),
+                    json.loads(r["value"]),
+                    r["updated_at"],
+                    r["updated_by"],
                 )
                 for r in await cur.fetchall()
             ]
@@ -71,17 +72,20 @@ class SqliteVariableStore:
         column = CHATTER_KEY.get(ns)
         if column is None:
             raise ValueError(f"{ns} has no per-chatter rows")
-        where = ["ns = ?", "name = ?", "key1 = ?"]
+        where = ["ns = %s", "name = %s", "key1 = %s"]
         params: list[Any] = [ns, name, key1]
         if column == "key3":
-            where.append("key2 = ?")
+            where.append("key2 = %s")
             params.append(key2)
+        # Values are JSON text. SQLite told integers from reals with json_type(); jsonb calls both
+        # 'number', and casting jsonb straight to numeric sorts them without going through a float.
         sql = (
-            f"SELECT {column}, value FROM variables WHERE {' AND '.join(where)}"
-            " AND json_type(value) IN ('integer', 'real') ORDER BY CAST(value AS REAL) DESC LIMIT ?"
+            f"SELECT {column} AS member, value FROM variables WHERE {' AND '.join(where)}"
+            " AND jsonb_typeof(value::jsonb) = 'number'"
+            " ORDER BY (value::jsonb)::numeric DESC LIMIT %s"
         )
-        async with self.conn.execute(sql, (*params, limit)) as cur:
-            return [(r[0], json.loads(r[1])) for r in await cur.fetchall()]
+        rows = await fetch_all(self.conn, sql, (*params, limit))
+        return [(r["member"], json.loads(r["value"])) for r in rows]
 
     async def commit(self, ops: Iterable[WriteOp], ctx: ExecContext) -> None:
         ops = list(ops)
@@ -89,7 +93,9 @@ class SqliteVariableStore:
             return
         actor = ctx.invoker.id if ctx.invoker else None
         now = now_ms()
-        async with transaction(self.conn, immediate=True):
+        # One process, one connection, and write_lock serializes us, so read-then-write is safe here.
+        # When the web UI becomes a second writer (ADR-0014) this needs SELECT ... FOR UPDATE.
+        async with transaction(self.conn):
             for op in ops:
                 current = await self.get(op.key)
                 before = current
@@ -97,13 +103,13 @@ class SqliteVariableStore:
                 k = op.key
                 if value is MISSING:
                     await self.conn.execute(
-                        "DELETE FROM variables WHERE ns = ? AND key1 = ? AND key2 = ? AND key3 = ? AND name = ?",
+                        "DELETE FROM variables WHERE ns = %s AND key1 = %s AND key2 = %s AND key3 = %s AND name = %s",
                         (k.ns, k.key1, k.key2, k.key3, k.name),
                     )
                 else:
                     await self.conn.execute(
                         "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at, updated_by, updated_via)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                         " ON CONFLICT (ns, key1, key2, key3, name) DO UPDATE SET value = excluded.value,"
                         " updated_at = excluded.updated_at, updated_by = excluded.updated_by,"
                         " updated_via = excluded.updated_via",

@@ -21,7 +21,7 @@ from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
-from doomtp_bot.variables.store import SqliteVariableStore
+from doomtp_bot.variables.store import PostgresVariableStore
 from tests.customcmds.test_customcmds import TickingClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -33,7 +33,7 @@ BADGES = {"mod": {"moderator"}}
 class Harness:
     policy: PolicyService
     runtime: Runtime
-    store: SqliteVariableStore
+    store: PostgresVariableStore
     service: CustomCommandService
 
     def context(self, who: str) -> Any:
@@ -58,7 +58,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    store = SqliteVariableStore(dbs.bot)
+    store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     service = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
@@ -131,8 +131,8 @@ async def test_run_evaluates_without_committing_or_sending(h: Harness) -> None:
     assert report.ran and report.run_result is not None and report.run_result.ok
     assert report.would_send == "42"  # what it *would* send; the caller sends nothing
     assert await h.store.get(VarKey("channel", CHANNEL_ID, name="note")) is not 42  # noqa: F632
-    async with h.policy.repo.conn.execute("SELECT COUNT(*) FROM variables") as cur:
-        assert (await cur.fetchone())[0] == 0  # the write buffer was discarded (spec §9)
+    async with await h.policy.repo.conn.execute("SELECT COUNT(*) AS n FROM variables") as cur:
+        assert (await cur.fetchone())["n"] == 0  # the write buffer was discarded (spec §9)
 
 
 async def test_run_does_not_use_up_a_cooldown(h: Harness) -> None:

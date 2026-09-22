@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-import aiosqlite
 import structlog
 
 from doomtp_bot.audit.log import write_audit
@@ -18,7 +17,7 @@ from doomtp_bot.clock import now_ms
 from doomtp_bot.filters.matcher import Action, ChannelFilter, FilterEntry, FilterError, FilterResult, Kind
 from doomtp_bot.filters.matcher import compile_entry as _compile
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import transaction
+from doomtp_bot.storage.db import Connection, fetch_value, transaction
 
 log = structlog.get_logger(__name__)
 
@@ -27,14 +26,14 @@ ACTIONS: tuple[Action, ...] = ("mask", "replace", "tag", "block")
 
 
 class FilterService:
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(self, conn: Connection) -> None:
         self.conn = conn
         self._entries: dict[str, list[FilterEntry]] = {}
         self._compiled: dict[str, ChannelFilter] = {}
 
     async def reload(self) -> None:
         entries: dict[str, list[FilterEntry]] = {}
-        async with self.conn.execute(
+        async with await self.conn.execute(
             "SELECT id, channel_id, pattern, kind, action, category, replacement, enabled FROM filters"
         ) as cur:
             for row in await cur.fetchall():
@@ -100,9 +99,10 @@ class FilterService:
         entry = FilterEntry(0, channel_id, pattern, kind, action, category, replacement)
         _compile(entry)  # raises FilterError before anything is stored
         async with transaction(self.conn):
-            cur = await self.conn.execute(
+            entry_id = await fetch_value(
+                self.conn,
                 "INSERT INTO filters (channel_id, pattern, kind, category, action, replacement,"
-                " created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " created_by, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (channel_id, pattern, kind, category or None, action, replacement or None,
                  actor_user_id, now_ms()),
             )  # fmt: skip
@@ -116,12 +116,12 @@ class FilterService:
                 after={"kind": kind, "action": action},
             )
         await self.reload()
-        return FilterEntry(int(cur.lastrowid or 0), channel_id, pattern, kind, action, category, replacement)
+        return FilterEntry(int(entry_id or 0), channel_id, pattern, kind, action, category, replacement)
 
     async def remove(self, *, channel_id: str, entry_id: int, actor_user_id: str | None) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "DELETE FROM filters WHERE id = ? AND channel_id = ?", (entry_id, channel_id)
+                "DELETE FROM filters WHERE id = %s AND channel_id = %s", (entry_id, channel_id)
             )
             if cur.rowcount:
                 await write_audit(
@@ -141,8 +141,8 @@ class FilterService:
     ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
-                "UPDATE filters SET enabled = ? WHERE id = ? AND channel_id = ?",
-                (int(enabled), entry_id, channel_id),
+                "UPDATE filters SET enabled = %s WHERE id = %s AND channel_id = %s",
+                (enabled, entry_id, channel_id),
             )
             if cur.rowcount:
                 await write_audit(

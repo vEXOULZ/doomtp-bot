@@ -21,7 +21,7 @@ from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import VarKey, WriteOp
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import Actor, VariableAccessPolicy, actor_of
-from doomtp_bot.variables.store import SqliteVariableStore
+from doomtp_bot.variables.store import PostgresVariableStore
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {
@@ -56,7 +56,7 @@ class TickingClock:
 class Harness:
     dbs: Databases
     policy: PolicyService
-    store: SqliteVariableStore
+    store: PostgresVariableStore
     access: VariableAccessPolicy
     runtime: Runtime
 
@@ -94,7 +94,7 @@ class Harness:
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
-    store = SqliteVariableStore(dbs.bot)
+    store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
     runtime = Runtime(
@@ -190,10 +190,9 @@ async def test_publication_grants_are_exact(h: Harness) -> None:
     )
     await h.dbs.bot.execute(
         "INSERT INTO custom_command_publications (channel_id, name, command_id, published_by, created_at)"
-        " VALUES (?, 'pts', 'cc_1', '200', 0)",
+        " VALUES (%s, 'pts', 'cc_1', '200', 0)",
         (CHANNEL_ID,),
     )
-    await h.dbs.bot.commit()
     ctx = _actor_ctx(h, "foreign_pub")
     await h.access.set_grant(CHANNEL_ID, "cc_1", "channel.chatter.points", True, "200")
     assert h.access.can_write(ctx, "channel.chatter", "points") is True
@@ -207,7 +206,7 @@ async def test_publication_grants_are_exact(h: Harness) -> None:
 
 async def test_grants_do_not_follow_the_published_name(h: Harness) -> None:
     """Republishing a different command under the same name starts with no grants (ADR-0009)."""
-    await h.dbs.bot.executescript(
+    await h.dbs.bot.execute(
         """
         INSERT INTO custom_commands (id, owner_user_id, name, current_version, created_at, updated_at)
              VALUES ('cc_1', '999', 'pts', 1, 0, 0), ('cc_2', '998', 'pts', 1, 0, 0);
@@ -215,7 +214,6 @@ async def test_grants_do_not_follow_the_published_name(h: Harness) -> None:
              VALUES ('100', 'pts', 'cc_1', '200', 0);
         """
     )
-    await h.dbs.bot.commit()
     await h.access.set_grant(CHANNEL_ID, "cc_1", "channel.chatter.points", True, "200")
     granted = _actor_ctx(h, "foreign_pub")
     assert h.access.can_write(granted, "channel.chatter", "points") is True
@@ -295,8 +293,8 @@ async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
     assert await h.value("channel.chatter", CHANNEL_ID, "400", name="points") is MISSING
     await h.reply("alice", "!var set chatter.location here")
     assert await h.reply("alice", "!var del chatter.location") == "deleted chatter.location"
-    async with h.dbs.bot.execute("SELECT action, target FROM audit_log ORDER BY id") as cur:
-        audited = [(r[0], r[1]) for r in await cur.fetchall()]
+    async with await h.dbs.bot.execute("SELECT action, target FROM audit_log ORDER BY id") as cur:
+        audited = [(r["action"], r["target"]) for r in await cur.fetchall()]
     assert ("variable.delete", "channel.chatter.points@400") in audited  # admin reset of another user's row
     assert all(not t.startswith("chatter.") for _, t in audited)  # own chatter writes aren't audited
 
@@ -314,9 +312,9 @@ async def test_var_writes_are_part_of_the_run(h: Harness) -> None:
 async def test_channel_writes_audited_with_values(h: Harness) -> None:
     await h.reply("mod", "!var set channel.deaths 3")
     await h.reply("mod", "!var incr channel.deaths")
-    async with h.dbs.bot.execute(
+    async with await h.dbs.bot.execute(
         "SELECT action, before, after FROM audit_log WHERE target = 'channel.deaths'"
     ) as cur:
-        rows = [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+        rows = [(r["action"], r["before"], r["after"]) for r in await cur.fetchall()]
     assert rows == [("variable.set", None, "3"), ("variable.incr", "3", "4")]
     assert json.loads(rows[1][2]) == 4

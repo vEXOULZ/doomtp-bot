@@ -519,9 +519,9 @@ async def command_runs(
 ) -> dict[str, Any]:
     settings = _channel(request, login)
     conn = _state(request, "chatlog_db")
-    async with conn.execute(
+    async with await conn.execute(
         "SELECT user_id, trigger_type, expr, code, message, duration_ms, cancelled_reason, at"
-        " FROM command_runs WHERE channel_id = ? ORDER BY at DESC LIMIT ?",
+        " FROM command_runs WHERE channel_id = %s ORDER BY at DESC LIMIT %s",
         (settings.channel_id, limit),
     ) as cur:
         return {"runs": [dict(row) for row in await cur.fetchall()]}
@@ -539,14 +539,15 @@ async def search_messages(
     settings = _channel(request, login)
     conn = _state(request, "chatlog_db")
     try:
-        async with conn.execute(
+        async with await conn.execute(
             "SELECT m.message_id, m.user_login, m.display_name, m.text, m.sent_at, m.deleted_at"
-            " FROM messages_fts f JOIN messages m ON m.rowid = f.rowid"
-            " WHERE f.text MATCH ? AND m.channel_id = ? ORDER BY m.sent_at DESC LIMIT ?",
+            " FROM messages m"
+            " WHERE m.tsv @@ websearch_to_tsquery('simple', chatlog_unaccent(%s))"
+            " AND m.channel_id = %s ORDER BY m.sent_at DESC LIMIT %s",
             (q, settings.channel_id, limit),
         ) as cur:
             rows = [dict(row) for row in await cur.fetchall()]
-    except Exception as exc:  # an FTS syntax error is the caller's, not ours
+    except Exception as exc:  # a malformed search string is the caller's problem, not ours
         raise HTTPException(status_code=400, detail=f"bad search: {exc}") from exc
     return {"query": q, "messages": rows}
 
@@ -562,12 +563,12 @@ async def audit(
     where: str = ""
     params: list[object] = []
     if channel is not None:
-        where = " WHERE channel_id = ?"
+        where = " WHERE channel_id = %s"
         params.append(_channel(request, channel).channel_id)
     params.append(limit)
-    async with policy.repo.conn.execute(
+    async with await policy.repo.conn.execute(
         "SELECT id, channel_id, actor_user_id, via, action, target, before, after, at"
-        f" FROM audit_log{where} ORDER BY id DESC LIMIT ?",
+        f" FROM audit_log{where} ORDER BY id DESC LIMIT %s",
         tuple(params),
     ) as cur:
         rows = []
