@@ -149,7 +149,7 @@ class BackfillService:
         """(channel_id, login) for channels that opted in (ADR-0008 consent)."""
         return [
             (settings.channel_id, settings.login)
-            for settings in self.policy.snapshot.channels.values()
+            for settings in self.policy.channels()
             if settings.history_backfill and settings.active
         ]
 

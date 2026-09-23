@@ -53,7 +53,7 @@ class ChannelManager:
         self.on_joined: Callable[[str], Awaitable[object]] | None = None
 
     def active_channels(self) -> list[ChannelSettings]:
-        return [c for c in self.policy.snapshot.channels.values() if _is_joined(c)]
+        return [c for c in self.policy.channels() if _is_joined(c)]
 
     def is_active(self, channel_id: str) -> bool:
         return _is_joined(self.policy.channel_settings(channel_id))

@@ -448,7 +448,7 @@ async def test_runs_messages_and_audit_are_readable(
 async def test_channel_variables_are_readable(
     client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
 ) -> None:
-    await app_and_keys[0].state.policy.repo.conn.execute(
+    await app_and_keys[0].state.bot_db.execute(
         "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at, updated_by)"
         " VALUES ('channel', %s, '', '', 'deaths', '7', %s, '300')",
         (CHANNEL_ID, now_ms()),

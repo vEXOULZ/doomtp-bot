@@ -60,7 +60,7 @@ def _channel(request: Request, login: str | None) -> Any:
         from doomtp_bot.runtime.context import ChannelInfo
 
         return ChannelInfo(id="*", login=login or "*")
-    settings = policy.snapshot.channel_by_login(login)
+    settings = policy.channel_by_login(login)
     if settings is not None:
         streams = getattr(request.app.state, "streams", None)
         return policy.channel_info(

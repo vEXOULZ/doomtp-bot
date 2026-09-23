@@ -56,32 +56,40 @@ class PolicyService:
         bot_owner_ids: frozenset[str] = frozenset(),
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.repo = PolicyRepository(conn)
+        self._repo = PolicyRepository(conn)
         self.owners = bot_owner_ids
         self.cooldowns = CooldownTracker(clock)
-        self.snapshot = PolicySnapshot()
+        self._snapshot = PolicySnapshot()
         self._clock = clock
         self._callback_sent: dict[tuple[str, str, str, str], float] = {}
         self._write_lock = asyncio.Lock()
 
     async def reload(self) -> None:
-        self.snapshot = await load_snapshot(self.repo.conn)
+        self._snapshot = await load_snapshot(self._repo.conn)
 
     async def mutate(self, operation: Callable[[PolicyRepository], object]) -> object:
         """Run a repository write and rebuild the snapshot."""
         async with self._write_lock:
-            result = operation(self.repo)
+            result = operation(self._repo)
             if asyncio.iscoroutine(result):
                 result = await result
             await self.reload()
             return result
 
     # ── channels and chatters ───────────────────────────────────────────────
+    def channels(self) -> list[ChannelSettings]:
+        """Every channel the bot knows about, joined or parted, in no particular order."""
+        return list(self._snapshot.channels.values())
+
     def channel_settings(self, channel_id: str) -> ChannelSettings | None:
-        return self.snapshot.channels.get(channel_id)
+        return self._snapshot.channels.get(channel_id)
+
+    def channel_by_login(self, login: str) -> ChannelSettings | None:
+        """A joined or parted channel by its login, as typed: any case, with or without a leading `#`."""
+        return self._snapshot.channel_by_login(login)
 
     def channel_info(self, channel_id: str, login: str, **live: object) -> ChannelInfo:
-        s = self.snapshot.channels.get(channel_id)
+        s = self._snapshot.channels.get(channel_id)
         if s is None:
             return ChannelInfo(id=channel_id, login=login, **live)  # type: ignore[arg-type]
         return ChannelInfo(
@@ -95,10 +103,18 @@ class PolicyService:
         )
 
     def role_named(self, channel_id: str, name: str) -> Role | None:
-        return self.snapshot.role_named(channel_id, name)
+        return self._snapshot.role_named(channel_id, name)
+
+    def roles_in(self, channel_id: str) -> dict[str, Role]:
+        """The custom roles defined in one scope (a channel, or `GLOBAL`) by name, without the other."""
+        return dict(self._snapshot.roles_by_scope.get(channel_id, {}))
+
+    async def members_of(self, role: Role) -> list[tuple[str, str | None, int | None]]:
+        """(user_id, user_login, expires_at) for everyone holding the role, read from the database."""
+        return await self._repo.members(role.id)
 
     def rank_of(self, channel_id: str, role_name: str) -> int | None:
-        role = self.snapshot.role_named(channel_id, role_name)
+        role = self._snapshot.role_named(channel_id, role_name)
         if role is not None:
             return role.rank
         return BUILTIN_RANKS.get(role_name)
@@ -116,9 +132,9 @@ class PolicyService:
             names[name] = BUILTIN_RANKS[name]
         if user_id == channel_id:
             names["broadcaster"] = BUILTIN_RANKS["broadcaster"]
-        for role in self.snapshot.custom_roles_for(channel_id, user_id):
+        for role in self._snapshot.custom_roles_for(channel_id, user_id):
             names[role.name] = role.rank
-        if user_id in self.snapshot.global_admins:
+        if user_id in self._snapshot.global_admins:
             names["bot_admin"] = BOT_ADMIN_RANK
         if user_id in self.owners:
             names["bot_owner"] = BOT_OWNER_RANK
@@ -132,17 +148,19 @@ class PolicyService:
             rank=max(names.values()),
         )
 
+    def ignored_in(self, channel_id: str) -> frozenset[str]:
+        """The user ids ignored in one scope (a channel, or `GLOBAL`), not counting the other."""
+        return self._snapshot.ignored.get(channel_id, frozenset())
+
     def is_ignored(self, channel_id: str, user_id: str) -> bool:
-        return user_id in self.snapshot.ignored.get(
-            channel_id, frozenset()
-        ) or user_id in self.snapshot.ignored.get(GLOBAL, frozenset())
+        return user_id in self.ignored_in(channel_id) or user_id in self.ignored_in(GLOBAL)
 
     # ── toggles (ADR-0006 §4) ───────────────────────────────────────────────
     def is_enabled(self, channel_id: str, spec: CommandSpec) -> bool:
         module, command = spec.module, spec.key
         if not spec.toggleable:
             return True
-        toggles, commands = self.snapshot.module_toggles, self.snapshot.command_toggles
+        toggles, commands = self._snapshot.module_toggles, self._snapshot.command_toggles
         if toggles.get((GLOBAL, module)) is False:
             return False
         if commands.get((GLOBAL, command)) is False:
@@ -156,7 +174,7 @@ class PolicyService:
         return True
 
     def log_level(self, channel_id: str, spec: CommandSpec) -> LogLevel:
-        levels = self.snapshot.command_log_levels
+        levels = self._snapshot.command_log_levels
         level = levels.get((channel_id, spec.key)) or levels.get((GLOBAL, spec.key))
         return LogLevel(level) if level else spec.log_level
 
@@ -167,7 +185,7 @@ class PolicyService:
         return ctx.invoker.rank if ctx.invoker else 0
 
     def required_role(self, channel_id: str, spec: CommandSpec) -> tuple[str, tuple[str, ...] | None]:
-        rules = self.snapshot.command_rules
+        rules = self._snapshot.command_rules
         rule = rules.get((channel_id, spec.key)) or rules.get((GLOBAL, spec.key))
         required = rule.required_role if rule and rule.required_role else spec.required_role
         allowed = rule.allowed_roles if rule else None
@@ -197,8 +215,8 @@ class PolicyService:
     def cooldown_rules(self, channel_id: str, spec: CommandSpec) -> dict[str, Cooldown]:
         """Configured cooldowns per role: spec defaults, then global rules, then this channel's rules."""
         merged: dict[str, Cooldown] = dict(spec.default_cooldowns)
-        merged.update(self.snapshot.cooldown_rules.get((GLOBAL, spec.key), {}))
-        merged.update(self.snapshot.cooldown_rules.get((channel_id, spec.key), {}))
+        merged.update(self._snapshot.cooldown_rules.get((GLOBAL, spec.key), {}))
+        merged.update(self._snapshot.cooldown_rules.get((channel_id, spec.key), {}))
         return merged
 
     def cooldown_rule(self, ctx: ExecContext, spec: CommandSpec) -> tuple[str, Cooldown] | None:
@@ -297,7 +315,7 @@ class PolicyService:
             )
             if s
         ]
-        callbacks = self.snapshot.callbacks
+        callbacks = self._snapshot.callbacks
         expr = next(
             (e for ch in (ctx.channel.id, GLOBAL) for s in scopes if (e := callbacks.get((ch, s, kind)))),
             None,

@@ -52,7 +52,7 @@ def sign_of(ctx: CommandContext, channel_id: str) -> str:
     if channel_id == ctx.channel.id:
         return ctx.channel.prefix
     policy = ctx.exec.services.get("policy")
-    settings = policy.snapshot.channels.get(channel_id) if policy is not None else None
+    settings = policy.channel_settings(channel_id) if policy is not None else None
     return str(settings.prefix) if settings is not None else DEFAULT_PREFIX
 
 
