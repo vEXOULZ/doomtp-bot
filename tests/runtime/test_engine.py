@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import random
 
 import pytest
@@ -13,7 +14,7 @@ from doomtp_bot.runtime.policy import AllowAllPolicy, Decision
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.runtime.variables import InMemoryVariableStore, VarKey
-from tests.runtime.helpers import ALICE, CHANNEL, make_runtime, run
+from tests.runtime.helpers import ALICE, CHANNEL, EMOJI_SIGNS, make_runtime, run
 
 
 # ── Appendix A.2 ───────────────────────────────────────────────────────────
@@ -142,6 +143,33 @@ async def test_the_claim_just_before_running_is_the_one_that_counts() -> None:
     r = await run(make_runtime(policy=policy), "!ping")
     assert (r.result.code, r.executed) == (128, [])
     assert policy.calls == ["look", "claim"]  # looked, expanded the arguments, then claimed — and lost
+
+
+class SeesCallbackRuns(DenyAdd):
+    """DenyAdd, remembering which run each invocation it checks belongs to."""
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, str | None, bool]] = []
+
+    def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
+        self.seen.append((spec.name, ctx.trigger_id, ctx.dry_run))
+        return super().check(ctx, spec)
+
+
+class EchoCallback:
+    def callback_expr(self, ctx, command, module, kind) -> str:  # type: ignore[no-untyped-def]
+        return "!echo resting"
+
+
+async def test_a_callback_belongs_to_the_run_that_raised_it() -> None:
+    # The callback runs inside the same trigger (so its cooldowns are that trigger's buckets) and inside the
+    # same `!explain --run` (nothing it writes is kept, spec §9).
+    policy = SeesCallbackRuns()
+    r = await run(
+        make_runtime(policy=policy, callbacks=EchoCallback()), "!ping", trigger_id="7", dry_run=True
+    )
+    assert (r.result.code, r.send) == (128, "resting")
+    assert policy.seen == [("ping", "7", True), ("echo", "7", True)]
 
 
 class DenyWrites:
@@ -381,6 +409,13 @@ async def test_parse_error_visible_only_when_first_command_runnable() -> None:
     assert hidden.send is None
     unknown = await run(rt, "!nope a ; b")
     assert unknown.send is None
+
+
+@pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
+async def test_parse_error_visible_after_any_form_of_the_emoji_sign(saved: str, typed: str) -> None:
+    channel = dataclasses.replace(CHANNEL, prefix=saved)
+    shown = await run(make_runtime(policy=DenyAdd()), f"{typed}echo a ; b", channel=channel)
+    assert shown.origin == "parse" and shown.send and "E_RESERVED_OPERATOR" in shown.send
 
 
 async def test_not_a_command_returns_none() -> None:

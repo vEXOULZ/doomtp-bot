@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from doomtp_bot.filters.matcher import Action, FilterError, Kind
-from doomtp_bot.filters.service import ACTIONS, KINDS
+from doomtp_bot.filters.service import ACTIONS
 from doomtp_bot.modules._common import need, rank
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext
@@ -90,8 +90,6 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
     if action == "add":
         need(values, 3, USAGE)
         pattern = values[2]
-        if values[1].lower() not in KINDS:
-            raise CommandError(f"kind must be one of: {', '.join(KINDS)}")
         kind = cast("Kind", values[1].lower())
         rest = [w for w in values[3:] if w.lower() != "global"]
         named_action = bool(rest) and rest[0].lower() in ACTIONS
@@ -105,6 +103,7 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
                 action=entry_action,
                 replacement=replacement,
                 actor_user_id=actor_id,
+                via="chat",
             )
         except FilterError as exc:
             raise CommandError(str(exc)) from exc
@@ -118,13 +117,15 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         raise CommandError(f"give the entry id from {ctx.channel.prefix}filter list")
     entry_id = int(values[1])
     if action == "rm":
-        removed = await service.remove(channel_id=scope, entry_id=entry_id, actor_user_id=actor_id)
+        removed = await service.remove(
+            channel_id=scope, entry_id=entry_id, actor_user_id=actor_id, via="chat"
+        )
         if not removed:
             raise CommandError(f"no entry {entry_id} in this list")
         return Result.success(f"removed entry {entry_id}")
     if action in ("on", "off"):
         changed = await service.set_enabled(
-            channel_id=scope, entry_id=entry_id, enabled=action == "on", actor_user_id=actor_id
+            channel_id=scope, entry_id=entry_id, enabled=action == "on", actor_user_id=actor_id, via="chat"
         )
         if not changed:
             raise CommandError(f"no entry {entry_id} in this list")

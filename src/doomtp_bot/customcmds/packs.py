@@ -19,7 +19,11 @@ from doomtp_bot.storage.db import Connection, Row, fetch_one, transaction
 if TYPE_CHECKING:
     pass
 
-RESERVED_PACK_NAMES = frozenset({"core", "core_admin", "custom", "customcmds", "help", "basic", "variables"})
+# Every built-in module (a test keeps this in step with the registry) plus `custom`, the one custom commands
+# share. Importing the registry here instead would be circular.
+RESERVED_PACK_NAMES = frozenset(
+    {"core", "core_admin", "custom", "customcmds", "help", "basic", "triggers", "variables"}
+)
 
 
 def new_pack_id() -> str:
@@ -145,7 +149,9 @@ class PackService:
         return None
 
     # ── writes ──────────────────────────────────────────────────────────────
-    async def create(self, *, owner_user_id: str, name: str, summary: str = "") -> Pack:
+    async def create(
+        self, *, owner_user_id: str, name: str, summary: str = "", actor_via: str = "chat"
+    ) -> Pack:
         name = name.lower()
         if not NAME_RE.match(name):
             raise CustomCommandError("pack names: lowercase letters, digits, _ and -, up to 32")
@@ -160,12 +166,12 @@ class PackService:
                 " VALUES (%s, %s, %s, %s, %s, %s)",
                 (pack_id, owner_user_id, name, summary, ts, ts),
             )
-            await self.commands._audit("chat", owner_user_id, "pack.create", pack_id, None, {"name": name})
+            await self.commands._audit(actor_via, owner_user_id, "pack.create", pack_id, None, {"name": name})
         found = await self.by_id(pack_id)
         assert found is not None
         return found
 
-    async def add_member(self, pack: Pack, command: CustomCommand) -> None:
+    async def add_member(self, pack: Pack, command: CustomCommand, *, actor_via: str = "chat") -> None:
         if command.owner_user_id != pack.owner_user_id:
             raise CustomCommandError("a pack holds your own commands")
         async with transaction(self.conn):
@@ -175,10 +181,10 @@ class PackService:
                 (pack.id, command.id, now_ms()),
             )
             await self.commands._audit(
-                "chat", pack.owner_user_id, "pack.add", pack.id, None, {"command": command.name}
+                actor_via, pack.owner_user_id, "pack.add", pack.id, None, {"command": command.name}
             )
 
-    async def remove_member(self, pack: Pack, command: CustomCommand) -> bool:
+    async def remove_member(self, pack: Pack, command: CustomCommand, *, actor_via: str = "chat") -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
                 "DELETE FROM custom_command_pack_members WHERE pack_id = %s AND command_id = %s",
@@ -186,17 +192,17 @@ class PackService:
             )
             if cur.rowcount:
                 await self.commands._audit(
-                    "chat", pack.owner_user_id, "pack.rm", pack.id, {"command": command.name}, None
+                    actor_via, pack.owner_user_id, "pack.rm", pack.id, {"command": command.name}, None
                 )
             return bool(cur.rowcount)
 
-    async def delete(self, pack: Pack) -> None:
+    async def delete(self, pack: Pack, *, actor_via: str = "chat") -> None:
         async with transaction(self.conn):
             await self.conn.execute(
                 "UPDATE custom_command_packs SET status = 'deleted', updated_at = %s WHERE id = %s",
                 (now_ms(), pack.id),
             )
-            await self.commands._audit("chat", pack.owner_user_id, "pack.delete", pack.id, pack.name, None)
+            await self.commands._audit(actor_via, pack.owner_user_id, "pack.delete", pack.id, pack.name, None)
 
     async def conflicts(self, channel_id: str, pack: Pack) -> list[str]:
         """Member names already published in this channel by a different command (ADR-0012)."""
@@ -207,7 +213,9 @@ class PackService:
                 clashes.append(member.name)
         return clashes
 
-    async def publish(self, *, channel_id: str, pack: Pack, published_by: str) -> PackPublication:
+    async def publish(
+        self, *, channel_id: str, pack: Pack, published_by: str, actor_via: str = "chat"
+    ) -> PackPublication:
         clashes = await self.conflicts(channel_id, pack)
         if clashes:
             raise CustomCommandError(f"already published here by another command: {', '.join(clashes)}")
@@ -220,7 +228,7 @@ class PackService:
                 (channel_id, pack.id, published_by, now_ms()),
             )
             await self.commands._audit(
-                "chat",
+                actor_via,
                 published_by,
                 "pack.publish",
                 pack.id,
@@ -230,7 +238,9 @@ class PackService:
             )
         return PackPublication(channel_id, pack.id, published_by, "active")
 
-    async def unpublish(self, *, channel_id: str, pack: Pack, actor_user_id: str | None) -> bool:
+    async def unpublish(
+        self, *, channel_id: str, pack: Pack, actor_user_id: str | None, actor_via: str = "chat"
+    ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
                 "DELETE FROM custom_command_pack_publications WHERE channel_id = %s AND pack_id = %s",
@@ -243,7 +253,7 @@ class PackService:
                     (channel_id, pack.id),
                 )
                 await self.commands._audit(
-                    "chat",
+                    actor_via,
                     actor_user_id,
                     "pack.unpublish",
                     pack.id,

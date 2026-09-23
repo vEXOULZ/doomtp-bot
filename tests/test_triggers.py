@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ import pytest
 from doomtp_bot.core.events import ChatNotification
 from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.core.streams import StreamStatus
+from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
@@ -71,11 +73,14 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = PolicyService(dbs.bot, clock=TickingClock())
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    triggers = TriggerService(dbs.bot)
+    filters = FilterService(dbs.bot)
+    await filters.reload()
+    triggers = TriggerService(dbs.bot, filters=filters)
     await triggers.reload()
     sender = FakeSender()
     outbox = Outbox(sender, None)
     runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy, "triggers": triggers})
+    triggers.parser_params = runtime.parser_params
     runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox)
     yield Harness(policy, triggers, runner, runtime, sender, ChatActivity(), FakeClock())
 
@@ -107,6 +112,14 @@ def test_listener_patterns_are_limited() -> None:
         compile_listener("x" * 201)
     with pytest.raises(TriggerError, match="invalid regex"):
         compile_listener("(unclosed")
+
+
+def test_a_catastrophic_listener_gives_up_instead_of_stalling() -> None:
+    # Under `re` this takes seconds, and hours a few characters later, with the whole bot stalled meanwhile.
+    pattern = compile_listener("(a|aa)+$")
+    started = time.perf_counter()
+    assert match_fields(pattern, "a" * 34 + "!") is None
+    assert time.perf_counter() - started < 1
 
 
 # ── managing them from chat ────────────────────────────────────────────────
@@ -141,6 +154,27 @@ async def test_triggers_run_at_the_creators_rank(h: Harness) -> None:
     assert trigger.run_as_rank == 80  # the moderator who created it, never higher
 
 
+async def test_a_trigger_made_by_a_trigger_never_outranks_it(h: Harness) -> None:
+    # A moderator-rank listener set off by the broadcaster: what it creates gets the listener's rank, not the
+    # broadcaster's, or a trigger could hand out more than it was ever given.
+    await h.triggers.add(
+        channel_id=CHANNEL_ID,
+        type_="listener",
+        expr="trigger add raid echo raid!",
+        match={"regex": r"\bmake one\b"},
+        run_as_rank=80,
+        created_by="300",
+        prefix="!",
+        via="chat",
+    )
+    [(listener, fields)] = h.triggers.listeners_matching(CHANNEL_ID, "make one")
+    report = await h.runner.run(
+        listener, channel_login=CHANNEL_LOGIN, match=fields, user=(CHANNEL_ID, CHANNEL_LOGIN, "DoomTP")
+    )
+    assert report is not None and report.result.ok, report and report.result.message
+    assert [t.run_as_rank for t in h.triggers.in_channel(CHANNEL_ID) if t.type == "raid"] == [80]
+
+
 # ── running them ───────────────────────────────────────────────────────────
 async def test_a_listener_runs_with_its_captures(h: Harness) -> None:
     await h.say("mod", r"!trigger listen my name is (?P<name>\w+) => echo nice to meet you {match.name}")
@@ -155,6 +189,21 @@ async def test_a_listener_runs_with_its_captures(h: Harness) -> None:
         input_text="hi, my name is alice",
     )
     assert h.sender.sent == ["nice to meet you alice"]
+
+
+async def test_chat_gets_the_checks_the_service_makes(h: Harness) -> None:
+    assert h.triggers.filters is not None
+    await h.triggers.filters.add(channel_id=CHANNEL_ID, pattern="badword", actor_user_id="300", via="chat")
+    for typed, why in (
+        ("!trigger add raid echo {", "placeholder"),
+        ("!trigger add raid echo you badword", "filter rejects"),
+        ("!trigger listen hello => echo {", "placeholder"),
+        ("!timer add 15m echo badword", "filter rejects"),
+        ("!timer cron 0 18 * * fri => echo {", "placeholder"),
+    ):
+        reply = await h.say("mod", typed)
+        assert reply is not None and why in reply, typed
+    assert h.triggers.in_channel(CHANNEL_ID) == []
 
 
 async def test_an_event_trigger_reads_the_payload(h: Harness) -> None:
@@ -174,6 +223,8 @@ async def test_match_conditions_filter_events(h: Harness) -> None:
         match={"min_viewers": 50},
         run_as_rank=80,
         created_by="300",
+        prefix="!",
+        via="chat",
     )
     assert h.triggers.event_triggers(CHANNEL_ID, "raid", {"viewers": 10}) == []
     assert len(h.triggers.event_triggers(CHANNEL_ID, "raid", {"viewers": 80})) == 1
@@ -199,9 +250,17 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         match={"regex": r"\bhello\b"},
         run_as_rank=0,
         created_by="300",
+        prefix="!",
+        via="chat",
     )
     await triggers.add(
-        channel_id=CHANNEL_ID, type_="raid", expr="echo raid!", run_as_rank=0, created_by="300"
+        channel_id=CHANNEL_ID,
+        type_="raid",
+        expr="echo raid!",
+        run_as_rank=0,
+        created_by="300",
+        prefix="!",
+        via="chat",
     )
     await triggers.add(
         channel_id=CHANNEL_ID,
@@ -210,6 +269,8 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         match={"reward_id": "rw1"},
         run_as_rank=0,
         created_by="300",
+        prefix="!",
+        via="chat",
     )
     await triggers.add(
         channel_id=CHANNEL_ID,
@@ -217,6 +278,8 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         expr="echo live: {event.title}",
         run_as_rank=0,
         created_by="300",
+        prefix="!",
+        via="chat",
     )
     sender = FakeSender()
     outbox = Outbox(sender, None)

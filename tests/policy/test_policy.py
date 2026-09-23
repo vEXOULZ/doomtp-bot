@@ -23,6 +23,7 @@ from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown
 from doomtp_bot.storage.db import Databases
 from tests.fakes import FakeClock
+from tests.runtime.helpers import EMOJI_SIGNS
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 OWNER_ID = "1"
@@ -70,7 +71,10 @@ class Harness:
 
     def context(self, who: str, **ctx_kwargs: Any) -> ExecContext:
         channel = self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN, **ctx_kwargs.pop("live", {}))
-        if channel.prefix == DEFAULT_PREFIX:  # these tests type the ASCII sign, unless one was set
+        prefix = ctx_kwargs.pop("prefix", None)
+        if prefix is not None:
+            channel = dataclasses.replace(channel, prefix=prefix)
+        elif channel.prefix == DEFAULT_PREFIX:  # these tests type the ASCII sign, unless one was set
             channel = dataclasses.replace(channel, prefix="!")
         return self.runtime.make_context(
             channel=channel, invoker=self.chatter(who), rng=random.Random(1), **ctx_kwargs
@@ -222,6 +226,22 @@ async def test_help_lists_only_runnable_commands(h: Harness) -> None:
     assert mod_help is not None and "role" in mod_help and "admin" not in mod_help
     h.clock.now += 100
     assert await h.reply("viewer", "!help role") == "no command named role"
+
+
+@pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
+async def test_help_takes_a_name_with_any_form_of_the_emoji_sign(h: Harness, saved: str, typed: str) -> None:
+    report = await h.say("viewer", f'{saved}help "{typed}ping"', prefix=saved)
+    assert report is not None and report.result.code == 0
+    assert isinstance(report.result.data, dict) and report.result.data["name"] == "ping"
+
+
+@pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
+async def test_admin_commands_take_a_name_with_any_form_of_the_emoji_sign(
+    h: Harness, saved: str, typed: str
+) -> None:
+    report = await h.say("mod", f'{saved}perm show "{typed}ping"', prefix=saved)
+    assert report is not None and report.result.code == 0 and report.send is not None
+    assert report.send.startswith("ping: requires ")
 
 
 async def test_capabilities_required(h: Harness) -> None:

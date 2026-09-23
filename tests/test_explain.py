@@ -119,7 +119,14 @@ async def test_it_reports_placeholders_and_store_targets(h: Harness) -> None:
 
 
 async def test_it_shows_where_a_custom_command_came_from(h: Harness) -> None:
-    created = await h.service.create(owner_user_id="400", owner_login="alice", name="hype", body="echo hyped")
+    created = await h.service.create(
+        owner_user_id="400",
+        owner_login="alice",
+        name="hype",
+        body="echo hyped",
+        channel_id=CHANNEL_ID,
+        prefix="!",
+    )
     await h.service.publish(channel_id=CHANNEL_ID, name="hype", command=created, published_by=USERS["mod"][0])
     report = await h.explain("mod", "!hype")
     assert (report.invocations[0].source, report.invocations[0].owner) == ("publication", "alice")

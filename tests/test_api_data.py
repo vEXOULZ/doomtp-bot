@@ -64,11 +64,13 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
     policy = PolicyService(dbs.bot)
     await policy.reload()
     await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    customcmds = CustomCommandService(dbs.bot)
-    triggers = TriggerService(dbs.bot)
-    await triggers.reload()
     filters = FilterService(dbs.bot)
     await filters.reload()
+    customcmds = CustomCommandService(dbs.bot, filters=filters)
+    triggers = TriggerService(dbs.bot, filters=filters)
+    await triggers.reload()
+    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
+    triggers.parser_params = runtime.parser_params
     health = HealthRegistry()
     health.register("databases", _ok_check)
     twitch = FakeTwitch()
@@ -76,7 +78,7 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
     app = create_app(
         health,
         None,
-        runtime=Runtime(builtin_registry(), policy=policy, services={"policy": policy}),
+        runtime=runtime,
         policy=policy,
         services={
             "customcmds": customcmds,
@@ -320,12 +322,73 @@ async def test_triggers_round_trip(client: httpx.AsyncClient, write_key: str) ->
     assert gone.status_code == 200
 
 
+async def test_filter_and_trigger_writes_are_audited_as_api(
+    client: httpx.AsyncClient, write_key: str
+) -> None:
+    base = f"/api/v1/channels/{CHANNEL_LOGIN}"
+    entry_id = (
+        await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))
+    ).json()["id"]
+    await client.patch(f"{base}/filters/{entry_id}", json={"enabled": False}, headers=auth(write_key))
+    await client.delete(f"{base}/filters/{entry_id}", headers=auth(write_key))
+    trigger_id = (
+        await client.post(
+            f"{base}/triggers", json={"type": "raid", "expr": "echo hi"}, headers=auth(write_key)
+        )
+    ).json()["id"]
+    await client.patch(f"{base}/triggers/{trigger_id}", json={"enabled": False}, headers=auth(write_key))
+    await client.delete(f"{base}/triggers/{trigger_id}", headers=auth(write_key))
+
+    entries = (await client.get("/api/v1/audit", headers=auth(write_key))).json()["entries"]
+    written = {e["action"]: e["via"] for e in entries if e["action"].split(".")[0] in ("filter", "trigger")}
+    assert written == {
+        "filter.add": "api",
+        "filter.disable": "api",
+        "filter.remove": "api",
+        "trigger.add": "api",
+        "trigger.disable": "api",
+        "trigger.remove": "api",
+    }
+
+
+async def test_a_trigger_expression_is_checked_like_one_typed_in_chat(
+    client: httpx.AsyncClient, write_key: str
+) -> None:
+    base = f"/api/v1/channels/{CHANNEL_LOGIN}"
+    await client.patch(base, json={"prefix": "?"}, headers=auth(write_key))
+    await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))
+
+    def add(expr: str, type_: str = "raid", **extra: Any) -> Any:
+        return client.post(
+            f"{base}/triggers", json={"type": type_, "expr": expr, **extra}, headers=auth(write_key)
+        )
+
+    unparsable = await add("echo {")
+    assert unparsable.status_code == 400 and "placeholder" in unparsable.json()["detail"]
+    filtered = await add("echo you badword")
+    assert filtered.status_code == 400 and "filter rejects" in filtered.json()["detail"]
+    # Parsed under this channel's command sign, not the default one.
+    assert (await add("!echo hi")).status_code == 400
+    assert (await add("?echo hi")).status_code == 201
+    listener = await add("echo {", "listener", match={"regex": "hello"})
+    assert listener.status_code == 400
+    listed = (await client.get(f"{base}/triggers", headers=auth(write_key))).json()["triggers"]
+    assert [t["expr"] for t in listed] == ["?echo hi"]
+
+
 # ── custom commands, logs and the audit trail ──────────────────────────────
 async def test_publications_and_custom_commands_are_public(
     client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
 ) -> None:
     service: CustomCommandService = app_and_keys[0].state.customcmds_service
-    command = await service.create(owner_user_id="400", owner_login="alice", name="hype", body="echo hyped")
+    command = await service.create(
+        owner_user_id="400",
+        owner_login="alice",
+        name="hype",
+        body="echo hyped",
+        channel_id=CHANNEL_ID,
+        prefix="!",
+    )
     await service.publish(channel_id=CHANNEL_ID, name="hype", command=command, published_by="300")
 
     public = await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/publications")
