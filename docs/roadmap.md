@@ -28,11 +28,11 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 | [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
-| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 6/9 | Three open, all code or decisions |
+| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 7/9 | Two open, all code or decisions |
 
 **79 of 83 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
-code — they are waiting on a person or a server. **6 of the 9 architecture promises are closed**, and
-the other three are waiting on code or on a decision to drop them.
+code — they are waiting on a person or a server. **7 of the 9 architecture promises are closed**, and
+the other two are waiting on code or on a decision to drop them.
 
 ## What is left, and why
 
@@ -83,7 +83,7 @@ first.
 | `ARCH-4` | **Side-effect built-ins** (§4.3): `!timeout`, `!shoutout` and Helix writes run at their stage and check the moderation index right before acting | None exists, so the checkpoint has nothing to guard. `side_effects=True` is declared in `runtime/spec.py` and read by nobody. The starter pack's `so` is a custom command that only talks. | **Closed** 2026-09-23 — `!timeout` and `!shoutout` in a new `moderation` module, moderator role and `moderate` capability; the runtime checks the moderation index right before a `side_effects` command and `!explain --run` never runs one; each handler checks again before its Helix call. |
 | `ARCH-5` | **Enforced `reads`/`writes`** (§4.2) | Declarations only, as the architecture says — until the first built-in other than `!var` writes. Closes with `ARCH-4` or `ARCH-6`, whichever writes first. | **Closed** 2026-09-23 — `ctx.variables` lets a built-in touch only the keys its spec declares (126 otherwise); `!var` declares `*`, and tests keep it the only one and keep handlers off `ctx.exec.variables`. |
 | `ARCH-6` | **Modules `weather`, `quotes`, `logsearch`** (§12, marked `·`) | Not built. `weather` is the spec's running example (§4.2) and needs an outside API, so an ADR; `quotes` and `logsearch` need only the database. | Open |
-| `ARCH-7` | **`chatlog/queries.py` and `storage/repos/`** (§12, marked `·`) | Not on disk. Message search is written inside `api/routes/data.py`. Build them when `logsearch` needs the same query, or take them off the layout. | Open |
+| `ARCH-7` | **`chatlog/queries.py` and `storage/repos/`** (§12, marked `·`) | Not on disk. Message search is written inside `api/routes/data.py`. Build them when `logsearch` needs the same query, or take them off the layout. | **Closed** 2026-09-23 — `chatlog/queries.py` built: the API's search moved there, with a chat-safe mode that leaves out deleted, cleared, bot and command messages. `storage/repos/` taken off the layout: SQL stays with the service that owns each table. |
 | `ARCH-8` | **A pluggable `Authenticator`** (§11), so Twitch login for a per-user dashboard can come later without rework | Not there: `webui/auth.py` is the admin password and `api/keys.py` the keys, each checked where it is used. | Open |
 | `ARCH-9` | **Docs that match the code** | §7 says listeners use `re` with an RE2 check through `google-re2`; the code uses the `regex` module with a match timeout (`patterns.py`) and no RE2. The architecture's header still reads *Status: Proposed*. Both are edits to the doc, not the code. | **Closed** 2026-09-23 — §7 now describes `regex` with a 50 ms match timeout, and why not RE2; header reads *Accepted, built*, revision 5. |
 

@@ -623,7 +623,7 @@ src/doomtp_bot/
 │               instance_lock.py capabilities.py streams.py                ✔ ADR-0007 probe and stream poller
 ├─ twitch/      client.py mapping.py auth.py tokens.py    # only place importing twitchio  ✔
 ├─ history/     provider.py backfill.py irc_parse.py                       ✔ ADR-0008
-├─ chatlog/     writer.py                                                  ✔  ·  queries.py
+├─ chatlog/     writer.py queries.py                                       ✔ writes; the shared reads (search)
 ├─ moderation/  index.py automod.py                                        ✔
 ├─ lang/        parser.py (PEG, spec App. C) ast.py errors.py              ✔ syntax (versioned)
 ├─ runtime/     engine.py resolver.py preflight.py executor.py result.py   ✔
@@ -634,7 +634,7 @@ src/doomtp_bot/
 ├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ audit/       log.py                                                     ✔
-├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔  ·  repos/
+├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔ connections and migrations only
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
 │               moderation.py                                              ✔ timeout, shoutout (§4.3)
@@ -647,6 +647,13 @@ web-editor/                  # the only Node-tooled part: CodeMirror 6 → one s
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)
 docs/grammar/railroad.ebnf   # spec Appendix D, CI-checked copy for railroad diagrams
 ```
+
+*Changed in revision 5:* the layout used to plan a `storage/repos/` package of repositories. SQL lives
+with the service that owns the table instead (`policy/repository.py`, `customcmds/service.py`,
+`variables/store.py`, `chatlog/writer.py` …), because one service per table is how the code is split
+and a separate repository layer would only forward calls. `storage/` keeps what every service shares:
+connections and migrations. Reads that more than one caller needs get their own module beside the
+owner, as `chatlog/queries.py` does for the full-text search the API and `logsearch` share.
 
 ---
 

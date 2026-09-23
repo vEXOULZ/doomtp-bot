@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.audit.log import read_audit
+from doomtp_bot.chatlog import queries
 from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
@@ -547,24 +548,13 @@ async def command_runs(
 async def search_messages(
     request: Request,
     login: str,
-    q: str = Query(min_length=1, max_length=200),
+    q: str = Query(min_length=1, max_length=queries.MAX_QUERY_CHARS),
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
     _: str = READ,
 ) -> dict[str, Any]:
     """Full-text search over the channel's log (architecture §3.3)."""
     settings = _channel(request, login)
-    conn = _state(request, "chatlog_db")
-    try:
-        async with await conn.execute(
-            "SELECT m.message_id, m.user_login, m.display_name, m.text, m.sent_at, m.deleted_at"
-            " FROM messages m"
-            " WHERE m.tsv @@ websearch_to_tsquery('simple', chatlog_unaccent(%s))"
-            " AND m.channel_id = %s ORDER BY m.sent_at DESC LIMIT %s",
-            (q, settings.channel_id, limit),
-        ) as cur:
-            rows = [dict(row) for row in await cur.fetchall()]
-    except Exception as exc:  # a malformed search string is the caller's problem, not ours
-        raise HTTPException(status_code=400, detail=f"bad search: {exc}") from exc
+    rows = await queries.search_messages(_state(request, "chatlog_db"), settings.channel_id, q, limit=limit)
     return {"query": q, "messages": rows}
 
 
