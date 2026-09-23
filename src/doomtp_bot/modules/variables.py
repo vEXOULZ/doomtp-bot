@@ -6,6 +6,7 @@ so they commit atomically with the rest of the line.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from typing import TYPE_CHECKING, Any
@@ -143,10 +144,13 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         space_key = key_for(ctx.exec, ns, name)
         rows = await _store(ctx).top(ns, space_key.key1, space_key.key2, name, count)
         resolve_login = ctx.exec.services.get("login_for")
-        ranked = []
-        for i, (user_id, value) in enumerate(rows, start=1):
-            login = (await resolve_login(user_id)) if resolve_login else None
-            ranked.append((i, login or user_id, value))
+        # All at once: a cold cache is a Helix call per row, and one after another a long board would
+        # run past the command's stage timeout.
+        logins = await asyncio.gather(*(resolve_login(uid) for uid, _ in rows)) if resolve_login else []
+        ranked = [
+            (i, (logins[i - 1] if logins else None) or user_id, value)
+            for i, (user_id, value) in enumerate(rows, start=1)
+        ]
         if not ranked:
             return Result.success(f"nobody has {v[1]} yet", [])
         text = ", ".join(f"{i}. {who} {render(val)}" for i, who, val in ranked)
