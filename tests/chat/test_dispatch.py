@@ -14,7 +14,7 @@ from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
-from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.core.outbox import BANNED, Outbox, SendResult
 from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
@@ -43,6 +43,7 @@ class FakeTwitch:
     sent: list[tuple[str, str, str | None]] = field(default_factory=list)
     subscribed: list[str] = field(default_factory=list)
     refuse: bool = False
+    banned_in: set[str] = field(default_factory=set)  # channels whose sends Twitch answers with 403
 
     async def subscribe_channel(self, channel_id: str) -> list[str]:
         if self.refuse:
@@ -55,6 +56,8 @@ class FakeTwitch:
         self.subscribed.remove(channel_id)
 
     async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
+        if channel_id in self.banned_in:
+            return SendResult(None, BANNED)
         self.sent.append((channel_id, text, reply_to))
         return SendResult(f"t{len(self.sent)}")
 
@@ -134,7 +137,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     channels = ChannelManager(policy, twitch, writer, default_prefix="!")  # emoji default: see below
     runtime.services["channels"] = channels
     moderation = ModerationIndex()
-    outbox = Outbox(twitch, writer)
+    outbox = Outbox(twitch, writer, on_banned=channels.leave_banned)
     streams = StreamStatus()
     dispatcher = Dispatcher(
         runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation,
@@ -236,6 +239,55 @@ async def test_part_unsubscribes_so_join_works_again(h: Harness) -> None:
         ("part",),
         (None,),
     ]
+
+
+async def test_a_403_on_a_send_leaves_the_channel_and_flags_it(h: Harness) -> None:
+    h.twitch.banned_in.add(CHANNEL_ID)
+    await h.say("alice", "!ping")
+    await h.settle()
+    settings = h.policy.channel_settings(CHANNEL_ID)
+    assert settings is not None and settings.status == "banned" and not settings.active
+    assert CHANNEL_ID not in h.twitch.subscribed
+    assert await h.rows(f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}'") == [
+        ("part",)
+    ]
+    assert await h.rows("SELECT dropped_reason FROM outbound_msgs") == [(BANNED,)]
+    async with await h.dbs.bot.execute(
+        "SELECT actor_user_id, via, after FROM audit_log WHERE action = 'channel.set.status'"
+        " ORDER BY id DESC LIMIT 1"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None and row["actor_user_id"] is None and row["via"] == "system"
+    assert "banned" in str(row["after"])
+
+    await h.channels.leave_banned(CHANNEL_ID)  # a second refusal from a run in flight: nothing more
+    assert h.policy.channel_settings(CHANNEL_ID).status == "banned"  # type: ignore[union-attr]
+
+
+async def test_coming_back_after_a_ban_is_deliberate(h: Harness) -> None:
+    await h.channels.leave_banned(CHANNEL_ID)
+    h.twitch.banned_in.clear()
+
+    await h.say("owner", "!join doomtp", channel=BOT_ID)
+    await h.settle()
+    assert "banned there" in h.twitch.sent[-1][1] and "!join doomtp rejoin" in h.twitch.sent[-1][1]
+    assert not h.channels.is_active(CHANNEL_ID)
+
+    await h.say("owner", "!join doomtp rejoin", channel=BOT_ID)
+    await h.settle()
+    assert h.twitch.sent[-1][1].startswith("joined #doomtp") and h.channels.is_active(CHANNEL_ID)
+
+
+async def test_the_broadcaster_inviting_the_bot_back_is_deliberate_enough(h: Harness) -> None:
+    await h.channels.leave_banned(CHANNEL_ID)
+    await h.say("doomtp", "!join", channel=BOT_ID)
+    await h.settle()
+    assert h.twitch.sent[-1][1].startswith("joined #doomtp") and h.channels.is_active(CHANNEL_ID)
+
+
+async def test_a_403_at_home_is_a_token_problem_not_a_ban(h: Harness) -> None:
+    await h.channels.leave_banned(BOT_ID)
+    assert h.channels.is_active(BOT_ID)
 
 
 async def test_startup_subscribes_home_channel_once(h: Harness) -> None:

@@ -110,6 +110,27 @@ async def test_eventsub_redeliveries_are_dropped(tmp_path: Path) -> None:
     )
 
 
+async def test_a_403_on_send_is_reported_as_a_ban_and_other_errors_still_raise() -> None:
+    import twitchio
+
+    from doomtp_bot.core.outbox import BANNED
+
+    class Channel:
+        def __init__(self, status: int) -> None:
+            self.status = status
+
+        async def send_message(self, *args: Any, **kwargs: Any) -> Any:
+            raise twitchio.HTTPException("refused", status=self.status, extra="not permitted")
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=None)  # type: ignore[arg-type]
+    service.bot_id = "999"
+    service.client = NS(create_partialuser=lambda channel_id: Channel(403))  # type: ignore[assignment]
+    assert (await service.send_chat("100", "hi", None)).dropped_reason == BANNED
+    service.client = NS(create_partialuser=lambda channel_id: Channel(500))  # type: ignore[assignment]
+    with pytest.raises(twitchio.HTTPException):
+        await service.send_chat("100", "hi", None)
+
+
 # ── OAuth ──────────────────────────────────────────────────────────────────
 class FakeOAuthHttp:
     def __init__(self, scopes: list[str] | None = None) -> None:

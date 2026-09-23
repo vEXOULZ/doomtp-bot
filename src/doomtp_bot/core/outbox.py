@@ -20,6 +20,9 @@ MAX_CHUNKS = 2
 DEFAULT_TTL_S = 15.0
 # Twitch rejects identical consecutive messages; this invisible tag character is what chat clients use as a workaround.
 DUPLICATE_SUFFIX = " \U000e0000"
+# Twitch answered the send with 403: the bot may not talk in that channel, which means it was banned
+# there. The sender reports it with this reason, and the outbox hands the channel to `on_banned`.
+BANNED = "banned"
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,8 +120,10 @@ class Outbox:
         ttl_s: float = DEFAULT_TTL_S,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        on_banned: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.sender = sender
+        self.on_banned = on_banned
         self.outbound_log = outbound_log
         self.rate_for = rate_for
         self.hold_ms_for = hold_ms_for
@@ -195,8 +200,21 @@ class Outbox:
                         run_ref=run_ref,
                     )
                 results.append(result)
+                if result.dropped_reason == BANNED:
+                    await self._banned(channel_id)
+                    return results  # the rest of the message would only be refused the same way
                 reply_to = None  # only the first chunk is threaded as a reply
         return results
+
+    async def _banned(self, channel_id: str) -> None:
+        """Leave rather than keep talking into a channel that banned the bot (architecture §10)."""
+        log.warning("outbox.banned", channel=channel_id)
+        if self.on_banned is None:
+            return
+        try:
+            await self.on_banned(channel_id)
+        except Exception:  # leaving is best-effort; the next refused send tries again
+            log.exception("outbox.leave_failed", channel=channel_id)
 
     async def _drop(
         self, channel_id: str, text: str, reason: str, hits: list[str], run_ref: str | None = None

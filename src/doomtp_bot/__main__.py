@@ -148,6 +148,7 @@ async def run(settings: Settings) -> None:
         rate_for=rate_for,
         hold_ms_for=hold_ms_for,
         content_filter=content_filter.apply,
+        on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
     timers = TimerScheduler(
@@ -251,7 +252,8 @@ async def run(settings: Settings) -> None:
         """A broadcaster connected their channel: join it, grant what they gave, subscribe (ADR-0007)."""
         if twitch is None:
             return
-        await channels.join(account.user_id, account.login, Actor(None, "web"))
+        # The broadcaster asked for the bot themselves: a deliberate rejoin, even after a ban.
+        await channels.join(account.user_id, account.login, Actor(None, "web"), rejoin=True)
         capabilities = await probe.grant(account.user_id, granted_by(account.scopes))
         stored = await twitch.tokens.get(broadcaster_identity(account.user_id))
         await use_broadcaster(account.user_id, account.login, stored, set(capabilities))

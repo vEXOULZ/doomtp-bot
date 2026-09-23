@@ -15,6 +15,15 @@
   <span class="pill">reply hold {{ channel.reply_hold_ms }}ms</span>
   <span class="pill {{ 'off' if channel.automod_action == 'off' else 'on' }}">automod {{ channel.automod_action }}{% if channel.automod_action == 'timeout' %} {{ channel.automod_timeout_s }}s{% endif %}</span>
 </p>
+{% if channel.status == 'banned' %}
+<p class="pill off">The bot left this channel because Twitch refused a message with 403, which means it
+was banned here. It stays out until someone brings it back on purpose. Make sure it has been unbanned first:
+if it hasn't, the next message it sends makes it leave again.</p>
+<form method="post" action="/admin/channels/{{ channel.login }}/rejoin" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">rejoin #{{ channel.login }}</button>
+</form>
+{% endif %}
 
 <h2>Modules</h2>
 <p class="muted">Turning a module off here is the same change as

@@ -379,6 +379,20 @@ async def admin_toggle_module(
     return RedirectResponse(f"/admin/channels/{login}", status_code=303)
 
 
+@router.post("/admin/channels/{login}/rejoin")
+async def admin_rejoin(request: Request, login: str, csrf: str = Form("")) -> RedirectResponse:
+    """Bring the bot back to a channel it left because it was banned there — only ever by hand (§10)."""
+    _require_csrf(request, csrf)
+    settings = _channel_or_404(request, login)
+    channels = _state(request, "channels")
+    if channels is None:
+        raise HTTPException(status_code=503, detail="channels aren't available")
+    from doomtp_bot.policy.repository import Actor
+
+    await channels.join(settings.channel_id, settings.login, Actor(None, "web"), rejoin=True)
+    return RedirectResponse(f"/admin/channels/{login}", status_code=303)
+
+
 @router.post("/admin/channels/{login}/trigger")
 async def admin_toggle_trigger(
     request: Request, login: str, trigger_id: int = Form(...), enabled: str = Form(""), csrf: str = Form("")

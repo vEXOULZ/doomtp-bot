@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.modules._common import actor, rank, sign_of, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, BROADCASTER_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
@@ -18,9 +19,23 @@ MODULE = "core_admin"
         module=MODULE,
         toggleable=False,
         summary="Invite the bot to your channel",
-        description="Type {sign}join in the bot's own chat to add the bot to your channel. Bot admins can name any channel.",
-        params=(Param("1", "channel", description="Channel to join (bot admins only)"),),
-        examples=(Example("{sign}join", "joined #yourchannel"),),
+        description=(
+            "Type {sign}join in the bot's own chat to add the bot to your channel. Bot admins can name any"
+            " channel. The bot leaves a channel that bans it, and a bot admin brings it back only by adding"
+            " rejoin; a broadcaster inviting it again is already deliberate."
+        ),
+        params=(
+            Param("1", "channel", description="Channel to join (bot admins only)"),
+            Param(
+                "2", "rejoin", choices=("rejoin",), description="Come back to a channel that banned the bot"
+            ),
+        ),
+        examples=(
+            Example("{sign}join", "joined #yourchannel"),
+            Example(
+                "{sign}join somechannel rejoin", "joined #somechannel", note="after it was unbanned there"
+            ),
+        ),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=30)},
     )
 )
@@ -38,6 +53,7 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
             )
         user = await user_arg(ctx, target)
         channel_id, login = user["id"], user["name"]
+        rejoin = args.get("rejoin") == "rejoin"
     else:
         if ctx.channel.id != twitch.bot_id:
             return Result.failure(
@@ -46,9 +62,13 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
                 " to add the bot to your channel",
             )
         channel_id, login = ctx.invoker.id, ctx.invoker.login
+        rejoin = True  # the broadcaster inviting the bot back is the deliberate act
     if channels.is_active(channel_id):
         return Result.success(f"already in #{login}")
-    failed = await channels.join(channel_id, login, actor(ctx))
+    try:
+        failed = await channels.join(channel_id, login, actor(ctx), rejoin=rejoin)
+    except ChannelBanned as exc:
+        return Result.failure(Code.FAIL, f"{exc}. {ctx.channel.prefix}join {login} rejoin comes back anyway")
     if failed:
         return Result.failure(Code.FAIL, f"joined #{login}, but Twitch refused: {', '.join(failed)}")
     return Result.success(
