@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12"]
     services:
       # The suite runs against a real Postgres, not a stand-in (ADR-0014). Same major as compose runs.
       postgres:

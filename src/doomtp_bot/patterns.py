@@ -9,7 +9,7 @@ and gives up after a timeout on the rest. A pattern that runs out of time counts
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeAlias, TypeVar
+from typing import TYPE_CHECKING
 
 import regex
 import structlog
@@ -17,15 +17,14 @@ import structlog
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    Pattern: TypeAlias = regex.Pattern[str]
-    Match: TypeAlias = regex.Match[str]
+    type Pattern = regex.Pattern[str]
+    type Match = regex.Match[str]
 
 log = structlog.get_logger(__name__)
 
 # Generous for a 500-character chat line, and short enough that a hostile pattern costs little.
 MATCH_TIMEOUT_S = 0.05
 PatternError = regex.error
-T = TypeVar("T")
 
 
 def compile_pattern(pattern: str) -> Pattern:
@@ -42,7 +41,7 @@ def find_all(pattern: Pattern, text: str) -> list[Match]:
     return _bounded(pattern, lambda: list(pattern.finditer(text, timeout=MATCH_TIMEOUT_S)), [])
 
 
-def _bounded(pattern: Pattern, match: Callable[[], T], gave_up: T) -> T:
+def _bounded[T](pattern: Pattern, match: Callable[[], T], gave_up: T) -> T:
     try:
         return match()
     except TimeoutError:

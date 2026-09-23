@@ -33,7 +33,7 @@ so is the deploy path. What is left is running it against real chat — see
 
 ## Local development
 
-Requires Python 3.11+.
+Requires Python 3.12+.
 
 ```bash
 python -m venv .venv
