@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import psycopg
@@ -24,16 +24,14 @@ def pg_major(version_text: str) -> int:
 
 
 @pytest.fixture(scope="session")
-def pg_dump_ready(database_url: str) -> None:
+def pg_dump_ready(database_url: str, require_tool: Callable[[bool, str], None]) -> None:
     """pg_dump is installed and new enough to dump the test server, or the backup tests don't run.
 
     pg_dump refuses to dump a server newer than itself, so "installed" is not enough — a client one
     major behind fails every dump with an error that reads like a backup bug.
 
-    On a dev box that is a skip: the client tools are optional there, and the image the backup service
-    runs from has the right one (Dockerfile). In CI it is a failure, because a skip there means the
-    suite has quietly stopped testing backups and still gone green — which is exactly what CI's first
-    runs would have done, with a pg_dump one major too old (ADR-0014).
+    A dev box need not have it — the image the backup service runs from has the right one (Dockerfile) —
+    so there this skips; under --require-tools, as in CI, it fails (`require_tool` in conftest).
     """
     with psycopg.connect(database_url) as conn:
         row = conn.execute("SHOW server_version_num").fetchone()
@@ -50,10 +48,7 @@ def pg_dump_ready(database_url: str) -> None:
             return
         problem = f"pg_dump {client} cannot dump a Postgres {server} server"
 
-    advice = f"{problem}: install postgresql-client-{server} and put it first on PATH"
-    if os.environ.get("CI") == "true":
-        pytest.fail(advice)
-    pytest.skip(advice)
+    require_tool(False, f"{problem}: install postgresql-client-{server} and put it first on PATH")
 
 
 needs_pg_dump = pytest.mark.usefixtures("pg_dump_ready")

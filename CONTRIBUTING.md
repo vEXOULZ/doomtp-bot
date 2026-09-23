@@ -85,10 +85,12 @@ of its own and drops it at the end, and each test rolls back, so nothing accumul
 .venv/Scripts/python -m mypy && .venv/Scripts/python -m pytest -q
 ```
 
-Two backup tests need a `pg_dump` at least as new as the server — it refuses to dump a newer one —
-and skip without it, naming the package to install. A dev box need not have it. CI must, so there
-the same condition fails the run instead: a skipped backup test in CI would mean nothing is testing
-backups while the run still goes green.
+Some tests need an external tool and skip without it, saying what to install. Two backup tests need a
+`pg_dump` at least as new as the server — it refuses to dump a newer one — and the EventSub handshake
+tests need the [Twitch CLI](https://dev.twitch.tv/docs/cli/). A dev box need not have either. CI must,
+so it runs pytest with `--require-tools`, which turns those skips into failures: a skipped test in CI
+would mean nothing is testing backups or the handshake while the run still goes green. Pass the flag
+yourself to check that a machine has everything.
 
 CI runs those plus the web editor's tests, the committed-bundle check, the grammar and railroad diagram
 checks, and a Docker build. Nothing merges that CI hasn't agreed with.
