@@ -27,11 +27,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications | 6/6 | Complete |
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
-| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 2/9 | Seven open, all code or decisions |
+| [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
+| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 3/9 | Six open, all code or decisions |
 
-**75 of 79 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
-code — they are waiting on a person or a server. **2 of the 9 architecture promises are closed**, and
-the other seven are waiting on code or on a decision to drop them.
+**79 of 83 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
+code — they are waiting on a person or a server. **3 of the 9 architecture promises are closed**, and
+the other six are waiting on code or on a decision to drop them.
 
 ## What is left, and why
 
@@ -76,7 +77,7 @@ first.
 
 | Item | Promise | Where it stood | State |
 |------|---------|----------------|-------|
-| `ARCH-1` | **Metrics** (§13): nine named counters — `messages_logged_total{source}`, `runs_total{code}`, `outbox_dropped_total{reason}`, `eventsub_reconnects_total` and the rest | None is exported. The outbox keeps a `dropped` count in memory and `/readyz` reports queue depth, but nothing can be scraped or graphed. Needs an ADR for the format and where it is served (the API is LAN-only). | Open |
+| `ARCH-1` | **Metrics** (§13): nine named counters — `messages_logged_total{source}`, `runs_total{code}`, `outbox_dropped_total{reason}`, `eventsub_reconnects_total` and the rest | None is exported. The outbox keeps a `dropped` count in memory and `/readyz` reports queue depth, but nothing can be scraped or graphed. Needs an ADR for the format and where it is served (the API is LAN-only). | **Closed** 2026-09-23 — [ADR-0015](adr/0015-metrics-prometheus-text-on-the-api.md): hand-written Prometheus text on `/metrics`, each counter incremented at its source; EventSub is counted as welcomes plus client restarts, since TwitchIO doesn't report reconnects. |
 | `ARCH-2` | **Leave when banned** (§10 etiquette): auto-leave and flag a channel when Twitch answers a send with 403 | Not built. `core/outbox.py` logs `outbox.send_failed` and drops the message; the bot stays joined and keeps trying. The only 401/403 handling is for a revoked broadcaster token (`twitch/client.py`). | **Closed** 2026-09-23 — a 403 on a send parts the channel as `system` with `status='banned'`; admin page and API show it, and only an explicit rejoin brings the bot back. |
 | `ARCH-3` | **`!explain` report page** (§4.4): the chat summary links to a full report in the web UI | Chat and `POST /api/v1/explain` exist; there is no page, and no link. | Open |
 | `ARCH-4` | **Side-effect built-ins** (§4.3): `!timeout`, `!shoutout` and Helix writes run at their stage and check the moderation index right before acting | None exists, so the checkpoint has nothing to guard. `side_effects=True` is declared in `runtime/spec.py` and read by nobody. The starter pack's `so` is a custom command that only talks. | Open |

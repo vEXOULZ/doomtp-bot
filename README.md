@@ -347,6 +347,7 @@ not drive failures.
 | | |
 |---|---|
 | Is it healthy? | `curl -s localhost:8080/readyz` |
+| How often does it happen? | `curl -s localhost:8080/metrics` — counters in Prometheus text (ADR-0015); point a scraper on the LAN at it |
 | What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
 | Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |

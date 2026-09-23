@@ -12,6 +12,7 @@ from typing import Any
 import structlog
 
 from doomtp_bot.clock import now_ms
+from doomtp_bot.core import metrics
 from doomtp_bot.core.events import (
     ChatCleared,
     ChatMessage,
@@ -29,6 +30,7 @@ FLUSH_BATCH = 200
 QUEUE_MAX = 10_000
 
 Op = tuple[str, tuple[Any, ...]]
+_MESSAGE_SOURCE = 15  # where `source` sits in a "message" op's parameters
 
 
 class ChatLogWriter:
@@ -271,20 +273,33 @@ class ChatLogWriter:
     async def _write(self, ops: list[Op]) -> None:
         try:
             async with transaction(self.conn):
-                for kind, params in ops:
-                    await self.conn.execute(_SQL[kind], params)
+                logged = [source for op in ops if (source := await self._execute(op)) is not None]
         except Exception:
             log.exception("chatlog.flush_failed", ops=len(ops))
             await self._write_one_by_one(ops)  # one bad row must not lose the whole batch
+        else:
+            for source in logged:  # counted once the batch is committed, not before
+                metrics.MESSAGES_LOGGED.inc(source=source)
         self.last_flush_ms = now_ms()
 
     async def _write_one_by_one(self, ops: list[Op]) -> None:
-        for kind, params in ops:
+        for op in ops:
             try:
                 async with transaction(self.conn):
-                    await self.conn.execute(_SQL[kind], params)
+                    source = await self._execute(op)
             except Exception:
-                log.exception("chatlog.row_dropped", kind=kind)
+                log.exception("chatlog.row_dropped", kind=op[0])
+            else:
+                if source is not None:
+                    metrics.MESSAGES_LOGGED.inc(source=source)
+
+    async def _execute(self, op: Op) -> str | None:
+        """Run one op. For a message Postgres actually inserted, its source; a re-offered one isn't new."""
+        kind, params = op
+        cursor = await self.conn.execute(_SQL[kind], params)
+        if kind == "message" and cursor.rowcount == 1:
+            return str(params[_MESSAGE_SOURCE])
+        return None
 
 
 _SQL: dict[str, str] = {

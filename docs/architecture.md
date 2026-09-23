@@ -28,6 +28,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | [ADR-0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications; packs publish a set at once |
 | [ADR-0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes the image; the server pulls it on a timer |
 | [ADR-0014](adr/0014-storage-postgres-one-database-two-schemas.md) | **Postgres**: one database, a `bot` schema and a `chatlog` schema (supersedes ADR-0003) |
+| [ADR-0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Metrics: counters in Prometheus text on `/metrics`, no new dependency |
 
 ---
 
@@ -571,6 +572,7 @@ A **race window** remains: a mod can act after the message has already been sent
 | Path | When | Notes |
 |------|------|-------|
 | `GET /healthz`, `GET /readyz` | Now | Liveness, and readiness with component detail: EventSub, tokens, both databases, log queue depth, backfill status, channels |
+| `GET /metrics` | Now | The §13 counters in Prometheus text (ADR-0015). Unauthenticated like the two above, and it names no channel or user. |
 | `/auth/*` | Now | Bot OAuth setup and broadcaster full-tier connect |
 | `GET /api/v1/commands` | Early | **All** commands with their full specs. Feeds the public docs page. |
 | `GET /api/v1/channels/{login}/commands` | Early | The effective command list for a channel, including enabled state, roles, cooldowns and publications |
@@ -605,6 +607,7 @@ Built (✔) and planned (·):
 src/doomtp_bot/
 ├─ __main__.py  config.py  clock.py                                        ✔ wiring, settings, now_ms
 ├─ core/        events.py dispatch.py channels.py outbox.py health.py      ✔ dispatch calls each step directly
+│               metrics.py                                                 ✔ ADR-0015 counters
 │               instance_lock.py capabilities.py streams.py                ✔ ADR-0007 probe and stream poller
 ├─ twitch/      client.py mapping.py auth.py tokens.py    # only place importing twitchio  ✔
 ├─ history/     provider.py backfill.py irc_parse.py                       ✔ ADR-0008
@@ -685,16 +688,24 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **Self-hosted history, optional:** for independence from the public recent-messages service, run a `recent-messages2` container on a separate compose stack. It needs TimescaleDB. Don't restart it together with the bot during updates. Point `HISTORY_PROVIDER_URL` at it.
 - **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is backfilled. `scripts/coverage.py` (compose: `--profile tools run --rm coverage`) says how each channel's last session ended and which gaps no complete backfill run covers — the deploy runbook in the README.
 - **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) runs `pg_dump` once per schema, writing a compressed custom-format archive that `pg_restore` can take apart, rotated to the last 7 of each. `pg_dump` snapshots inside one transaction, so it is safe to run while the bot writes. The `bot` schema is the critical one — it holds custom commands, variables, roles and the OAuth tokens. The dumps land on the same host as the database, which is not a backup until a copy leaves the machine; that part is still the operator's job.
-- **Metrics:**
-  - `messages_logged_total{source}`
-  - `backfill_inserted_total`
-  - `backfill_incomplete_total`
-  - `runs_total{code}`
-  - `runs_cancelled_total{reason}`
+- **Metrics** (ADR-0015): counters in the Prometheus text format on `GET /metrics`, beside `/readyz` on the
+  LAN-bound port, for a scraper on the LAN to pull. `core/metrics.py` writes the format by hand — no
+  `prometheus_client` — and every counter is incremented where the thing happens. They live in memory and
+  start from zero at each start, which scrapers read as a reset. No label names a channel or a user.
+  - `messages_logged_total{source}` — rows the log writer actually inserted, so a redelivered or
+    re-backfilled message is not counted twice
+  - `backfill_inserted_total`, `backfill_incomplete_total`
+  - `runs_total{code}` — every finished run except `!explain --run`'s
+  - `runs_cancelled_total{reason}` — `moderated` or `timeout`: the runs whose variable writes were discarded
   - `cooldown_rejections_total{tier}`
-  - `filter_hits_total{action}`
-  - `outbox_dropped_total{reason}`
-  - `eventsub_reconnects_total`
+  - `filter_hits_total{action}` — matches in what the bot sends
+  - `outbox_dropped_total{reason}` — `filter_block`, `ttl`, `moderated`, `banned`, `send_error` and
+    Twitch's own drop codes
+  - `eventsub_welcomes_total` and `twitch_client_restarts_total`. *Changed in revision 5:* this list used
+    to promise `eventsub_reconnects_total`, but TwitchIO handles reconnects inside the client and only
+    reports each new session's welcome, which looks the same for a first connection and a reconnect. So
+    the bot counts welcomes — one per token at startup, one more for every reconnect — and, separately,
+    the times the whole client stopped and had to be started again (ADR-0015).
 
 ---
 

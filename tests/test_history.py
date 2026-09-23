@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from doomtp_bot.chatlog.writer import ChatLogWriter
+from doomtp_bot.core import metrics
 from doomtp_bot.core.events import ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
 from doomtp_bot.history.backfill import BackfillService, Gap, find_gaps, to_events
@@ -149,9 +150,13 @@ async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None
     service = await backfill_for(dbs, provider)
     gap = Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)  # the oldest line (1005) predates the gap
 
+    inserted = metrics.BACKFILL_INSERTED.value()
+    logged = metrics.MESSAGES_LOGGED.value(source="recent-messages")
     outcome = await service.fill(gap)
     await service.writer.stop()
 
+    assert metrics.BACKFILL_INSERTED.value() - inserted == 3
+    assert metrics.MESSAGES_LOGGED.value(source="recent-messages") - logged == 1  # one PRIVMSG among them
     assert provider.calls == [(CHANNEL_LOGIN, 0, 800)]  # asked from 5s before the gap, clamped at 0
     assert (outcome.fetched, outcome.inserted, outcome.complete) == (3, 3, True)
     async with await dbs.chatlog.execute("SELECT message_id, source, raw FROM messages") as cur:
@@ -179,9 +184,11 @@ async def test_a_gap_that_cannot_be_proven_covered_is_incomplete(
 ) -> None:
     """ADR-0008: partial coverage is recorded as partial rather than quietly called complete."""
     service = await backfill_for(dbs, FakeProvider(response))
+    incomplete = metrics.BACKFILL_INCOMPLETE.value()
     outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, gap_from, 6000))
     await service.writer.stop()
     assert not outcome.complete, why
+    assert metrics.BACKFILL_INCOMPLETE.value() - incomplete == 1
     async with await dbs.chatlog.execute("SELECT complete FROM backfill_runs") as cur:
         assert [r["complete"] for r in await cur.fetchall()] == [False]
 

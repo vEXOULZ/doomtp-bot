@@ -17,6 +17,7 @@ import structlog
 
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.clock import now_ms
+from doomtp_bot.core import metrics
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
 from doomtp_bot.history.irc_parse import IrcLine, badges, parse_line
@@ -197,6 +198,7 @@ class BackfillService:
         complete = not response.hit_limit and (oldest is None or oldest <= gap.from_ms)
         outcome = BackfillOutcome(gap, fetched, inserted, complete)
         await self._record(outcome)
+        metrics.BACKFILL_INSERTED.inc(inserted)
         log.info(
             "history.backfilled",
             channel=gap.channel_login,
@@ -226,6 +228,8 @@ class BackfillService:
             return {(int(r["gap_from"]), int(r["gap_to"])) for r in await cur.fetchall()}
 
     async def _record(self, outcome: BackfillOutcome) -> None:
+        if not outcome.complete:
+            metrics.BACKFILL_INCOMPLETE.inc()
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, fetched, inserted, complete,"

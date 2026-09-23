@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from doomtp_bot.core import metrics
 from doomtp_bot.lang.ast import Node
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, NotACommand, ParserParams, parse, preprocess_line, strip_prefix
@@ -162,7 +163,7 @@ class Runtime:
                 quiet_errors=ctx.channel.quiet_errors,
                 parse_error_visible=visible,
             ).send
-            return self._finish(report, started)
+            return self._finish(report, started, ctx)
 
         resolver = self.resolver
         if self.custom is not None:
@@ -179,7 +180,7 @@ class Runtime:
                 ast=node,
             )
             await self._settle(report, ctx)
-            return self._finish(report, started)
+            return self._finish(report, started, ctx)
 
         scope = Scope(pre.resolved, scope_args, pre.bodies)
         report = RunReport(text, Result(), "runtime", ast=node)
@@ -190,15 +191,17 @@ class Runtime:
             ctx.variables.discard()
             report.result = Result.failure(Code.CANCELLED, "cancelled by moderation")
             report.cancelled = True
+            metrics.RUNS_CANCELLED.inc(reason="moderated")
         except TimeoutError:
             ctx.variables.discard()
             report.result = Result.failure(Code.TIMEOUT, "timed out")
+            metrics.RUNS_CANCELLED.inc(reason="timeout")
         else:
             if ctx.dry_run:  # !explain --run: nothing it wrote is kept (spec §9)
                 ctx.variables.discard()
                 _record_executed(report, scope)
                 await self._settle(report, ctx)
-                return self._finish(report, started)
+                return self._finish(report, started, ctx)
             try:
                 report.committed = await ctx.variables.commit(ctx)
             except VariableError as exc:
@@ -206,7 +209,7 @@ class Runtime:
                 report.result = exc.result()
         _record_executed(report, scope)
         await self._settle(report, ctx)
-        return self._finish(report, started)
+        return self._finish(report, started, ctx)
 
     # ── helpers ─────────────────────────────────────────────────────────────
     async def _settle(self, report: RunReport, ctx: ExecContext) -> None:
@@ -259,8 +262,10 @@ class Runtime:
         report.send, report.callback = decision.send, decision.callback
 
     @staticmethod
-    def _finish(report: RunReport, started: float) -> RunReport:
+    def _finish(report: RunReport, started: float, ctx: ExecContext) -> RunReport:
         report.duration_ms = int((time.monotonic() - started) * 1000)
+        if not ctx.dry_run:  # !explain --run is a look, not a run
+            metrics.RUNS.inc(code=report.result.code)
         return report
 
     def _first_command_permitted(self, text: str, ctx: ExecContext) -> bool:
