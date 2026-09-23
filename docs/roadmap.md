@@ -1,6 +1,6 @@
 # Roadmap and progress
 
-**As of 2026-09-22** (second revision of the day: storage moved to Postgres, and the repository got a remote). Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-22** (third revision of the day: storage moved to Postgres, the repository got a remote, and cooldowns moved to runtime). Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
 
@@ -13,7 +13,7 @@ hand — when an item closes, tick it in its ADR and update the row here in the 
 | [0003](adr/0003-storage-sqlite.md) | SQLite: `bot.db` and `chatlog.db` | 5/5 | Superseded by 0014 |
 | [0004](adr/0004-modular-monolith.md) | One async process, one container | 4/4 | Complete |
 | [0005](adr/0005-command-pipeline-runtime.md) | Parse → resolve → preflight → execute | 6/6 | Complete |
-| [0006](adr/0006-permissions-cooldowns-toggles.md) | Ranked roles, two cooldowns, layered toggles | 4/5 | One deferred to v1.x |
+| [0006](adr/0006-permissions-cooldowns-toggles.md) | Ranked roles, two cooldowns, layered toggles | 5/5 | Complete |
 | [0007](adr/0007-channel-access-tiers.md) | Basic, moderator and full channel tiers | 5/5 | Complete |
 | [0008](adr/0008-history-backfill-recent-messages.md) | Fill log gaps from recent-messages | 5/6 | One blocked |
 | [0009](adr/0009-user-custom-commands-sharing.md) | User-owned commands: link, publish, version | 6/6 | Complete |
@@ -23,8 +23,8 @@ hand — when an item closes, tick it in its ADR and update the row here in the 
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 
-**74 of 79 action items are closed.** The five that aren't are below, and none of them is waiting on
-code that hasn't been thought through — they are waiting on a person, a server, or a version boundary.
+**75 of 79 action items are closed.** The four that aren't are below, and none of them is waiting on
+code — they are waiting on a person or a server.
 
 ## What is left, and why
 
@@ -59,17 +59,14 @@ within the documented reach. **Contacting the maintainer about the bot integrati
 interval is still open, and should happen before backfill is enabled for a real channel.** This is a
 courtesy item, not a technical one — which is exactly the sort that quietly never gets done.
 
-### Waiting on v1.x — ADR-0006 item 5
-
-Cooldowns are checked in preflight, so a cooldown failure stops the whole line. Spec §5.2 wants them
-checked at runtime instead, failing the individual invocation with code 128 so `!a || !b` runs `b` when
-`a` is on cooldown. It is a behaviour change to the operator semantics and belongs with a version bump,
-not in a patch.
-
 ## Deferred by design
 
 These are decided, not forgotten. See the [language proposal §6](command-language-proposal.md) for the
 full table.
+
+Runtime cooldown failures were on this list until 2026-09-22. They are now the language spec's version
+1.1: a command on cooldown fails with code 128 when evaluation reaches it, so `||` routes around it and a
+branch that never runs is never held to a cooldown (ADR-0006 item 5).
 
 | Item | Status |
 |------|--------|
@@ -87,7 +84,7 @@ packs, derived commands, triggers and timers, the badword filter, moderation-awa
 and web UI with the CodeMirror editor, OAuth for the bot and for broadcasters, capability tiers, backups,
 and the deploy path.
 
-The test suite is 550 pytest cases plus 36 vitest ones, with the parser corpus shared between them, the
+The test suite is 563 pytest cases plus 36 vitest ones, with the parser corpus shared between them, the
 EventSub adapter pinned to payloads recorded from Twitch's own simulator, and the railroad diagrams
 checked against the grammar. The pytest half runs against a real Postgres rather than a stand-in — start
 one with `docker compose --profile test up -d postgres-test`, which is what CI does too.

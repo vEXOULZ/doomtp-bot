@@ -1,6 +1,6 @@
 # doomtp-bot Command Language — Specification
 
-**Version:** 1.0.0-draft · **Status:** Draft for review · **Date:** 2026-09-16
+**Version:** 1.1.0-draft · **Status:** Draft for review · **Date:** 2026-09-22 (1.0: 2026-09-16)
 **Supersedes:** [command-language-proposal.md](command-language-proposal.md) (kept for rationale)
 **Normative companions:** [namespaces.md](namespaces.md) (namespaces, types, reserved names) and [variable-access-matrix.md](variable-access-matrix.md) (variable permissions)
 **Runtime design:** [ADR-0005](adr/0005-command-pipeline-runtime.md)
@@ -268,20 +268,21 @@ For each resolved invocation, in this order:
 |---|-------|--------------|
 | 1 | Toggles and channel capabilities (ADR-0006, ADR-0007) | 127 (a disabled command behaves as unknown) |
 | 2 | Permission: invoker rank vs. required role or allowed roles | 126 |
-| 3 | Cooldowns: tier bucket **and** user bucket both expired | 128 |
-| 4 | Input mode: a command with `input=NONE` must not be the right operand of `\|` | 2 (`E_INPUT_NOT_ACCEPTED`) |
-| 5 | Placeholder validity for this context (§7.2), and `{N}` with 1 ≤ N < this invocation's index | 2 (`E_BAD_REFERENCE`) |
-| 6 | Store targets: namespace valid for the context, and write permitted per variable-access-matrix.md | 2 for an invalid context, 126 for denied |
-| 7 | Custom command expansion: depth ≤ `MAX_CC_DEPTH`, no cycles | 2 (`E_CC_DEPTH` / `E_CC_CYCLE`) |
-| 8 | Total invocations after expansion ≤ `MAX_INVOCATIONS (8)`; sentinels count | 2 (`E_TOO_MANY`) |
+| 3 | Input mode: a command with `input=NONE` must not be the right operand of `\|` | 2 (`E_INPUT_NOT_ACCEPTED`) |
+| 4 | Placeholder validity for this context (§7.2), and `{N}` with 1 ≤ N < this invocation's index | 2 (`E_BAD_REFERENCE`) |
+| 5 | Store targets: namespace valid for the context, and write permitted per variable-access-matrix.md | 2 for an invalid context, 126 for denied |
+| 6 | Custom command expansion: depth ≤ `MAX_CC_DEPTH`, no cycles | 2 (`E_CC_DEPTH` / `E_CC_CYCLE`) |
+| 7 | Total invocations after expansion ≤ `MAX_INVOCATIONS (8)`; sentinels count | 2 (`E_TOO_MANY`) |
 
 If any check fails, **no invocation executes.** The expression's result is the first failure in source order. Output rules for these codes are in §6.6.
 
 **Error identifiers.** The `E_…` names above are carried in the Result's `data.error`, with the human-readable text in `message` — for example `Result(2, "{2} refers to a command that runs later", {"error": "E_BAD_REFERENCE", "reference": "{2}"})`. Parse errors (§3.4) also put their code in `data.error` alongside `data.column`. This keeps chat replies readable while `!explain`, `/parse` and the editor get stable identifiers.
 
-**Cooldowns** are *checked* for every invocation during preflight, but *committed* only for invocations that actually execute (§6.3).
+**Cooldowns are not a preflight check.** They are checked when evaluation reaches an invocation (§6.3), and an invocation on cooldown **fails with code 128** like any other failure. So `||` can route around it — `!a || !b` runs `b` when `a` is on cooldown — and `&&` stops at it. An invocation that is never reached is never held to its cooldown and never starts one. If the final Result is 128, output stays silent and the `on_cooldown` callback runs (§6.6).
 
-> **Planned (v1.x, a minor version):** cooldown check 3 moves out of preflight. An invocation on cooldown then fails at runtime with code 128, and `||` can handle that like any other failure: `!a || !b` runs `b` when `a` is on cooldown. If the final Result is 128, output stays silent and the callback still runs (§6.6).
+The cooldown is claimed immediately before the invocation executes, so a command repeated in one line meets the cooldown its own first run started: in `!dice && !dice`, the second `dice` fails with 128 unless its cooldown is zero.
+
+> **Changed in 1.1:** in 1.0, cooldowns were check 3 of this table. Every invocation was checked up front, including branches that never ran, and one command on cooldown stopped the whole line.
 
 ### 5.3 Argument declarations
 
@@ -337,7 +338,7 @@ Commands MUST use 1–3 or 5–99 for their own failures. Codes 100–255 are re
 
 | Node | Evaluation |
 |------|------------|
-| `Invocation` | 1. Check moderation (§6.7). 2. Expand the arguments (§7.3) with `{_}` = prev. 3. Validate the parameters (§5.3). 4. Commit this invocation's cooldowns. 5. Execute with `stdin` (the pipe input, or null) under `STAGE_TIMEOUT (3 s)`. 6. Record the Result under its index. |
+| `Invocation` | 1. Check moderation (§6.7). 2. If the command is on cooldown, fail with 128 (§5.2) before expanding anything. 3. Expand the arguments (§7.3) with `{_}` = prev. 4. Validate the parameters (§5.3). 5. Claim this invocation's cooldowns: check them again and commit them in one step, failing with 128 if they are no longer clear. 6. Execute with `stdin` (the pipe input, or null) under `STAGE_TIMEOUT (3 s)`. 7. Record the Result under its index. |
 | `Pipe(L, R)` | `r = eval(L, prev)`. If `r.code ≠ 0`, return `r`. Otherwise return `eval(R, r)` with **stdin = r**. |
 | `And(L, R)` | `r = eval(L, prev)`. If `r.code ≠ 0`, return `r`. Otherwise return `eval(R, r)` with stdin = null. |
 | `Or(L, R)` | `r = eval(L, prev)`. If `r.code = 0`, return `r`. Otherwise return `eval(R, r)` with stdin = null. |
@@ -523,7 +524,7 @@ Idioms:
 It MUST report:
 - the AST, with operator precedence made visible and invocation indexes
 - name resolution for each invocation: source, owner, version and publication grants
-- the preflight result for each invocation: toggle, rank vs. required role, both cooldowns with remaining time, and input mode
+- the preflight result for each invocation: toggle, rank vs. required role and input mode, plus both cooldowns with remaining time. A cooldown is reported, not failed: whether it blocks depends on whether evaluation reaches that invocation (§5.2)
 - placeholder references, whether each is available in the context, and store targets with their write permission
 - the first failing check and the resulting code, if any
 
@@ -555,6 +556,7 @@ With `--run`, it also evaluates the expression with a **discarded** write buffer
 ## 11. Versioning
 
 - This document is **syntax version 1.0**. Changes that alter how existing valid input parses or evaluates require a **major** version change. Additions that only make previously invalid input valid (e.g. un-reserving `;`) are **minor** version changes.
+- The syntax version covers the grammar and how a body parses. Document 1.1 moved cooldowns from preflight to runtime (§5.2) — a change in *policy outcome*, which 1.0 declared in advance as a minor change (Appendix B item 4). The grammar and every parse are unchanged, so `syntax_version` stays `"1.0"` and no stored body needs migrating.
 - Stored bodies keep the syntax version they were parsed with. When the major version changes, the implementation MUST either keep a parser for the old version or migrate bodies automatically, and record the migration as a new custom command version.
 - Deferred features are tracked in language proposal §6: the `?` suffix, and `;` behavior.
 
@@ -615,7 +617,7 @@ All items were resolved in review (2026-09-16):
 1. **`true` pass-through:** copies `data` only, never the message. ✔
 2. **Parse-error visibility:** parse errors are sent only when the first command is runnable by the invoker. ✔
 3. **Unknown later commands:** reply `unknown command: x`, unless `quiet_errors` is set. ✔
-4. **Cooldowns in preflight:** kept for v1, so every invocation is checked, including skipped branches. **Planned refinement (v1.x):** cooldowns become a *runtime* failure (code 128) of the individual invocation, so `||` can handle them. `!a || !b` with `a` on cooldown would then run `b`. Permissions and toggles stay in preflight. Tracked in language proposal §6.
+4. **Cooldowns in preflight:** kept for 1.0, so every invocation was checked, including skipped branches. **Done in 1.1 (2026-09-22):** cooldowns are a *runtime* failure (code 128) of the individual invocation, so `||` can handle them, and `!a || !b` with `a` on cooldown runs `b` (§5.2). Permissions and toggles stay in preflight. ✔
 5. **Reply-mention stripping:** keep the step. Verify the EventSub text format during implementation (action item).
 6. **Commit on failure:** writes commit even when the final code ≠ 0. There is **no rollback** based on the end result. Only moderation cancellation and timeouts discard the buffer. ✔
 

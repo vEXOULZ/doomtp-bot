@@ -75,6 +75,11 @@ configure an <code>on_denied</code> callback if it wants a reply.</p>
 {{ p }}cooldown show random</pre>
 <p>The tier that applies is the highest-ranked rule your rank reaches, so a moderator can be exempt while
 viewers wait. Being on cooldown is silent, with an optional <code>on_cooldown</code> callback.</p>
+<p>A command on cooldown fails like any other failure, at the moment the line reaches it. So
+<code>||</code> can route around it, and a command the line never reaches is never held to its cooldown:</p>
+<pre>{{ p }}random 1-6 || echo the dice are resting   # the echo runs while random is on cooldown</pre>
+<p>A command used twice in one line meets its own cooldown the second time, unless that cooldown is
+zero.</p>
 
 <h2 id="toggles">Turning things on and off</h2>
 <p>Commands are grouped into modules. A channel can switch a whole module or a single command:</p>

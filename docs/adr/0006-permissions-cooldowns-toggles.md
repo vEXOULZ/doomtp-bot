@@ -105,4 +105,4 @@
 2. [x] Build `policy/`: `effective_rank`, cooldown resolution (dual buckets), `is_enabled` (layers + capabilities) and role management, with table-driven tests.
 3. [x] Add the callback runner with rate limiting. *(30 s per channel/user/command/kind)*
 4. [x] Add `core_admin` commands: `!role`, `!perm`, `!cooldown`, `!module`, `!cmd` (enable/disable/log), `!ignore`, `!prefix`, `!callback`, `!admin`.
-5. [ ] Move the cooldown check out of preflight so `||` can handle a cooldown failure (spec §5.2, planned v1.x).
+5. [x] Move the cooldown check out of preflight so `||` can handle a cooldown failure (spec §5.2, now 1.1). *(2026-09-22: the executor looks before expanding arguments and claims — check and commit in one step — just before running, so a never-reached branch is never held to a cooldown and a repeat in one line meets the cooldown its first run started. `!explain` still reports cooldowns, without failing on them.)*

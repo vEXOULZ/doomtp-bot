@@ -87,7 +87,7 @@ def placeholders_in(invocation: Invocation) -> Iterator[Placeholder]:
 
 
 def check_placeholder(ph: Placeholder, index: int, ctx: ExecContext) -> str | None:
-    """Return an error message, or None if the reference is valid here (spec §5.2 check 5, §7.2).
+    """Return an error message, or None if the reference is valid here (spec §5.2 check 4, §7.2).
 
     Every message here is reported as E_BAD_REFERENCE.
     """

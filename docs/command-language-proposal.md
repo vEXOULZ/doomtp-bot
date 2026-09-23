@@ -179,5 +179,5 @@ None at the moment. Round 2 resolved everything (D5–D8).
 | `?` suffix = `\|\| true` (`!shoutout? @x`) | **Deferred** | Revisit after real usage shows how often `\|\| true` gets typed. Check for collisions with commands or arguments ending in `?` (e.g. `!8ball will it work?`). The `?` would have to attach to the *command name* only. |
 | `{arg.N+}` strips quotes | **Test** | Parser golden tests plus a live chat trial: `!say "hello" world`, `!say he said "hi"`, `!say it's "fine"`, nested escaped quotes. Confirm people rarely need `+raw`. |
 | `;` sequence operator | **Reserved** | Only if a "send every message" mode is ever wanted |
-| Runtime cooldown failures | **Planned (v1.x)** | Cooldowns fail the individual invocation with code 128 at runtime instead of blocking the whole line in preflight, so `!a \|\| !b` runs `b` when `a` is on cooldown. See spec §5.2. |
+| Runtime cooldown failures | **Done (spec 1.1)** | Cooldowns fail the individual invocation with code 128 at runtime instead of blocking the whole line in preflight, so `!a \|\| !b` runs `b` when `a` is on cooldown. See spec §5.2. |
 | Keyword operator aliases | **Rejected** | — |
