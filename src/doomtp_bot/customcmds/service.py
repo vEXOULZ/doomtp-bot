@@ -14,7 +14,7 @@ import re
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
@@ -22,10 +22,14 @@ from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node
+from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import CommandError, to_json
 from doomtp_bot.storage.db import Connection, Row, fetch_one, transaction
+
+if TYPE_CHECKING:
+    from doomtp_bot.filters.service import FilterService
 
 log = structlog.get_logger(__name__)
 
@@ -83,9 +87,12 @@ class CustomCommandService:
         conn: Connection,
         *,
         on_grants_changed: Callable[[], Awaitable[None]] | None = None,
+        filters: FilterService | None = None,
     ) -> None:
         self.conn = conn
         self.quota = QUOTA_PER_USER
+        # A body is stored only if it parses and the channel's filter accepts it, whoever sends it.
+        self.filters = filters
         # Grants live in the access policy's in-memory snapshot; deleting rows here has to invalidate it.
         self.on_grants_changed = on_grants_changed
         self._asts: dict[tuple[str, int, str], Node] = {}  # (command id, version, channel prefix)
@@ -105,6 +112,17 @@ class CustomCommandService:
         if cached is None:
             cached = self._asts[key] = self.parse_body(command.body, prefix)
         return cached
+
+    def check_body(self, body: str, *names: str, channel_id: str, prefix: str) -> None:
+        """Parse the body the way it will run in that channel, and filter what is about to be stored
+        (ADR-0009, architecture §9). Raises CustomCommandError."""
+        try:
+            self.parse_body(body, prefix)
+        except ParseError as exc:
+            raise CustomCommandError(str(exc)) from exc
+        hits = self.filters.rejects_any(channel_id, body, *names) if self.filters is not None else []
+        if hits:
+            raise CustomCommandError(f"the filter rejects that: {', '.join(hits)}")
 
     # ── reads ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -241,11 +259,22 @@ class CustomCommandService:
 
     # ── writes ──────────────────────────────────────────────────────────────
     async def create(
-        self, *, owner_user_id: str, owner_login: str, name: str, body: str, actor_via: str = "chat"
+        self,
+        *,
+        owner_user_id: str,
+        owner_login: str,
+        name: str,
+        body: str,
+        channel_id: str,
+        prefix: str,
+        actor_via: str = "chat",
     ) -> CustomCommand:
+        """Store a new command. `channel_id` and `prefix` are where it is written from: that channel's
+        filter and command sign apply to the body."""
         name = name.lower()
         if not NAME_RE.match(name):
             raise CustomCommandError("command names: lowercase letters, digits, _ and -, up to 32")
+        self.check_body(body, name, channel_id=channel_id, prefix=prefix)
         if await self.by_owner(owner_user_id, name) is not None:
             raise CustomCommandError(f"you already have a command named {name}")
         if await self.count_owned(owner_user_id) >= self.quota:
@@ -267,7 +296,14 @@ class CustomCommandService:
         assert found is not None
         return found
 
-    async def edit(self, command: CustomCommand, body: str, *, actor_via: str = "chat") -> CustomCommand:
+    async def edit(
+        self, command: CustomCommand, body: str, *, channel_id: str, prefix: str, actor_via: str = "chat"
+    ) -> CustomCommand:
+        """A new version, checked the way `create` checks the first one."""
+        self.check_body(body, channel_id=channel_id, prefix=prefix)
+        return await self._new_version(command, body, actor_via)
+
+    async def _new_version(self, command: CustomCommand, body: str, actor_via: str) -> CustomCommand:
         version = command.version + 1
         async with transaction(self.conn):
             await self._add_version(command.id, version, body)
@@ -290,7 +326,7 @@ class CustomCommandService:
         )
         if row is None:
             raise CustomCommandError(f"{command.name} has no version {version}")
-        return await self.edit(command, row["body"], actor_via=actor_via)
+        return await self._new_version(command, row["body"], actor_via)  # checked when it was stored
 
     async def delete(self, command: CustomCommand, *, actor_via: str = "chat") -> tuple[int, int]:
         """Soft delete. Links and publications stop working at once; returns what was affected."""

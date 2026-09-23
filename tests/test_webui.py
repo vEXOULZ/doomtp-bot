@@ -36,17 +36,19 @@ async def services(dbs: Databases) -> AsyncIterator[dict[str, object]]:
     await policy.mutate(
         lambda repo: repo.set_channel_field(CHANNEL_ID, "status", "joined", Actor(None, "system"))
     )
-    customcmds = CustomCommandService(dbs.bot)
-    packs = PackService(dbs.bot, customcmds)
-    triggers = TriggerService(dbs.bot)
-    await triggers.reload()
     filters = FilterService(dbs.bot)
     await filters.reload()
+    customcmds = CustomCommandService(dbs.bot, filters=filters)
+    packs = PackService(dbs.bot, customcmds)
+    triggers = TriggerService(dbs.bot, filters=filters)
+    await triggers.reload()
+    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
+    triggers.parser_params = runtime.parser_params
     health = HealthRegistry()
     health.register("databases", _ok_check)
     yield {
         "policy": policy,
-        "runtime": Runtime(builtin_registry(), policy=policy, services={"policy": policy}),
+        "runtime": runtime,
         "customcmds": customcmds,
         "packs": packs,
         "triggers": triggers,
@@ -111,7 +113,12 @@ async def test_globally_published_commands_join_the_reference(
 ) -> None:
     customcmds: CustomCommandService = services["customcmds"]  # type: ignore[assignment]
     command = await customcmds.create(
-        owner_user_id="400", owner_login="alice", name="dice", body="random 1 6"
+        owner_user_id="400",
+        owner_login="alice",
+        name="dice",
+        body="random 1 6",
+        channel_id=GLOBAL,
+        prefix="!",
     )
     await customcmds.publish(channel_id=GLOBAL, name="dice", command=command, published_by="1")
     body = (await client.get("/docs/commands")).text
@@ -192,7 +199,12 @@ async def test_a_channel_page_lists_what_is_published(
 ) -> None:
     customcmds: CustomCommandService = services["customcmds"]  # type: ignore[assignment]
     command = await customcmds.create(
-        owner_user_id="400", owner_login="alice", name="hype", body="echo hyped"
+        owner_user_id="400",
+        owner_login="alice",
+        name="hype",
+        body="echo hyped",
+        channel_id=CHANNEL_ID,
+        prefix="!",
     )
     await customcmds.publish(channel_id=CHANNEL_ID, name="hype", command=command, published_by="300")
     body = (await client.get(f"/channels/{CHANNEL_LOGIN}")).text
@@ -248,9 +260,11 @@ async def test_the_channel_page_shows_modules_triggers_and_filters(
         match={"regex": "hello"},
         run_as_rank=80,
         created_by="300",
+        prefix="!",
+        via="chat",
     )
     filters: FilterService = services["filters"]  # type: ignore[assignment]
-    await filters.add(channel_id=CHANNEL_ID, pattern="badword", actor_user_id="300")
+    await filters.add(channel_id=CHANNEL_ID, pattern="badword", actor_user_id="300", via="chat")
 
     await client.post("/admin/login", data={"password": PASSWORD})
     body = (await client.get(f"/admin/channels/{CHANNEL_LOGIN}")).text
@@ -278,6 +292,31 @@ async def test_toggling_a_module_from_the_admin_page(
         "SELECT via FROM audit_log WHERE action = 'module.toggle'"
     ) as cur:
         assert [r["via"] for r in await cur.fetchall()] == ["web"]  # the change is audited as a web action
+
+
+async def test_toggling_triggers_and_filters_from_the_admin_page_is_audited_as_web(
+    client: httpx.AsyncClient, services: dict[str, object]
+) -> None:
+    policy: PolicyService = services["policy"]  # type: ignore[assignment]
+    await client.post("/admin/login", data={"password": PASSWORD})
+    page = (await client.get(f"/admin/channels/{CHANNEL_LOGIN}")).text
+    csrf = page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    api, headers = f"/api/v1/channels/{CHANNEL_LOGIN}", {"X-CSRF-Token": csrf}
+    trigger = await client.post(f"{api}/triggers", json={"type": "raid", "expr": "echo hi"}, headers=headers)
+    entry = await client.post(f"{api}/filters", json={"pattern": "badword"}, headers=headers)
+
+    for path, field, item in (("trigger", "trigger_id", trigger), ("filter", "entry_id", entry)):
+        response = await client.post(
+            f"/admin/channels/{CHANNEL_LOGIN}/{path}",
+            data={field: item.json()["id"], "enabled": "off", "csrf": csrf},
+        )
+        assert response.status_code == 303
+
+    async with await policy.repo.conn.execute(
+        "SELECT action, via FROM audit_log WHERE action LIKE '%%.disable' ORDER BY id"
+    ) as cur:
+        rows = [(r["action"], r["via"]) for r in await cur.fetchall()]
+    assert rows == [("trigger.disable", "web"), ("filter.disable", "web")]
 
 
 async def test_a_write_without_a_valid_csrf_token_is_refused(

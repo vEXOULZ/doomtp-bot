@@ -58,7 +58,12 @@ class Harness:
     async def add(self, who: str, name: str, body: str) -> Any:
         user = USERS[who]
         return await self.service.create(
-            owner_user_id=user["id"], owner_login=user["name"], name=name, body=body
+            owner_user_id=user["id"],
+            owner_login=user["name"],
+            name=name,
+            body=body,
+            channel_id=CHANNEL_ID,
+            prefix="!",
         )
 
 
@@ -252,3 +257,29 @@ async def test_duplicate_pack_names_per_owner(h: Harness) -> None:
 
 async def test_global_scope_constant_is_the_policy_sentinel() -> None:
     assert GLOBAL == "*"
+
+
+async def test_pack_writes_are_audited_with_the_source_they_came_from(h: Harness) -> None:
+    alice, mod = USERS["alice"]["id"], USERS["mod"]["id"]
+    hit = await h.add("alice", "hit", "echo hit me")
+    pack = await h.packs.create(owner_user_id=alice, name="blackjack", actor_via="api")
+    await h.packs.add_member(pack, hit, actor_via="api")
+    await h.packs.publish(channel_id=CHANNEL_ID, pack=pack, published_by=mod, actor_via="api")
+    await h.packs.unpublish(channel_id=CHANNEL_ID, pack=pack, actor_user_id=mod, actor_via="api")
+    assert await h.packs.remove_member(pack, hit, actor_via="api")
+    await h.packs.delete(pack, actor_via="api")
+    await h.say("alice", "!cc pack create cards")
+
+    async with await h.dbs.bot.execute(
+        "SELECT action, via FROM audit_log WHERE action LIKE 'pack.%%' ORDER BY id"
+    ) as cur:
+        rows = [(r["action"], r["via"]) for r in await cur.fetchall()]
+    assert rows == [
+        ("pack.create", "api"),
+        ("pack.add", "api"),
+        ("pack.publish", "api"),
+        ("pack.unpublish", "api"),
+        ("pack.rm", "api"),
+        ("pack.delete", "api"),
+        ("pack.create", "chat"),  # chat still says chat
+    ]

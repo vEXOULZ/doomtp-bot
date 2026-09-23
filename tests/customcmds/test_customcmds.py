@@ -10,7 +10,8 @@ from typing import Any
 import pytest
 
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
-from doomtp_bot.customcmds.service import CustomCommandService
+from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
+from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
@@ -68,7 +69,12 @@ class Harness:
     async def add(self, who: str, name: str, body: str) -> Any:
         user = USERS[who]
         return await self.service.create(
-            owner_user_id=user["id"], owner_login=user["name"], name=name, body=body
+            owner_user_id=user["id"],
+            owner_login=user["name"],
+            name=name,
+            body=body,
+            channel_id=CHANNEL_ID,
+            prefix="!",
         )
 
     async def value(self, ns: str, key1: str, key2: str = "", key3: str = "", name: str = "") -> Any:
@@ -141,7 +147,7 @@ async def test_edits_are_live_and_deletes_break_links_immediately(h: Harness) ->
     await h.service.link(user_id=USERS["bob"]["id"], alias="hi", command=command)
     assert await h.say("bob", "!hi") == "one"
 
-    edited = await h.service.edit(command, "echo two")
+    edited = await h.service.edit(command, "echo two", channel_id=CHANNEL_ID, prefix="!")
     assert edited.version == 2
     assert await h.say("bob", "!hi") == "two"
 
@@ -182,7 +188,7 @@ async def test_mods_can_disable_and_re_enable_a_publication(h: Harness) -> None:
 # ── limits (spec §5.2 checks 6 and 7) ──────────────────────────────────────
 async def test_a_command_calling_itself_fails_preflight(h: Harness) -> None:
     command = await h.add("alice", "loop", "echo start")
-    await h.service.edit(command, "loop")
+    await h.service.edit(command, "loop", channel_id=CHANNEL_ID, prefix="!")
     report = await h.run("alice", "!loop")
     assert report.result.code == Code.USAGE
     assert isinstance(report.result.data, dict) and report.result.data["error"] == "E_CC_CYCLE"
@@ -458,3 +464,39 @@ async def test_help_lists_custom_commands_the_caller_can_run(h: Harness) -> None
 
     alices = await h.say("alice", "!help")
     assert alices is not None and "custom: hype" in alices  # her own alias
+
+
+# ── what the service checks, whoever calls it ──────────────────────────────
+async def test_the_service_checks_a_body_before_storing_it(dbs: Databases) -> None:
+    """Chat, the API or a future editor: every caller gets the checks `cc add` used to make on its own."""
+    filters = FilterService(dbs.bot)
+    await filters.reload()
+    await filters.add(channel_id=CHANNEL_ID, pattern="bad", actor_user_id="300", via="chat")
+    service = CustomCommandService(dbs.bot, filters=filters)
+    alice = USERS["alice"]
+
+    async def create(name: str, body: str, prefix: str = "!") -> Any:
+        return await service.create(
+            owner_user_id=alice["id"],
+            owner_login=alice["name"],
+            name=name,
+            body=body,
+            channel_id=CHANNEL_ID,
+            prefix=prefix,
+        )
+
+    with pytest.raises(CustomCommandError, match="placeholder"):
+        await create("hi", "echo {")
+    with pytest.raises(CustomCommandError, match="filter rejects"):
+        await create("hi", "echo you are bad")
+    with pytest.raises(CustomCommandError, match="filter rejects"):
+        await create("bad", "echo hello")  # the name is read out too
+    with pytest.raises(CustomCommandError, match="invalid command name"):
+        await create("hi", "echo hi | !echo", prefix="?")  # parsed under the channel's own sign
+    command = await create("hi", "echo hi | ?echo", prefix="?")
+
+    with pytest.raises(CustomCommandError, match="filter rejects"):
+        await service.edit(command, "echo bad", channel_id=CHANNEL_ID, prefix="?")
+    with pytest.raises(CustomCommandError, match="invalid command name"):
+        await service.edit(command, "echo hi | !echo", channel_id=CHANNEL_ID, prefix="?")
+    assert await service.owned_by(alice["id"]) == [command]  # nothing else was stored

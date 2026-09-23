@@ -67,12 +67,12 @@ async def run(settings: Settings) -> None:
     store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
-    customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
-    packs = PackService(dbs.bot, customcmds)
     content_filter = FilterService(dbs.bot)
     await content_filter.reload()
+    customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload, filters=content_filter)
+    packs = PackService(dbs.bot, customcmds)
     history = RecentMessagesProvider(settings.history_provider_url)
-    triggers = TriggerService(dbs.bot)
+    triggers = TriggerService(dbs.bot, filters=content_filter)
     await triggers.reload()
     activity = ChatActivity()
     writer = ChatLogWriter(dbs.chatlog)
@@ -126,6 +126,7 @@ async def run(settings: Settings) -> None:
         custom=CustomCommandLoader(customcmds, packs),
         services=services,
     )
+    triggers.parser_params = runtime.parser_params  # expressions are checked the way they will run
 
     def rate_for(channel_id: str) -> tuple[int, float]:
         """Moderator send limits when the channel tier or the bot's role there allows them."""
