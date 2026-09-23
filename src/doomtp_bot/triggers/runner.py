@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.executor import ScopeArgs
 from doomtp_bot.triggers.service import Trigger
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from doomtp_bot.core.outbox import Outbox
+    from doomtp_bot.core.streams import StreamStatus
     from doomtp_bot.policy.service import PolicyService
     from doomtp_bot.runtime.engine import RunReport, Runtime
 
@@ -32,10 +34,12 @@ class TriggerRunner:
         runtime: Runtime,
         policy: PolicyService,
         outbox: Outbox,
+        streams: StreamStatus | None = None,
     ) -> None:
         self.runtime = runtime
         self.policy = policy
         self.outbox = outbox
+        self.streams = streams
 
     async def run(
         self,
@@ -50,7 +54,9 @@ class TriggerRunner:
         message_id: str | None = None,
     ) -> RunReport | None:
         """Run one trigger and send whatever it produced. Returns the report, or None if it didn't parse."""
-        channel = self.policy.channel_info(trigger.channel_id, channel_login)
+        channel = self.policy.channel_info(
+            trigger.channel_id, channel_login, **live_fields(self.streams, trigger.channel_id)
+        )
         chatter = None
         if user is not None:
             chatter = self.policy.build_chatter(trigger.channel_id, user[0], user[1], user[2])

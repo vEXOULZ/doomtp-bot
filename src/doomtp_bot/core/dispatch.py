@@ -16,6 +16,7 @@ from doomtp_bot.core.events import (
     StreamStatusChanged,
     UserMessagesCleared,
 )
+from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang.ast import invocations
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, looks_like_command
 from doomtp_bot.runtime.result import Code
@@ -220,7 +221,9 @@ class Dispatcher:
                     msg.display_name,
                     frozenset(b.set_id for b in msg.badges),
                 )
-                channel = self.policy.channel_info(msg.channel_id, msg.channel_login)
+                channel = self.policy.channel_info(
+                    msg.channel_id, msg.channel_login, **live_fields(self.streams, msg.channel_id)
+                )
                 invalidated = self.moderation.checker(
                     msg.channel_id, msg.message_id, msg.user_id, msg.sent_at
                 )

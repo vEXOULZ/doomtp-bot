@@ -149,7 +149,7 @@ async def run(settings: Settings) -> None:
         hold_ms_for=hold_ms_for,
         content_filter=content_filter.apply,
     )
-    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox)
+    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
     timers = TimerScheduler(
         triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams
     )
@@ -312,6 +312,7 @@ async def run(settings: Settings) -> None:
             "variable_store": store,
             "chatlog_db": dbs.chatlog,
             "api_keys": ApiKeyService(dbs.bot),
+            "streams": streams,  # {channel.live} and friends in /explain runs
         },
         admin_password=settings.admin_password_value(),
     )
