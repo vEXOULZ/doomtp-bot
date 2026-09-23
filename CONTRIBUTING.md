@@ -36,9 +36,34 @@ Concluding a merge that hit conflicts is a commit on `main`, and the hook lets t
 rule is about where work starts, not where it lands. `git commit --no-verify` skips the hook entirely.
 It exists for the day you need it, not for the day you are in a hurry.
 
-Once the repository has a remote, turn on branch protection for `main` as well — require a pull request,
-and disallow direct pushes. A local hook protects the person who installed it; the setting protects the
-branch.
+GitHub enforces the same rule on the server, because a local hook protects only the person who
+installed it. `main` on [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot) accepts
+changes only through a pull request, and a pull request merges only when all five CI jobs are green on a
+branch that is up to date with `main`:
+
+| Check | What it guards |
+|-------|----------------|
+| `branch-name` | the Conventional Branch rule above, the same script the hook runs |
+| `python (3.11)`, `python (3.12)` | lint, types, the suite against Postgres 17, grammar and railroad checks |
+| `web-editor` | vitest, and that the committed editor bundle matches its source |
+| `docker` | the image builds and the server compose files parse together |
+
+No approvals are required — on a one-person project GitHub would not let you approve your own pull
+request, and requiring one would only mean switching the rule off to merge. Review conversations must be
+resolved. The rule applies to administrators too, so there is no quiet way around it; changing that is a
+visible settings change, which is the point. Force-pushes and deleting `main` are refused.
+
+The day-to-day flow is therefore: branch, push the branch, open a pull request, merge when it is green.
+
+```bash
+gh pr create --fill
+```
+
+```bash
+gh pr merge --merge --delete-branch
+```
+
+Merge commits, not squashes: the history reads as branches landing, which is how it was written.
 
 ## Before you push
 
