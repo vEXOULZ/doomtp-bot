@@ -1,8 +1,8 @@
 # doomtp-bot — Architecture
 
 **Status:** Accepted, built · **Date:** 2026-09-16 · **Revision:** 5 (2026-09-23: checked against
-`src/` section by section; what was promised and not built is tracked as `ARCH-1`…`ARCH-9` on the
-[roadmap](roadmap.md) until it is either built or taken out of this document)
+`src/` section by section; what was promised and not built was tracked as `ARCH-1`…`ARCH-9` on the
+[roadmap](roadmap.md), and each is now built or taken out of this document with the reason beside it)
 
 *Revision 4 (2026-09-21): diagrams redrawn from the built system; deployment section follows ADR-0013.*
 
@@ -132,7 +132,7 @@ flowchart TB
 
     subgraph DATA["postgres — one database, a schema each (ADR-0014)"]
         direction LR
-        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · audit · oauth_tokens")]:::store
+        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · quotes · audit · oauth_tokens")]:::store
         CHAT[("schema chatlog<br/>messages + tsvector · mod_events<br/>log_sessions · backfill_runs<br/>command_runs · outbound_msgs")]:::store
     end
 ```
@@ -591,11 +591,11 @@ A **race window** remains: a mod can act after the message has already been sent
 | `GET /healthz`, `GET /readyz` | Now | Liveness, and readiness with component detail: EventSub, tokens, both databases, log queue depth, backfill status, channels |
 | `GET /metrics` | Now | The §13 counters in Prometheus text (ADR-0015). Unauthenticated like the two above, and it names no channel or user. |
 | `/auth/*` | Now | Bot OAuth setup and broadcaster full-tier connect |
-| `GET /api/v1/commands` | Early | **All** commands with their full specs. Feeds the public docs page. |
-| `GET /api/v1/channels/{login}/commands` | Early | The effective command list for a channel, including enabled state, roles, cooldowns and publications |
-| `POST /api/v1/parse` | Early | Tokens, AST, errors and warnings from the authoritative parser (ADR-0011). Powers editor diagnostics. |
+| `GET /api/v1/commands` | **Now** | **All** commands with their full specs. Feeds the public docs page. |
+| `GET /api/v1/channels/{login}/commands` | **Now** | The effective command list for a channel, including enabled state, roles, cooldowns and publications |
+| `POST /api/v1/parse` | **Now** | Tokens, AST, errors and warnings from the authoritative parser (ADR-0011). Powers editor diagnostics. |
 | `POST /api/v1/explain` | **Now** | Same output as `!explain`. Public, as the editor's preview. The optional `as_user` (with the `badges` to assume) needs an API key or an admin session (§4.4). |
-| `GET /api/v1/language` | Early | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
+| `GET /api/v1/language` | **Now** | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
 | `GET /api/v1/channels/{login}/commands`, `/publications`, `GET /api/v1/custom-commands` | **Now** | Public, like the pages that already show them |
 | `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables, message search, command runs, `/api/v1/audit` | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
@@ -613,13 +613,20 @@ A **race window** remains: a mod can act after the message has already been sent
 - **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
 - If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes.
 
-*Future (not designed): Twitch OAuth login for a per-user dashboard. The auth layer is written as a pluggable `Authenticator` so this can be added later.*
+*Future (not designed): Twitch OAuth login for a per-user dashboard.* Two ways in exist today, and they
+meet in one place: `_authenticate` in `api/routes/data.py` takes an API key (`api/keys.py`) or an admin
+session (`webui/auth.py`) and answers who is calling; the admin pages ask `_require_admin`. A Twitch login
+would go in beside them. *(Changed in revision 5: this line used to promise a pluggable `Authenticator`
+written ahead of time. It was never built, and it is not planned: a Twitch login is not a third way to be
+the admin but a new kind of caller — someone with rights over their own data only — and an interface
+written before that caller is designed would only guess at its shape. The dashboard adds its principal,
+and the seam, when it is designed.)*
 
 ---
 
 ## 12. Package layout
 
-Built (✔) and planned (·):
+Everything here is built (✔):
 
 ```
 src/doomtp_bot/

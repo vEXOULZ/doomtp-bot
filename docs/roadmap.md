@@ -1,6 +1,6 @@
 # Roadmap and progress
 
-**As of 2026-09-23** (the architecture's own promises are tracked beside the ADRs', and being closed). Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-23** (the architecture's own promises are tracked beside the ADRs', and all closed). Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
 
@@ -28,11 +28,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 | [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
-| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 8/9 | One open, a decision |
+| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
 **79 of 83 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
-code — they are waiting on a person or a server. **8 of the 9 architecture promises are closed**, and
-the other one is waiting on code or on a decision to drop it.
+code — they are waiting on a person or a server. **All 9 architecture promises are closed**: six built,
+and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
+architecture with the reason written where the promise was.
 
 ## What is left, and why
 
@@ -69,6 +70,8 @@ courtesy item, not a technical one — which is exactly the sort that quietly ne
 
 ### Promised in the architecture, not yet built
 
+*All nine closed on 2026-09-23. The table stays as the record of what was promised and what became of it.*
+
 Found on 2026-09-23 by reading [architecture.md](architecture.md) against `src/`. Each one is written
 there as part of the design, not as "later", and none is an ADR action item. Closing one means building
 it or rewriting the architecture so it stops promising it — either is fine, silence is not. Items that
@@ -84,7 +87,7 @@ first.
 | `ARCH-5` | **Enforced `reads`/`writes`** (§4.2) | Declarations only, as the architecture says — until the first built-in other than `!var` writes. Closes with `ARCH-4` or `ARCH-6`, whichever writes first. | **Closed** 2026-09-23 — `ctx.variables` lets a built-in touch only the keys its spec declares (126 otherwise); `!var` declares `*`, and tests keep it the only one and keep handlers off `ctx.exec.variables`. |
 | `ARCH-6` | **Modules `weather`, `quotes`, `logsearch`** (§12, marked `·`) | Not built. `weather` is the spec's running example (§4.2) and needs an outside API, so an ADR; `quotes` and `logsearch` need only the database. | **Closed** 2026-09-23 — `quotes` (numbered per channel, never renumbered, moderators add and delete, audited, filtered) and `logsearch` (moderator; the chat-safe search in `chatlog/queries.py`) built. `weather` dropped from §12: no outside service without an ADR, and nobody asked; it stays the §4.2 spec example. |
 | `ARCH-7` | **`chatlog/queries.py` and `storage/repos/`** (§12, marked `·`) | Not on disk. Message search is written inside `api/routes/data.py`. Build them when `logsearch` needs the same query, or take them off the layout. | **Closed** 2026-09-23 — `chatlog/queries.py` built: the API's search moved there, with a chat-safe mode that leaves out deleted, cleared, bot and command messages. `storage/repos/` taken off the layout: SQL stays with the service that owns each table. |
-| `ARCH-8` | **A pluggable `Authenticator`** (§11), so Twitch login for a per-user dashboard can come later without rework | Not there: `webui/auth.py` is the admin password and `api/keys.py` the keys, each checked where it is used. | Open |
+| `ARCH-8` | **A pluggable `Authenticator`** (§11), so Twitch login for a per-user dashboard can come later without rework | Not there: `webui/auth.py` is the admin password and `api/keys.py` the keys, each checked where it is used. | **Closed** 2026-09-23 — taken out of §11: a per-user Twitch login is a new kind of caller, not a third way to be the admin, so an interface written before it is designed would guess. Key and session already meet in one `_authenticate`; §11 says where a login would go. |
 | `ARCH-9` | **Docs that match the code** | §7 says listeners use `re` with an RE2 check through `google-re2`; the code uses the `regex` module with a match timeout (`patterns.py`) and no RE2. The architecture's header still reads *Status: Proposed*. Both are edits to the doc, not the code. | **Closed** 2026-09-23 — §7 now describes `regex` with a 50 ms match timeout, and why not RE2; header reads *Accepted, built*, revision 5. |
 
 ## Deferred by design
@@ -127,10 +130,8 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
    items 5 and 6 and ADR-0014 item 10 on the way. Everything upstream of the guest is now proven.
 2. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
    and read what `scripts/coverage.py` says the next morning.
-3. **Close `ARCH-1` and `ARCH-2` before real chat.** A week in a channel is only worth something if its
-   counters can be read afterwards, and a bot that keeps sending into a channel that banned it is the
-   etiquette failure most likely to get the account itself restricted.
-4. **Run the bot in its own channel for a week** before inviting anyone else. Every remaining unknown in
-   this project is about what real chat does to it, not about what the code does.
-5. **Work through `ARCH-3` to `ARCH-9`**, cheapest first: `ARCH-9` is a doc edit, `ARCH-3` a page over an
-   endpoint that exists. `ARCH-4` and `ARCH-5` land together.
+3. **Sign the bot in again** once it runs there: `!shoutout` needs `moderator:manage:shoutouts`, which a
+   token from before 2026-09-23 doesn't carry (the chat line works without it; the card doesn't).
+4. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
+   afterwards. Every remaining unknown in this project is about what real chat does to it, not about
+   what the code does.
