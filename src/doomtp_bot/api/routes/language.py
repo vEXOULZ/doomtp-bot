@@ -11,6 +11,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
 from doomtp_bot.lang.errors import HINTS, ParseError, ParseErrorCode
@@ -61,7 +62,10 @@ def _channel(request: Request, login: str | None) -> Any:
         return ChannelInfo(id="*", login=login or "*")
     settings = policy.snapshot.channel_by_login(login)
     if settings is not None:
-        return policy.channel_info(settings.channel_id, settings.login)
+        streams = getattr(request.app.state, "streams", None)
+        return policy.channel_info(
+            settings.channel_id, settings.login, **live_fields(streams, settings.channel_id)
+        )
     raise HTTPException(status_code=404, detail=f"unknown channel {login}")
 
 

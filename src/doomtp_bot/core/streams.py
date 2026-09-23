@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 import structlog
@@ -49,6 +50,21 @@ class StreamStatus:
 
     def info(self, channel_id: str) -> dict[str, Any]:
         return dict(self.streams.get(channel_id, {}))
+
+
+def live_fields(status: StreamStatus | None, channel_id: str) -> dict[str, Any]:
+    """The live part of a `ChannelInfo`, as keywords for `PolicyService.channel_info`. Empty when offline."""
+    stream = status.streams.get(channel_id) if status is not None else None
+    if stream is None:
+        return {}
+    started = stream.get("started_at")
+    return {
+        "live": True,
+        "title": stream.get("title") or "",
+        "game": stream.get("game") or "",
+        "viewers": int(stream.get("viewers") or 0),
+        "started_at": datetime.fromisoformat(started).timestamp() if started else None,
+    }
 
 
 class StreamPoller:
