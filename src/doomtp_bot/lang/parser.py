@@ -122,35 +122,37 @@ class ParserParams:
     max_placeholder_nesting: int = MAX_PLACEHOLDER_NESTING
 
 
-class _Prefixed:
-    """Mixin for the two places that match the channel prefix (LineStart and CmdPrefix)."""
+def after_prefix(text: str, at: int, prefix: str) -> int | None:
+    """Index just past `prefix` at `at` in `text` (plus its optional gap), or None if it isn't there.
 
-    s: str
-    n: int
-    params: ParserParams
+    This is the one rule for matching the command sign (spec §2.1 PREFIX, PrefixGap): LineStart and
+    CmdPrefix use it, and so does everything else that takes a sign off typed text.
 
-    def after_prefix(self, at: int) -> int | None:
-        """Index just past the prefix at `at` (plus its optional gap), or None if it isn't there.
-
-        U+FE0F is skipped on both sides, so a channel prefix saved as `\U0001f3dc` still matches the
-        emoji-presentation `\U0001f3dc\ufe0f` that many chat clients send, and the other way round.
-        """
-        prefix, i, j = self.params.prefix, at, 0
-        while j < len(prefix):
-            if prefix[j] == VARIATION_SELECTOR:
-                j += 1
-            elif i < self.n and self.s[i] == VARIATION_SELECTOR:
-                i += 1
-            elif i < self.n and self.s[i] == prefix[j]:
-                i, j = i + 1, j + 1
-            else:
-                return None
-        while i < self.n and self.s[i] == VARIATION_SELECTOR:
+    U+FE0F is skipped on both sides, so a channel prefix saved as `\U0001f3dc` still matches the
+    emoji-presentation `\U0001f3dc\ufe0f` that many chat clients send, and the other way round.
+    """
+    i, j, n = at, 0, len(text)
+    while j < len(prefix):
+        if prefix[j] == VARIATION_SELECTOR:
+            j += 1
+        elif i < n and text[i] == VARIATION_SELECTOR:
             i += 1
-        if allows_gap(prefix):
-            while i < self.n and is_ws(self.s[i]):
-                i += 1
-        return i
+        elif i < n and text[i] == prefix[j]:
+            i, j = i + 1, j + 1
+        else:
+            return None
+    while i < n and text[i] == VARIATION_SELECTOR:
+        i += 1
+    if allows_gap(prefix):
+        while i < n and is_ws(text[i]):
+            i += 1
+    return i
+
+
+def strip_prefix(text: str, prefix: str) -> str:
+    """`text` without the command sign in front, matched as the parser matches it; unchanged without one."""
+    end = after_prefix(text, 0, prefix)
+    return text if end is None else text[end:]
 
 
 class NotACommand(Exception):
@@ -239,7 +241,7 @@ def parse(text: str, context: Context, params: ParserParams) -> Node:
     return _number_invocations(parser.line_body())
 
 
-class _Parser(_Prefixed):
+class _Parser:
     def __init__(self, text: str, params: ParserParams) -> None:
         self.s = text
         self.n = len(text)
@@ -291,7 +293,7 @@ class _Parser(_Prefixed):
             at += 1
             while at < self.n and is_ws(self.s[at]):
                 at += 1
-        end = self.after_prefix(at)
+        end = after_prefix(self.s, at, self.params.prefix)
         if end is None:
             return False
         if self.s.startswith("@", end):
@@ -421,7 +423,7 @@ class _Parser(_Prefixed):
     # ── C.4 invocations ─────────────────────────────────────────────────────
     def cmd_prefix(self) -> None:
         """CmdPrefix? <- PREFIX PrefixGap? &('@'? NameStart)"""
-        end = self.after_prefix(self.pos)
+        end = after_prefix(self.s, self.pos, self.params.prefix)
         if end is None:
             return
         at = end + 1 if self.s.startswith("@", end) else end

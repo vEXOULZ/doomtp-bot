@@ -15,6 +15,7 @@ from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
@@ -79,6 +80,7 @@ class Harness:
     dispatcher: Dispatcher
     channels: ChannelManager
     commands: CustomCommandService
+    streams: StreamStatus
     counter: int = 0
 
     async def say(
@@ -133,15 +135,16 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     runtime.services["channels"] = channels
     moderation = ModerationIndex()
     outbox = Outbox(twitch, writer)
+    streams = StreamStatus()
     dispatcher = Dispatcher(
         runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation,
-        channels=channels, customcmds=commands,
+        channels=channels, streams=streams, customcmds=commands,
     )  # fmt: skip
     await channels.ensure_home(BOT_ID, BOT_LOGIN)
     await channels.subscribe_all()
     await channels.join(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system"))
     try:
-        yield Harness(dbs, policy, writer, twitch, dispatcher, channels, commands)
+        yield Harness(dbs, policy, writer, twitch, dispatcher, channels, commands, streams)
     finally:
         gate.set()
         await dispatcher.drain()
@@ -303,6 +306,30 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
     await h.say("bob", "!hi")  # the channel has seen v3 now, so it is not told twice
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent][-1] == "three"
+
+
+async def test_custom_command_sees_the_stream_while_live(h: Harness) -> None:
+    """{channel.live} and {channel.title} come from what the Helix poller last saw (ADR-0007)."""
+    created = await h.commands.create(
+        owner_user_id=USERS["alice"],
+        owner_login="alice",
+        name="status",
+        body="echo live={channel.live} title={channel.title}",
+        channel_id=CHANNEL_ID,
+        prefix="!",
+    )
+    await h.commands.publish(channel_id=CHANNEL_ID, name="status", command=created, published_by="1")
+    h.streams.streams[CHANNEL_ID] = {
+        "title": "any% glitchless", "game": "DOOM", "viewers": 42, "started_at": "2026-01-01T00:00:00+00:00",
+    }  # fmt: skip
+    await h.say("bob", "!status")
+    await h.settle()
+    assert h.twitch.sent[-1][1] == "live=true title=any% glitchless"
+
+    del h.streams.streams[CHANNEL_ID]
+    await h.say("bob", "!status")
+    await h.settle()
+    assert h.twitch.sent[-1][1] == "missing value: {channel.title}"  # offline: no title to show
 
 
 async def test_backfill_explains_itself_and_waits_for_the_broadcaster(h: Harness) -> None:

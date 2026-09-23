@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.lang.parser import DEFAULT_PREFIX
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, strip_prefix
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.runtime.context import CommandContext
 from doomtp_bot.runtime.registry import CommandRegistry
@@ -67,7 +67,7 @@ async def user_arg(ctx: CommandContext, raw: str) -> dict[str, Any]:
 def command_spec(ctx: CommandContext, name: str) -> CommandSpec:
     """Look up a command by name or alias, with or without the channel prefix."""
     registry: CommandRegistry = ctx.service("registry")
-    found = registry.get(name.lower().removeprefix(ctx.channel.prefix))
+    found = registry.get(strip_prefix(name, ctx.channel.prefix).lower())
     if found is None:
         raise CommandError(f"unknown command: {name}")
     return found.spec
