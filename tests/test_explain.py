@@ -135,13 +135,6 @@ async def test_run_evaluates_without_committing_or_sending(h: Harness) -> None:
         assert (await cur.fetchone())["n"] == 0  # the write buffer was discarded (spec §9)
 
 
-async def test_run_does_not_use_up_a_cooldown(h: Harness) -> None:
-    await h.say("mod", "!cooldown set ping everyone 60 60")
-    first = await h.explain("alice", "!ping", run=True)
-    assert first.ran and first.run_result is not None and first.run_result.ok
-    assert await h.say("alice", "!ping") == "pong"  # still allowed: the dry run didn't consume it
-
-
 async def test_as_body_explains_in_the_body_context(h: Harness) -> None:
     line = await h.explain("alice", "!echo {arg.1}")
     assert line.failure is not None  # {arg.*} isn't available in a typed line

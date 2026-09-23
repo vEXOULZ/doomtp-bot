@@ -1,4 +1,4 @@
-"""Policy gate used by preflight: toggles, capabilities, permissions, cooldowns (ADR-0006).
+"""Policy gate: toggles, capabilities and permissions in preflight, cooldowns at runtime (ADR-0006).
 
 The runtime depends only on this protocol; doomtp_bot.policy provides the real implementation.
 """
@@ -29,13 +29,22 @@ class Decision:
 
 class Policy(Protocol):
     def check(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
-        """Preflight: toggles, capabilities, permission, cooldown — in that order."""
+        """Preflight: toggles, capabilities, permission — in that order.
+
+        Not cooldowns: since spec 1.1 those are the individual invocation's runtime failure, so `||` can
+        handle them and a branch that never runs never trips one. See `claim_cooldown`.
+        """
 
     def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
         """Toggles + capabilities + permission only (used for parse-error visibility, !help)."""
 
-    def commit_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> None:
-        """Start both cooldown buckets for an invocation that is about to execute."""
+    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec, *, commit: bool = True) -> Decision:
+        """Runtime (spec §6.3): refuse with 128 if either bucket is still running, otherwise start both.
+
+        Checking and starting are one synchronous step, so two runs racing for a shared bucket can't both
+        get through. With `commit=False` it only looks — a dry run (spec §9), or the early check the
+        executor makes before expanding arguments.
+        """
 
 
 class AllowAllPolicy:
@@ -45,5 +54,5 @@ class AllowAllPolicy:
     def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
         return True
 
-    def commit_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> None:
-        return None
+    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec, *, commit: bool = True) -> Decision:
+        return Decision.allow()

@@ -189,7 +189,7 @@ async def test_mods_can_disable_and_re_enable_a_publication(h: Harness) -> None:
     assert await h.say("bob", "!roll") == "rolled"
 
 
-# ── limits (spec §5.2 checks 7 and 8) ──────────────────────────────────────
+# ── limits (spec §5.2 checks 6 and 7) ──────────────────────────────────────
 async def test_a_command_calling_itself_fails_preflight(h: Harness) -> None:
     command = await h.add("alice", "loop", "echo start")
     await h.service.edit(command, "loop")

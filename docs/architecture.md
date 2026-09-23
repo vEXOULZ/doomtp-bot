@@ -101,8 +101,8 @@ flowchart TB
     subgraph RT["runtime/ — the command pipeline (ADR-0005)"]
         direction LR
         PARSE["lang/parser<br/>PEG → AST"] --> RES["resolver<br/>built-in → publication →<br/>pack → global → personal"]
-        RES --> PRE["preflight<br/>toggles · roles · cooldowns"]
-        PRE --> EXEC["executor<br/>operators · buffered writes"]
+        RES --> PRE["preflight<br/>toggles · roles"]
+        PRE --> EXEC["executor<br/>operators · cooldowns ·<br/>buffered writes"]
     end
 
     subgraph SVC["consulted while it runs"]
@@ -153,8 +153,8 @@ Three properties the picture is meant to make obvious:
 3. The runtime handles the expression (ADR-0005):
    1. **Parse** the text into an AST.
    2. **Resolve** each command name. The order is built-in, then published in the channel, then the user's personal commands.
-   3. **Preflight** every command against toggles, roles and both cooldowns. On a denial, the runtime runs the optional callback and otherwise stays silent.
-   4. **Execute** the commands, applying operator semantics. Variable writes are buffered.
+   3. **Preflight** every command against toggles and roles. On a denial, the runtime runs the optional callback and otherwise stays silent.
+   4. **Execute** the commands, applying operator semantics. Each command's cooldowns are checked when execution reaches it, so one on cooldown fails with 128 and `||` can route around it. Variable writes are buffered.
 4. **Moderation checkpoints:**
    - The runtime checks the Moderation Index between stages and cancels if the trigger was invalidated (exit code 130).
    - The **Outbox rechecks immediately before calling Helix**.
@@ -378,7 +378,8 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 - **Tier bucket** `(channel, command, tier)`: the tier is the user's highest-ranked role that has a rule for this command. Each tier has its own shared timer, so mods don't block viewers and viewers don't block mods.
 - **User bucket** `(channel, command, user_id)`, with its duration taken from the same rule.
 - A command runs only if **both** have expired. When it runs, both start.
-- **Rejection is silent.** Optional callbacks can respond:
+- **Checked when reached, not up front** (spec 1.1 §5.2). A command on cooldown fails *that invocation* with 128, so `!a || !b` runs `b` while `a` waits, and a branch the line never reaches is never held to a cooldown. The executor looks before expanding the arguments and claims — checks and starts both buckets in one step — immediately before running, so a command repeated in one line meets the cooldown its first run started.
+- **Rejection is silent** when 128 is the line's final result. Optional callbacks can respond:
   - `on_cooldown` and `on_denied` can be set per command, per module or per channel.
   - A callback is either a Python hook or a **pipeline** with access to `{cooldown.tier_remaining}`, `{cooldown.user_remaining}`, `{cooldown.tier}` and `{cooldown.command}`.
   - Callbacks are rate-limited to one notice per user per command per 30 s, so a callback can't become a spam vector.
@@ -711,4 +712,4 @@ Resolved in review round 3 (variable access matrix):
 
 Future consideration: private variables and read grants ([matrix §7](variable-access-matrix.md#7-future-considerations)).
 
-Command language spec Appendix B: all six items resolved. Runtime cooldown failures are planned for v1.x.
+Command language spec Appendix B: all six items resolved. Runtime cooldown failures landed as spec 1.1 (2026-09-22).

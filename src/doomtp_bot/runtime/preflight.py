@@ -1,4 +1,7 @@
-"""Static semantics: resolution and all-or-nothing preflight (spec §5)."""
+"""Static semantics: resolution and all-or-nothing preflight (spec §5).
+
+Cooldowns are not checked here since spec 1.1 — they fail the individual invocation at runtime.
+"""
 
 from __future__ import annotations
 
@@ -84,7 +87,7 @@ def placeholders_in(invocation: Invocation) -> Iterator[Placeholder]:
 
 
 def check_placeholder(ph: Placeholder, index: int, ctx: ExecContext) -> str | None:
-    """Return an error message, or None if the reference is valid here (spec §5.2 check 5, §7.2).
+    """Return an error message, or None if the reference is valid here (spec §5.2 check 4, §7.2).
 
     Every message here is reported as E_BAD_REFERENCE.
     """
@@ -157,8 +160,7 @@ def preflight(
         spec = resolved.spec
         decision = policy.check(here, spec)
         if not decision.allowed:
-            messages = {Code.DENIED: "permission denied", Code.COOLDOWN: "on cooldown"}
-            message = messages.get(decision.code, f"unknown command: {inv.name}")  # type: ignore[call-overload]
+            message = "permission denied" if decision.code == Code.DENIED else f"unknown command: {inv.name}"
             return fail(inv.index, inv.name, Result.failure(decision.code, message), decision)
         if spec.input is InputMode.NONE and inv.index in receives_stdin:
             return fail(

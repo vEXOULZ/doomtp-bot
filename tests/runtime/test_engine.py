@@ -66,18 +66,39 @@ async def test_a2_9_unknown_later_command_replies() -> None:
 
 
 class DenyAdd:
+    """`add` needs a moderator, refused in preflight; `ping` is on cooldown, refused when it is reached."""
+
     def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
         if spec.name == "add":
             return Decision(False, Code.DENIED, "needs mod", {"required_role": "moderator"})
-        if spec.name == "ping":
-            return Decision(False, Code.COOLDOWN, "cooldown", {"user_remaining": 4})
         return Decision.allow()
 
     def is_permitted(self, ctx, spec: CommandSpec) -> bool:  # type: ignore[no-untyped-def]
         return spec.name != "add"
 
-    def commit_cooldown(self, ctx, spec: CommandSpec) -> None:  # type: ignore[no-untyped-def]
-        pass
+    def claim_cooldown(self, ctx, spec: CommandSpec, *, commit: bool = True) -> Decision:  # type: ignore[no-untyped-def]
+        if spec.name == "ping":
+            return Decision(False, Code.COOLDOWN, "cooldown", {"command": "ping", "user_remaining": 4})
+        return Decision.allow()
+
+
+class LosesTheRace:
+    """The early look finds the bucket free, and by the time the claim comes someone else has it."""
+
+    def __init__(self) -> None:
+        self.claims: list[bool] = []
+
+    def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
+        return Decision.allow()
+
+    def is_permitted(self, ctx, spec: CommandSpec) -> bool:  # type: ignore[no-untyped-def]
+        return True
+
+    def claim_cooldown(self, ctx, spec: CommandSpec, *, commit: bool = True) -> Decision:  # type: ignore[no-untyped-def]
+        self.claims.append(commit)
+        if commit:
+            return Decision(False, Code.COOLDOWN, "cooldown", {"command": spec.name})
+        return Decision.allow()
 
 
 async def test_a2_10_denied_is_silent_with_callback() -> None:
@@ -90,9 +111,41 @@ async def test_a2_10_denied_is_silent_with_callback() -> None:
     )  # type: ignore[union-attr]
 
 
+# ── cooldowns fail the invocation, at runtime (spec 1.1, ADR-0006 item 5) ────
 async def test_cooldown_is_silent_with_callback() -> None:
+    r = await run(make_runtime(policy=DenyAdd()), "!ping")
+    assert (r.result.code, r.send, r.callback, r.origin, r.executed) == (
+        128,
+        None,
+        "on_cooldown",
+        "runtime",
+        [],
+    )
+    assert r.result.data == {"command": "ping", "user_remaining": 4}  # what {cooldown.*} is built from
+
+
+async def test_a_branch_that_never_runs_never_trips_its_cooldown() -> None:
+    # Under 1.0 preflight checked every invocation, so this whole line failed with 128 even though the
+    # `||` means `!ping` is never reached.
     r = await run(make_runtime(policy=DenyAdd()), "!random 1-6 || !ping")
+    assert (r.result.code, r.callback, r.executed) == (0, None, [1])
+
+
+async def test_or_routes_around_a_cooldown() -> None:
+    r = await run(make_runtime(policy=DenyAdd()), "!ping || echo ping is resting for {_.user_remaining}s")
+    assert (r.result.code, r.send, r.callback, r.executed) == (0, "ping is resting for 4s", None, [2])
+
+
+async def test_and_stops_at_a_cooldown() -> None:
+    r = await run(make_runtime(policy=DenyAdd()), "!ping && echo never")
     assert (r.result.code, r.send, r.callback, r.executed) == (128, None, "on_cooldown", [])
+
+
+async def test_the_claim_just_before_running_is_the_one_that_counts() -> None:
+    policy = LosesTheRace()
+    r = await run(make_runtime(policy=policy), "!ping")
+    assert (r.result.code, r.executed) == (128, [])
+    assert policy.claims == [False, True]  # looked, expanded the arguments, then claimed — and lost
 
 
 class DenyWrites:

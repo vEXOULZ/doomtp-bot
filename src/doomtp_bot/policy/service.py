@@ -236,9 +236,12 @@ class PolicyService:
         return self.permission(ctx, spec)
 
     def check(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
-        denied = self._gate(ctx, spec)
-        if denied is not None:
-            return denied
+        return self._gate(ctx, spec) or Decision.allow()
+
+    def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
+        return self._gate(ctx, spec) is None
+
+    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec, *, commit: bool = True) -> Decision:
         state = self.cooldown_state(ctx, spec)
         if state is not None and not state.ready:
             return Decision(
@@ -252,18 +255,12 @@ class PolicyService:
                     "user_remaining": state.user_remaining,
                 },
             )
+        found = self.cooldown_rule(ctx, spec) if commit else None
+        if found is not None:
+            tier, rule = found
+            user_id = ctx.invoker.id if ctx.invoker else None
+            self.cooldowns.commit(ctx.channel.id, self._cooldown_key(ctx, spec), tier, user_id, rule)
         return Decision.allow()
-
-    def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
-        return self._gate(ctx, spec) is None
-
-    def commit_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> None:
-        found = self.cooldown_rule(ctx, spec)
-        if found is None:
-            return
-        tier, rule = found
-        user_id = ctx.invoker.id if ctx.invoker else None
-        self.cooldowns.commit(ctx.channel.id, self._cooldown_key(ctx, spec), tier, user_id, rule)
 
     # ── callbacks (ADR-0006 §3) ─────────────────────────────────────────────
     def callback_expr(
