@@ -60,7 +60,10 @@ of its own and drops it at the end, and each test rolls back, so nothing accumul
 .venv/Scripts/python -m mypy && .venv/Scripts/python -m pytest -q
 ```
 
-Two backup tests need `pg_dump` on your PATH and skip without it. CI has it; a dev box need not.
+Two backup tests need a `pg_dump` at least as new as the server — it refuses to dump a newer one —
+and skip without it, naming the package to install. A dev box need not have it. CI must, so there
+the same condition fails the run instead: a skipped backup test in CI would mean nothing is testing
+backups while the run still goes green.
 
 CI runs those plus the web editor's tests, the committed-bundle check, the grammar and railroad diagram
 checks, and a Docker build. Nothing merges that CI hasn't agreed with.

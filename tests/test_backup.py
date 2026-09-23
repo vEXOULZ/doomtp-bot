@@ -2,18 +2,73 @@
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from doomtp_bot.storage.db import Databases
 from scripts.backup import BackupError, backup_schema, rotate, run
 
-# pg_dump ships with the Postgres client tools, which a dev box need not have; the image the backup
-# service runs from does (Dockerfile). Same rule as the Twitch CLI tests: skip rather than pretend.
-needs_pg_dump = pytest.mark.skipif(shutil.which("pg_dump") is None, reason="pg_dump is not installed")
+
+def pg_major(version_text: str) -> int:
+    """`pg_dump (PostgreSQL) 17.11 (Ubuntu 17.11-1.pgdg24.04+2)` -> 17."""
+    match = re.search(r"\(PostgreSQL\)\s+(\d+)", version_text)
+    if match is None:
+        raise ValueError(f"not a PostgreSQL version line: {version_text!r}")
+    return int(match.group(1))
+
+
+@pytest.fixture(scope="session")
+def pg_dump_ready(database_url: str) -> None:
+    """pg_dump is installed and new enough to dump the test server, or the backup tests don't run.
+
+    pg_dump refuses to dump a server newer than itself, so "installed" is not enough — a client one
+    major behind fails every dump with an error that reads like a backup bug.
+
+    On a dev box that is a skip: the client tools are optional there, and the image the backup service
+    runs from has the right one (Dockerfile). In CI it is a failure, because a skip there means the
+    suite has quietly stopped testing backups and still gone green — which is exactly what CI's first
+    runs would have done, with a pg_dump one major too old (ADR-0014).
+    """
+    with psycopg.connect(database_url) as conn:
+        row = conn.execute("SHOW server_version_num").fetchone()
+    assert row is not None
+    server = int(row[0]) // 10_000
+
+    path = shutil.which("pg_dump")
+    if path is None:
+        problem = "pg_dump is not installed"
+    else:
+        version = subprocess.run([path, "--version"], capture_output=True, encoding="utf-8", check=True)
+        client = pg_major(version.stdout)
+        if client >= server:
+            return
+        problem = f"pg_dump {client} cannot dump a Postgres {server} server"
+
+    advice = f"{problem}: install postgresql-client-{server} and put it first on PATH"
+    if os.environ.get("CI") == "true":
+        pytest.fail(advice)
+    pytest.skip(advice)
+
+
+needs_pg_dump = pytest.mark.usefixtures("pg_dump_ready")
+
+
+@pytest.mark.parametrize(
+    ("line", "major"),
+    [
+        ("pg_dump (PostgreSQL) 17.11 (Ubuntu 17.11-1.pgdg24.04+2)", 17),
+        ("pg_dump (PostgreSQL) 16.15 (Debian 16.15-0+deb13u1)", 16),
+        ("pg_dump (PostgreSQL) 18beta1", 18),
+    ],
+)
+def test_the_client_major_is_read_from_its_version_line(line: str, major: int) -> None:
+    assert pg_major(line) == major
 
 
 @needs_pg_dump
