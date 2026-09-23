@@ -13,6 +13,8 @@ from typing import Protocol
 
 import structlog
 
+from doomtp_bot.core import metrics
+
 log = structlog.get_logger(__name__)
 
 MAX_CHUNK = 500
@@ -188,7 +190,7 @@ class Outbox:
                 if result.dropped_reason is None:
                     self._last_text[channel_id] = part
                 else:
-                    self.dropped[result.dropped_reason] = self.dropped.get(result.dropped_reason, 0) + 1
+                    self._count_drop(result.dropped_reason)
                 if self.outbound_log is not None:
                     await self.outbound_log.outbound(
                         channel_id=channel_id,
@@ -206,6 +208,10 @@ class Outbox:
                 reply_to = None  # only the first chunk is threaded as a reply
         return results
 
+    def _count_drop(self, reason: str) -> None:
+        self.dropped[reason] = self.dropped.get(reason, 0) + 1
+        metrics.OUTBOX_DROPPED.inc(reason=reason)
+
     async def _banned(self, channel_id: str) -> None:
         """Leave rather than keep talking into a channel that banned the bot (architecture §10)."""
         log.warning("outbox.banned", channel=channel_id)
@@ -219,7 +225,7 @@ class Outbox:
     async def _drop(
         self, channel_id: str, text: str, reason: str, hits: list[str], run_ref: str | None = None
     ) -> None:
-        self.dropped[reason] = self.dropped.get(reason, 0) + 1
+        self._count_drop(reason)
         log.info("outbox.dropped", channel=channel_id, reason=reason)
         if self.outbound_log is not None:
             await self.outbound_log.outbound(

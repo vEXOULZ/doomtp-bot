@@ -16,6 +16,7 @@ import structlog
 import twitchio
 from twitchio import eventsub
 
+from doomtp_bot.core import metrics
 from doomtp_bot.core.events import Event
 from doomtp_bot.core.health import ComponentHealth, Status
 from doomtp_bot.core.outbox import BANNED, SendResult
@@ -86,6 +87,12 @@ class _BotClient(twitchio.Client):
             payload.user_id, payload.token, payload.refresh_token, payload.expires_in
         )
         log.info("twitch.token_refreshed", user_id=payload.user_id)
+
+    async def event_websocket_welcome(self, payload: Any) -> None:
+        # One per EventSub session: a first connection or a reconnect, which TwitchIO doesn't tell apart
+        # for us (ADR-0015).
+        metrics.EVENTSUB_WELCOMES.inc()
+        log.info("twitch.eventsub_welcome", session=payload.id)
 
     async def event_message(self, payload: Any) -> None:
         await self.service.emit(payload.id, mapping.chat_message(payload, self.bot_id))
@@ -168,6 +175,7 @@ class TwitchService:
             self.last_error = "the client returned on its own"
             log.warning("twitch.client_stopped", error=self.last_error)
         if self.on_stopped is not None and self.client is client:
+            metrics.TWITCH_CLIENT_RESTARTS.inc()
             # Nobody asked for this, so EventSub gave up on its own: hand it back to be started again,
             # from a new task, because starting again cancels this one.
             asyncio.create_task(self.on_stopped(), name="twitch-restart")  # noqa: RUF006

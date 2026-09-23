@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import structlog
 
 from doomtp_bot import __version__
+from doomtp_bot.core import metrics
 from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Part, Pipe, Placeholder, Store, Text
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, Publisher, RunCancelled
@@ -176,6 +177,8 @@ class Executor:
                 OnCooldown.unless_allowed(self.policy.claim_cooldown(ctx, spec))
         except OnCooldown as exc:
             result = Result.failure(exc.decision.code, "on cooldown", dict(exc.decision.info))
+            if not ctx.dry_run:
+                metrics.COOLDOWN_REJECTIONS.inc(tier=exc.decision.info.get("tier", ""))
         except MissingValue as exc:
             result = error_result(
                 "E_MISSING_VALUE", f"missing value: {exc.reference}", reference=exc.reference

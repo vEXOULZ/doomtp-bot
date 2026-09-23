@@ -12,6 +12,7 @@ import structlog
 
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
+from doomtp_bot.core import metrics
 from doomtp_bot.filters.matcher import Action, ChannelFilter, FilterEntry, FilterError, FilterResult, Kind
 from doomtp_bot.filters.matcher import compile_entry as _compile
 from doomtp_bot.policy.roles import GLOBAL
@@ -64,6 +65,8 @@ class FilterService:
     def apply(self, channel_id: str, text: str) -> tuple[str | None, list[str]]:
         """Outbox hook: censored text (None blocks the send) and the patterns that matched."""
         result = self._filter_for(channel_id).apply(text)
+        for hit in result.hits:
+            metrics.FILTER_HITS.inc(action=hit.action)
         if result.changed:
             log.info(
                 "filter.applied",

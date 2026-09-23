@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from doomtp_bot.core import metrics
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
@@ -252,9 +253,11 @@ async def test_capabilities_required(h: Harness) -> None:
 
 # ── cooldowns ──────────────────────────────────────────────────────────────
 async def test_tier_and_user_buckets_both_required(h: Harness) -> None:
+    refused = metrics.COOLDOWN_REJECTIONS.value(tier="everyone")
     assert await h.reply("viewer", "!dice") == "rolled"
     report = await h.say("viewer2", "!dice")  # shared everyone bucket (10s)
     assert report is not None and report.result.code == Code.COOLDOWN
+    assert metrics.COOLDOWN_REJECTIONS.value(tier="everyone") - refused == 1  # ADR-0015
     h.clock.now += 11
     assert await h.reply("viewer2", "!dice") == "rolled"
     h.clock.now += 11

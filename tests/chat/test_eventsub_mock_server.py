@@ -28,6 +28,7 @@ import aiohttp
 import pytest
 from twitchio.eventsub.websockets import Websocket
 
+from doomtp_bot.core import metrics
 from doomtp_bot.core.events import ChatNotification, Event
 from doomtp_bot.twitch.client import TwitchService, _BotClient
 from scripts.record_eventsub import WANTED
@@ -136,6 +137,7 @@ class _Recorder(_BotClient):
         self.welcomes: asyncio.Queue[str] = asyncio.Queue()
 
     async def event_websocket_welcome(self, payload: Any) -> None:
+        await super().event_websocket_welcome(payload)  # the bot's own handler counts it (ADR-0015)
         self.sessions.append(payload.id)
         self.welcomes.put_nowait(payload.id)
 
@@ -209,12 +211,14 @@ async def test_a_reconnect_message_moves_the_session_without_losing_events(
     server.trigger("channel.cheer")
     await listener.next_notification("cheer")
     first = listener.socket.session_id
+    welcomes = metrics.EVENTSUB_WELCOMES.value()
 
     server.tell_clients_to_reconnect()
     # Twitch sends session_reconnect with a URL and expects the old socket to be dropped once the new one
     # has been welcomed. TwitchIO does that for us; what matters here is that it really happens.
     second = await asyncio.wait_for(listener.client.welcomes.get(), 15)
     assert second != first
+    assert metrics.EVENTSUB_WELCOMES.value() - welcomes == 1  # how a reconnect shows on /metrics
 
     server.trigger("channel.follow")
     await listener.next_notification("follow")  # the new session is the one being delivered to
