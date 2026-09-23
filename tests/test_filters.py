@@ -12,7 +12,7 @@ from doomtp_bot.filters.service import FilterService
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.storage.db import Databases
-from tests.customcmds.test_customcmds import TickingClock
+from tests.fakes import TickingClock
 
 CHANNEL = "100"
 

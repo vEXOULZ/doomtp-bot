@@ -28,7 +28,7 @@ from doomtp_bot.triggers.service import (
     parse_every,
 )
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
-from tests.customcmds.test_customcmds import TickingClock
+from tests.fakes import FakeClock, TickingClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {"mod": ("300", "mod", "Mod"), "alice": ("400", "alice", "Alice")}
@@ -42,14 +42,6 @@ class FakeSender:
     async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
         self.sent.append(text)
         return SendResult(f"t{len(self.sent)}")
-
-
-@dataclass
-class FakeClock:
-    now: float = 0.0
-
-    def __call__(self) -> float:
-        return self.now
 
 
 @dataclass

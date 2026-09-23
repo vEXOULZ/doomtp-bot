@@ -22,7 +22,7 @@ from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
-from tests.customcmds.test_customcmds import TickingClock
+from tests.fakes import TickingClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {"mod": ("300", "mod", "Mod"), "alice": ("400", "alice", "Alice")}

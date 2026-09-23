@@ -22,6 +22,7 @@ from doomtp_bot.runtime.registry import CommandRegistry, command
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown
 from doomtp_bot.storage.db import Databases
+from tests.fakes import FakeClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 OWNER_ID = "1"
@@ -34,14 +35,6 @@ USERS = {
     "owner": {"id": OWNER_ID, "name": "owner", "display": "Owner"},
 }
 BADGES = {"streamer": {"broadcaster"}, "mod": {"moderator"}, "vip": {"vip"}}
-
-
-@dataclass
-class FakeClock:
-    now: float = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
 
 
 @command(
@@ -102,7 +95,7 @@ async def resolve_user(login: str) -> dict[str, Any] | None:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    clock = FakeClock()
+    clock = FakeClock(1000.0)
     policy = PolicyService(dbs.bot, bot_owner_ids=frozenset({OWNER_ID}), clock=clock)
     await policy.reload()
     registry: CommandRegistry = builtin_registry()

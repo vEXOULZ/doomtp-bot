@@ -22,6 +22,7 @@ from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
+from tests.fakes import TickingClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {
@@ -31,17 +32,6 @@ USERS = {
     "owner": {"id": "1", "name": "owner", "display": "Owner"},
 }
 BADGES = {"mod": {"moderator"}}
-
-
-class TickingClock:
-    """Monotonic clock that jumps a minute per read, so per-user cooldowns never block a test."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        self.now += 60.0
-        return self.now
 
 
 async def resolve_user(login: str) -> dict[str, Any] | None:

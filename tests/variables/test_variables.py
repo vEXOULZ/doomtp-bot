@@ -22,6 +22,7 @@ from doomtp_bot.runtime.variables import VarKey, WriteOp
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import Actor, VariableAccessPolicy, actor_of
 from doomtp_bot.variables.store import PostgresVariableStore
+from tests.fakes import TickingClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {
@@ -39,17 +40,6 @@ async def resolve_user(login: str) -> dict[str, Any] | None:
 
 async def login_for(user_id: str) -> str | None:
     return next((u["name"] for u in USERS.values() if u["id"] == user_id), None)
-
-
-@dataclass
-class TickingClock:
-    """Moves forward a minute on every read, so per-user cooldowns never block back-to-back test messages."""
-
-    now: float = 0.0
-
-    def __call__(self) -> float:
-        self.now += 60.0
-        return self.now
 
 
 @dataclass
