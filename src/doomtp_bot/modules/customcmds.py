@@ -14,7 +14,6 @@ from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import spec_for
 from doomtp_bot.customcmds.service import (
     CustomCommand,
-    CustomCommandError,
     CustomCommandService,
     Publication,
 )
@@ -99,8 +98,6 @@ async def _validate_body(ctx: CommandContext, body: str, *names: str) -> None:
         _service(ctx).parse_body(body, ctx.channel.prefix)
     except ParseError as exc:
         raise CommandError(str(exc)) from exc
-    except CustomCommandError as exc:
-        raise CommandError(str(exc)) from exc
     reject_filtered(ctx, body, *names)
 
 
@@ -137,10 +134,7 @@ async def _add(ctx: CommandContext, v: list[str], args: Args) -> Result:
         raise CommandError(f"usage: {USAGE}")
     await _validate_body(ctx, body, v[1])
     user_id, login = _invoker(ctx)
-    try:
-        created = await _service(ctx).create(owner_user_id=user_id, owner_login=login, name=v[1], body=body)
-    except CustomCommandError as exc:
-        raise CommandError(str(exc)) from exc
+    created = await _service(ctx).create(owner_user_id=user_id, owner_login=login, name=v[1], body=body)
     return Result.success(
         f"created {ctx.channel.prefix}{created.name} ({created.id}). "
         f"Use {ctx.channel.prefix}cc publish {created.name} to offer it to this channel.",
@@ -231,10 +225,7 @@ async def _revert(ctx: CommandContext, v: list[str], args: Args) -> Result:
     command = await _own(ctx, v[1])
     if not v[2].isdigit():
         raise CommandError("version must be a number")
-    try:
-        updated = await _service(ctx).revert(command, int(v[2]))
-    except CustomCommandError as exc:
-        raise CommandError(str(exc)) from exc
+    updated = await _service(ctx).revert(command, int(v[2]))
     return Result.success(f"{command.name} reverted to v{v[2]}, now v{updated.version}: {updated.body}")
 
 
@@ -283,10 +274,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
     name = v[2].lower()
     if action == "create":
         reject_filtered(ctx, name, " ".join(v[3:]))
-        try:
-            created = await packs.create(owner_user_id=user_id, name=name, summary=" ".join(v[3:]))
-        except CustomCommandError as exc:
-            raise CommandError(str(exc)) from exc
+        created = await packs.create(owner_user_id=user_id, name=name, summary=" ".join(v[3:]))
         return Result.success(
             f"created pack {created.name}. Add commands with "
             f"{ctx.channel.prefix}cc pack add {created.name} <command…>"
@@ -373,10 +361,7 @@ async def _link(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if command.owner_user_id == user_id:
         raise CommandError("that's your own command")
     reject_filtered(ctx, alias)
-    try:
-        await service.link(user_id=user_id, alias=alias, command=command)
-    except CustomCommandError as exc:
-        raise CommandError(str(exc)) from exc
+    await service.link(user_id=user_id, alias=alias, command=command)
     warning = EDIT_WARNING.format(owner=f"@{command.owner_login}")
     return Result.success(
         f'linked "{command.name}" (by @{command.owner_login}) as {ctx.channel.prefix}{alias}. {warning}',
@@ -438,10 +423,7 @@ async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
         raise CommandError(f"you have no command or alias named {v[1]}")
     name = v[3] if len(v) > 3 and v[2].lower() == "as" else command.name
     reject_filtered(ctx, name)
-    try:
-        await service.publish(channel_id=scope, name=name, command=command, published_by=user_id)
-    except CustomCommandError as exc:
-        raise CommandError(str(exc)) from exc
+    await service.publish(channel_id=scope, name=name, command=command, published_by=user_id)
     text = (
         f'published "{command.name}" (by @{command.owner_login}) as '
         f"{ctx.channel.prefix}{name} {_where(scope)}."
@@ -480,10 +462,7 @@ async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result
     members = await packs.members(pack.id)
     if not members:
         raise CommandError(f"{pack.name} has no commands yet")
-    try:
-        await packs.publish(channel_id=scope, pack=pack, published_by=user_id)
-    except CustomCommandError as exc:
-        raise CommandError(str(exc)) from exc
+    await packs.publish(channel_id=scope, pack=pack, published_by=user_id)
     names = ", ".join(c.name for c in members)
     owner_note = ""
     if pack.owner_user_id != user_id:

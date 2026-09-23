@@ -71,6 +71,11 @@ class PolicySnapshot:
             name
         )
 
+    def channel_by_login(self, login: str) -> ChannelSettings | None:
+        """A joined or parted channel by its login, as typed: any case, with or without a leading `#`."""
+        wanted = login.lower().lstrip("#")
+        return next((c for c in self.channels.values() if c.login == wanted), None)
+
     def custom_roles_for(self, channel_id: str, user_id: str) -> list[Role]:
         now_ms = clock.now_ms()
         found: list[Role] = []

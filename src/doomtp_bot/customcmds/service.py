@@ -24,7 +24,7 @@ from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node
 from doomtp_bot.lang.parser import Context, ParserParams, parse
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.runtime.result import to_json
+from doomtp_bot.runtime.result import CommandError, to_json
 from doomtp_bot.storage.db import Connection, Row, fetch_one, transaction
 
 log = structlog.get_logger(__name__)
@@ -35,8 +35,11 @@ QUOTA_PER_USER = 50
 Status = Literal["active", "deleted", "banned"]
 
 
-class CustomCommandError(Exception):
-    """A rule the user broke: bad name, quota, missing command, not theirs."""
+class CustomCommandError(CommandError):
+    """A rule the user broke: bad name, quota, missing command, not theirs.
+
+    A CommandError, so a chat handler can let it through and the user sees the message as a usage failure.
+    """
 
 
 @dataclass(frozen=True, slots=True)

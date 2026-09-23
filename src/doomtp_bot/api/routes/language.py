@@ -59,9 +59,9 @@ def _channel(request: Request, login: str | None) -> Any:
         from doomtp_bot.runtime.context import ChannelInfo
 
         return ChannelInfo(id="*", login=login or "*")
-    for settings in policy.snapshot.channels.values():
-        if settings.login == login.lower():
-            return policy.channel_info(settings.channel_id, settings.login)
+    settings = policy.snapshot.channel_by_login(login)
+    if settings is not None:
+        return policy.channel_info(settings.channel_id, settings.login)
     raise HTTPException(status_code=404, detail=f"unknown channel {login}")
 
 

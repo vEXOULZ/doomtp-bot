@@ -59,9 +59,9 @@ def _policy(request: Request) -> PolicyService:
 
 
 def _channel(request: Request, login: str) -> ChannelSettings:
-    for settings in _policy(request).snapshot.channels.values():
-        if settings.login == login.lower().lstrip("#"):
-            return settings
+    settings = _policy(request).snapshot.channel_by_login(login)
+    if settings is not None:
+        return settings
     raise HTTPException(status_code=404, detail=f"no channel named {login}")
 
 

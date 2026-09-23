@@ -107,9 +107,10 @@ def _channels(request: Request) -> list[Any]:
 
 
 def _channel_or_404(request: Request, login: str) -> Any:
-    for settings in _channels(request):
-        if settings.login == login.lower():
-            return settings
+    policy = _state(request, "policy")
+    settings = policy.snapshot.channel_by_login(login) if policy is not None else None
+    if settings is not None:
+        return settings
     raise HTTPException(status_code=404, detail=f"unknown channel {login}")
 
 
