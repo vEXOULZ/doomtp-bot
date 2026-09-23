@@ -11,19 +11,16 @@ from httpx import ASGITransport
 from doomtp_bot.api.app import create_app
 from doomtp_bot.core.health import HealthRegistry
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.repository import Actor
-from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
+from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 
 
 @pytest.fixture
 async def client(dbs: Databases) -> AsyncIterator[httpx.AsyncClient]:
-    policy = PolicyService(dbs.bot)
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN))
     runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
     app = create_app(HealthRegistry(), None, runtime=runtime, policy=policy)
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:

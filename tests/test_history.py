@@ -13,8 +13,8 @@ from doomtp_bot.history.backfill import BackfillService, Gap, find_gaps, to_even
 from doomtp_bot.history.irc_parse import badges, parse_line, unescape_tag
 from doomtp_bot.history.provider import HistoryResponse
 from doomtp_bot.policy.repository import Actor
-from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.storage.db import Databases
+from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 
@@ -136,9 +136,7 @@ class FakeProvider:
 
 
 async def backfill_for(dbs: Databases, provider: FakeProvider, *, opted_in: bool = True) -> BackfillService:
-    policy = PolicyService(dbs.bot)
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN))
     await policy.mutate(
         lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", opted_in, Actor(None, "s"))
     )

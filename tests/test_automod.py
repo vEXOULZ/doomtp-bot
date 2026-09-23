@@ -23,6 +23,7 @@ from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.storage.db import Databases
+from tests.fakes import policy_with_channels
 
 BOT_ID, BOT_LOGIN = "999", "doomtp_bot"
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -117,8 +118,7 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot, bot_owner_ids=frozenset({"1"}))
-    await policy.reload()
+    policy = await policy_with_channels(dbs.bot, bot_owner_ids=frozenset({"1"}))
     writer = ChatLogWriter(dbs.chatlog, flush_interval=0.01)
     writer.start()
     twitch = FakeTwitch()

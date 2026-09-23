@@ -15,6 +15,7 @@ from doomtp_bot.core.streams import StreamPoller, StreamStatus
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.storage.db import Databases
+from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 OTHER_ID, OTHER_LOGIN = "200", "friend"
@@ -70,10 +71,7 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot)
-    await policy.reload()
-    for channel_id, login in ((CHANNEL_ID, CHANNEL_LOGIN), (OTHER_ID, OTHER_LOGIN)):
-        await policy.mutate(lambda repo, c=channel_id, n=login: repo.ensure_channel(c, n, Actor(None, "x")))
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), (OTHER_ID, OTHER_LOGIN))
     channels = ChannelManager(policy, FakeSubscriber(), FakeSessions())
     helix, status, seen = FakeHelix(), StreamStatus(), []
 
