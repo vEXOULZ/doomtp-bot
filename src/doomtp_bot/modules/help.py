@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from doomtp_bot.customcmds import params as cc_params
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import spec_for
+from doomtp_bot.lang.parser import strip_prefix
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
@@ -72,7 +73,7 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     prefix = ctx.channel.prefix
     name = args.get("command")
     if name:
-        wanted = name.lower().removeprefix(prefix).removeprefix("@")
+        wanted = strip_prefix(name, prefix).lower().removeprefix("@")
         found = registry.get(wanted)
         spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
         if spec is None or not policy.is_permitted(ctx.exec, spec):

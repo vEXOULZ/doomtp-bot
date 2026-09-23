@@ -13,7 +13,7 @@ import structlog
 
 from doomtp_bot.lang.ast import Node
 from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import Context, NotACommand, ParserParams, parse, preprocess_line
+from doomtp_bot.lang.parser import Context, NotACommand, ParserParams, parse, preprocess_line, strip_prefix
 from doomtp_bot.runtime.context import ChannelInfo, Chatter, ExecContext, Publisher, RunCancelled
 from doomtp_bot.runtime.executor import Executor, Scope, ScopeArgs
 from doomtp_bot.runtime.namespaces import is_reserved_var_name
@@ -263,8 +263,8 @@ class Runtime:
 
     def _first_command_permitted(self, text: str, ctx: ExecContext) -> bool:
         """§3.4: parse errors are shown only if the first command resolves and the invoker may run it."""
-        prefix = re.escape(ctx.channel.prefix)
-        match = re.match(rf"^(?:\(\s+)*(?:{prefix})?(@?)([A-Za-z0-9][A-Za-z0-9_-]*)", text)
+        rest = strip_prefix(re.sub(r"^(?:\(\s+)*", "", text), ctx.channel.prefix)
+        match = re.match(r"(@?)([A-Za-z0-9][A-Za-z0-9_-]*)", rest)
         if match is None:
             return False
         resolved = self.resolver.resolve_name(ctx, match.group(2).lower(), personal=bool(match.group(1)))

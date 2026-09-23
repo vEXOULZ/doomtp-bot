@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import random
 
 import pytest
@@ -13,7 +14,7 @@ from doomtp_bot.runtime.policy import AllowAllPolicy, Decision
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.runtime.variables import InMemoryVariableStore, VarKey
-from tests.runtime.helpers import ALICE, CHANNEL, make_runtime, run
+from tests.runtime.helpers import ALICE, CHANNEL, EMOJI_SIGNS, make_runtime, run
 
 
 # ── Appendix A.2 ───────────────────────────────────────────────────────────
@@ -381,6 +382,13 @@ async def test_parse_error_visible_only_when_first_command_runnable() -> None:
     assert hidden.send is None
     unknown = await run(rt, "!nope a ; b")
     assert unknown.send is None
+
+
+@pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
+async def test_parse_error_visible_after_any_form_of_the_emoji_sign(saved: str, typed: str) -> None:
+    channel = dataclasses.replace(CHANNEL, prefix=saved)
+    shown = await run(make_runtime(policy=DenyAdd()), f"{typed}echo a ; b", channel=channel)
+    assert shown.origin == "parse" and shown.send and "E_RESERVED_OPERATOR" in shown.send
 
 
 async def test_not_a_command_returns_none() -> None:

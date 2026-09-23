@@ -6,7 +6,9 @@ import asyncio
 import random
 from typing import Any
 
-from doomtp_bot.lang.parser import Context
+import pytest
+
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, VARIATION_SELECTOR, Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.runtime.context import Args, ChannelInfo, Chatter, CommandContext
 from doomtp_bot.runtime.engine import RunReport, Runtime
@@ -23,6 +25,18 @@ ALICE = Chatter(
     roles=("everyone", "subscriber"),
     rank=20,
 )
+
+# (channel sign as saved, sign as typed): the emoji sign saved with or without U+FE0F, typed bare, with
+# U+FE0F as chat clients send it, or with the gap spec §2.1 allows after a non-ASCII sign.
+EMOJI_SIGNS = [
+    pytest.param(saved, typed, id=f"saved-{saved_id}-typed-{typed_id}")
+    for saved, saved_id in ((DEFAULT_PREFIX, "bare"), (DEFAULT_PREFIX + VARIATION_SELECTOR, "fe0f"))
+    for typed, typed_id in (
+        (DEFAULT_PREFIX, "bare"),
+        (DEFAULT_PREFIX + VARIATION_SELECTOR, "fe0f"),
+        (DEFAULT_PREFIX + " ", "gap"),
+    )
+]
 
 
 @command(
