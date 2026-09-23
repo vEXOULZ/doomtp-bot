@@ -22,7 +22,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from doomtp_bot.config import Settings
-from doomtp_bot.history.backfill import MIN_GAP_MS
+from doomtp_bot.history.backfill import gaps_between
 
 RECENT_DEFAULT = 7
 
@@ -55,13 +55,7 @@ def gaps(
         (channel_id,),
     ).fetchall()
     sessions = [(int(r["started_at"]), r["ended_at"]) for r in rows]
-    found = []
-    for (_, ended_at), (next_start, _) in zip(sessions, sessions[1:], strict=False):
-        if ended_at is None:  # still open: the next startup closes it
-            continue
-        if next_start - int(ended_at) >= MIN_GAP_MS and next_start >= since_ms:
-            found.append((int(ended_at), next_start))
-    return found
+    return [(start, end) for start, end in gaps_between(sessions) if end >= since_ms]
 
 
 def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap: tuple[int, int]) -> str:
