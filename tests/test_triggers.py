@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -109,6 +110,14 @@ def test_listener_patterns_are_limited() -> None:
         compile_listener("(unclosed")
 
 
+def test_a_catastrophic_listener_gives_up_instead_of_stalling() -> None:
+    # Under `re` this takes seconds, and hours a few characters later, with the whole bot stalled meanwhile.
+    pattern = compile_listener("(a|aa)+$")
+    started = time.perf_counter()
+    assert match_fields(pattern, "a" * 34 + "!") is None
+    assert time.perf_counter() - started < 1
+
+
 # ── managing them from chat ────────────────────────────────────────────────
 async def test_add_list_and_remove_a_listener(h: Harness) -> None:
     added = await h.say("mod", r"!trigger listen \bhello\b => echo hi {chatter.display}")
@@ -139,6 +148,25 @@ async def test_triggers_run_at_the_creators_rank(h: Harness) -> None:
     await h.say("mod", r"!trigger listen \bhello\b => echo hi")
     trigger = h.triggers.in_channel(CHANNEL_ID)[0]
     assert trigger.run_as_rank == 80  # the moderator who created it, never higher
+
+
+async def test_a_trigger_made_by_a_trigger_never_outranks_it(h: Harness) -> None:
+    # A moderator-rank listener set off by the broadcaster: what it creates gets the listener's rank, not the
+    # broadcaster's, or a trigger could hand out more than it was ever given.
+    await h.triggers.add(
+        channel_id=CHANNEL_ID,
+        type_="listener",
+        expr="trigger add raid echo raid!",
+        match={"regex": r"\bmake one\b"},
+        run_as_rank=80,
+        created_by="300",
+    )
+    [(listener, fields)] = h.triggers.listeners_matching(CHANNEL_ID, "make one")
+    report = await h.runner.run(
+        listener, channel_login=CHANNEL_LOGIN, match=fields, user=(CHANNEL_ID, CHANNEL_LOGIN, "DoomTP")
+    )
+    assert report is not None and report.result.ok, report and report.result.message
+    assert [t.run_as_rank for t in h.triggers.in_channel(CHANNEL_ID) if t.type == "raid"] == [80]
 
 
 # ── running them ───────────────────────────────────────────────────────────
