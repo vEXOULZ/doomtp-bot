@@ -8,11 +8,11 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import structlog
 
-from doomtp_bot.policy.cooldowns import CooldownState, CooldownTracker
+from doomtp_bot.policy.cooldowns import CooldownTracker
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
     BOT_ADMIN_RANK,
@@ -36,6 +36,16 @@ log = structlog.get_logger(__name__)
 
 CALLBACK_RATE_LIMIT_S = 30.0
 CALLBACK_PRUNE_AT = 10_000
+
+
+class _Bucket(NamedTuple):
+    """One invocation's cooldown buckets, worked out once and used by both the look and the claim."""
+
+    channel_id: str
+    key: str
+    tier: str
+    user_id: str | None
+    rule: Cooldown
 
 
 class PolicyService:
@@ -215,13 +225,33 @@ class PolicyService:
     def _cooldown_key(self, ctx: ExecContext, spec: CommandSpec) -> str:
         return f"{spec.key}@{ctx.trigger_id}" if ctx.trigger_id else spec.key
 
-    def cooldown_state(self, ctx: ExecContext, spec: CommandSpec) -> CooldownState | None:
+    def _bucket(self, ctx: ExecContext, spec: CommandSpec) -> _Bucket | None:
+        """Which buckets this invocation uses, or None when its rule is zero or it has none."""
         found = self.cooldown_rule(ctx, spec)
         if found is None or (found[1].tier_s == 0 and found[1].user_s == 0):
             return None
-        tier, _ = found
+        tier, rule = found
         user_id = ctx.invoker.id if ctx.invoker else None
-        return self.cooldowns.state(ctx.channel.id, self._cooldown_key(ctx, spec), tier, user_id)
+        return _Bucket(ctx.channel.id, self._cooldown_key(ctx, spec), tier, user_id, rule)
+
+    def _waiting(self, spec: CommandSpec, bucket: _Bucket | None) -> Decision | None:
+        """The 128 refusal, carrying `{cooldown.*}`, if either bucket is still running. None means ready."""
+        if bucket is None:
+            return None
+        state = self.cooldowns.state(bucket.channel_id, bucket.key, bucket.tier, bucket.user_id)
+        if state.ready:
+            return None
+        return Decision(
+            False,
+            Code.COOLDOWN,
+            "cooldown",
+            {
+                "command": spec.name,
+                "tier": state.tier,
+                "tier_remaining": state.tier_remaining,
+                "user_remaining": state.user_remaining,
+            },
+        )
 
     # ── runtime.policy.Policy ───────────────────────────────────────────────
     def _gate(self, ctx: ExecContext, spec: CommandSpec) -> Decision | None:
@@ -241,25 +271,16 @@ class PolicyService:
     def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
         return self._gate(ctx, spec) is None
 
-    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec, *, commit: bool = True) -> Decision:
-        state = self.cooldown_state(ctx, spec)
-        if state is not None and not state.ready:
-            return Decision(
-                False,
-                Code.COOLDOWN,
-                "cooldown",
-                {
-                    "command": spec.name,
-                    "tier": state.tier,
-                    "tier_remaining": state.tier_remaining,
-                    "user_remaining": state.user_remaining,
-                },
-            )
-        found = self.cooldown_rule(ctx, spec) if commit else None
-        if found is not None:
-            tier, rule = found
-            user_id = ctx.invoker.id if ctx.invoker else None
-            self.cooldowns.commit(ctx.channel.id, self._cooldown_key(ctx, spec), tier, user_id, rule)
+    def check_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+        return self._waiting(spec, self._bucket(ctx, spec)) or Decision.allow()
+
+    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+        bucket = self._bucket(ctx, spec)
+        refused = self._waiting(spec, bucket)
+        if refused is not None:
+            return refused
+        if bucket is not None:
+            self.cooldowns.commit(bucket.channel_id, bucket.key, bucket.tier, bucket.user_id, bucket.rule)
         return Decision.allow()
 
     # ── callbacks (ADR-0006 §3) ─────────────────────────────────────────────

@@ -9,7 +9,7 @@ import pytest
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.context import Publisher
 from doomtp_bot.runtime.executor import ScopeArgs
-from doomtp_bot.runtime.policy import Decision
+from doomtp_bot.runtime.policy import AllowAllPolicy, Decision
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.runtime.variables import InMemoryVariableStore, VarKey
@@ -65,7 +65,7 @@ async def test_a2_9_unknown_later_command_replies() -> None:
     assert (r.result.code, r.send, r.executed) == (127, "unknown command: foo", [])
 
 
-class DenyAdd:
+class DenyAdd(AllowAllPolicy):
     """`add` needs a moderator, refused in preflight; `ping` is on cooldown, refused when it is reached."""
 
     def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
@@ -76,34 +76,30 @@ class DenyAdd:
     def is_permitted(self, ctx, spec: CommandSpec) -> bool:  # type: ignore[no-untyped-def]
         return spec.name != "add"
 
-    def claim_cooldown(self, ctx, spec: CommandSpec, *, commit: bool = True) -> Decision:  # type: ignore[no-untyped-def]
+    def check_cooldown(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
         if spec.name == "ping":
             return Decision(False, Code.COOLDOWN, "cooldown", {"command": "ping", "user_remaining": 4})
         return Decision.allow()
 
 
-class LosesTheRace:
+class LosesTheRace(AllowAllPolicy):
     """The early look finds the bucket free, and by the time the claim comes someone else has it."""
 
     def __init__(self) -> None:
-        self.claims: list[bool] = []
+        self.calls: list[str] = []
 
-    def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
+    def check_cooldown(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
+        self.calls.append("look")
         return Decision.allow()
 
-    def is_permitted(self, ctx, spec: CommandSpec) -> bool:  # type: ignore[no-untyped-def]
-        return True
-
-    def claim_cooldown(self, ctx, spec: CommandSpec, *, commit: bool = True) -> Decision:  # type: ignore[no-untyped-def]
-        self.claims.append(commit)
-        if commit:
-            return Decision(False, Code.COOLDOWN, "cooldown", {"command": spec.name})
-        return Decision.allow()
+    def claim_cooldown(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
+        self.calls.append("claim")
+        return Decision(False, Code.COOLDOWN, "cooldown", {"command": spec.name})
 
 
 async def test_a2_10_denied_is_silent_with_callback() -> None:
     r = await run(make_runtime(policy=DenyAdd()), "!add 1 2")
-    assert (r.result.code, r.send, r.callback, r.decision.info) == (
+    assert (r.result.code, r.send, r.callback, r.result.data) == (
         126,
         None,
         "on_denied",
@@ -145,7 +141,7 @@ async def test_the_claim_just_before_running_is_the_one_that_counts() -> None:
     policy = LosesTheRace()
     r = await run(make_runtime(policy=policy), "!ping")
     assert (r.result.code, r.executed) == (128, [])
-    assert policy.claims == [False, True]  # looked, expanded the arguments, then claimed — and lost
+    assert policy.calls == ["look", "claim"]  # looked, expanded the arguments, then claimed — and lost
 
 
 class DenyWrites:

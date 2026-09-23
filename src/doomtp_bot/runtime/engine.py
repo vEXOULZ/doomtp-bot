@@ -18,7 +18,7 @@ from doomtp_bot.runtime.context import ChannelInfo, Chatter, ExecContext, Publis
 from doomtp_bot.runtime.executor import Executor, Scope, ScopeArgs
 from doomtp_bot.runtime.namespaces import is_reserved_var_name
 from doomtp_bot.runtime.output import CallbackKind, Origin, decide_output
-from doomtp_bot.runtime.policy import AllowAllPolicy, Decision, Policy
+from doomtp_bot.runtime.policy import AllowAllPolicy, Policy
 from doomtp_bot.runtime.preflight import MAX_INVOCATIONS, preflight
 from doomtp_bot.runtime.registry import CommandRegistry
 from doomtp_bot.runtime.resolver import BuiltinResolver, CustomTarget, Resolver
@@ -46,7 +46,6 @@ class RunReport:
     origin: Origin
     send: str | None = None
     callback: CallbackKind | None = None
-    decision: Decision | None = None
     failed_index: int | None = None
     failed_name: str | None = None
     executed: list[int] = field(default_factory=list)
@@ -183,7 +182,6 @@ class Runtime:
                 text,
                 pre.result,
                 "preflight",
-                decision=pre.decision,
                 failed_index=pre.failed_index,
                 failed_name=pre.failed_name,
                 ast=node,
@@ -226,14 +224,9 @@ class Runtime:
         self._decide(report, ctx)
         if report.callback is None or self.callbacks is None or ctx.in_callback:
             return
-        # A denial comes from preflight and carries its decision. A cooldown comes from the invocation
-        # that hit it at runtime (spec 1.1), which put the same fields in its Result instead.
-        if report.decision is not None:
-            info = dict(report.decision.info)
-        elif isinstance(report.result.data, dict):
-            info = dict(report.result.data)
-        else:
-            info = {}
+        # A denial from preflight and a cooldown from the invocation that hit it (spec 1.1) both carry
+        # their `{denied.*}` / `{cooldown.*}` fields on the Result.
+        info = dict(report.result.data) if isinstance(report.result.data, dict) else {}
         # By canonical name, the way cooldown rules are keyed: a callback set for `command:random` has
         # to fire when someone types one of its aliases too.
         command = info.get("command") or report.failed_name

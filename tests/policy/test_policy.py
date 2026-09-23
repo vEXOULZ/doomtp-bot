@@ -241,8 +241,8 @@ async def test_tier_and_user_buckets_both_required(h: Harness) -> None:
     h.clock.now += 11
     report = await h.say("viewer", "!dice")  # tier clear, but personal 30s bucket still running
     assert report is not None and report.result.code == Code.COOLDOWN
-    # A runtime failure since spec 1.1: the fields ride on the Result, not on a preflight decision.
-    assert report.origin == "runtime" and report.decision is None
+    # A runtime failure since spec 1.1, not a preflight one; its fields ride on the Result.
+    assert report.origin == "runtime"
     assert report.result.data["user_remaining"] == 8
 
 
@@ -285,8 +285,8 @@ async def test_two_runs_past_the_early_look_get_one_claim_between_them(h: Harnes
     """The race the second claim closes. Both runs can be past the early look while one waits on the
     database to expand its arguments; the claim just before running decides, and only one gets it."""
     first, second = h.context("viewer"), h.context("viewer2")
-    assert h.policy.claim_cooldown(first, dice.spec, commit=False).allowed
-    assert h.policy.claim_cooldown(second, dice.spec, commit=False).allowed  # nobody has claimed yet
+    assert h.policy.check_cooldown(first, dice.spec).allowed
+    assert h.policy.check_cooldown(second, dice.spec).allowed  # nobody has claimed yet
     assert h.policy.claim_cooldown(first, dice.spec).allowed
     refused = h.policy.claim_cooldown(second, dice.spec)  # same shared `everyone` bucket
     assert (refused.allowed, refused.code, refused.info["tier_remaining"]) == (False, Code.COOLDOWN, 10)

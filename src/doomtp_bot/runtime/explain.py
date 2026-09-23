@@ -154,7 +154,7 @@ def _describe(inv: Any, ctx: ExecContext, runtime: Runtime, resolver: Any, resol
         if hasattr(runtime.policy, "required_role")
         else (spec.required_role, None)
     )
-    state = runtime.policy.cooldown_state(ctx, spec) if hasattr(runtime.policy, "cooldown_state") else None
+    waiting = runtime.policy.check_cooldown(ctx, spec).info  # reported, not failed on (spec §5.2)
     custom = resolved.custom
     return InvocationReport(
         index=inv.index,
@@ -166,8 +166,8 @@ def _describe(inv: Any, ctx: ExecContext, runtime: Runtime, resolver: Any, resol
         rank=ctx.invoker.rank if ctx.invoker else 0,
         allowed=decision.allowed,
         reason="" if decision.allowed else (decision.reason or str(decision.code)),
-        cooldown_tier_s=state.tier_remaining if state else 0.0,
-        cooldown_user_s=state.user_remaining if state else 0.0,
+        cooldown_tier_s=waiting.get("tier_remaining", 0.0),
+        cooldown_user_s=waiting.get("user_remaining", 0.0),
         input_mode=str(spec.input),
         placeholders=tuple(
             {

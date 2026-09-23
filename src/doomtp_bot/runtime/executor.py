@@ -43,6 +43,19 @@ class MissingValue(Exception):
         self.reference = reference
 
 
+class OnCooldown(Exception):
+    """An invocation its cooldown refused (spec §5.2). Carries the `{cooldown.*}` fields."""
+
+    def __init__(self, decision: Decision) -> None:
+        super().__init__(decision.reason)
+        self.decision = decision
+
+    @classmethod
+    def unless_allowed(cls, decision: Decision) -> None:
+        if not decision.allowed:
+            raise cls(decision)
+
+
 @dataclass(frozen=True, slots=True)
 class ScopeArgs:
     """Arguments of the enclosing custom command or trigger, for {arg.*} (spec §7.3)."""
@@ -148,16 +161,21 @@ class Executor:
         ctx.ensure_not_cancelled()
         resolved = scope.resolved[inv.index]
         spec = resolved.spec
-        # Cooldowns are this invocation's own failure, not the line's (spec §6.3, 1.1), so `||` can route
-        # around one and a branch that never runs never trips one. Looked at before the arguments, so a
-        # command on cooldown stays silent even when it is typed wrong — the cooldown is still what keeps
-        # a spammed command quiet.
-        waiting = self.policy.claim_cooldown(ctx, spec, commit=False)
-        if not waiting.allowed:
-            return self._refuse(inv, scope, waiting)
         try:
+            # Cooldowns are this invocation's own failure, not the line's (spec §6.3, 1.1), so `||` can
+            # route around one and a branch that never runs never trips one. Looked at before the
+            # arguments, so a command on cooldown stays silent even when it is typed wrong — the cooldown
+            # is still what keeps a spammed command quiet.
+            OnCooldown.unless_allowed(self.policy.check_cooldown(ctx, spec))
             values = tuple([await self.expand(arg, ctx, scope, prev) for arg in inv.args])
             params = await self.bind(spec, values, ctx)
+            # And claimed with no await before it runs: expanding the arguments can wait on the database,
+            # and a burst of the same command must not all get through a shared bucket in that gap.
+            # !explain --run starts none, so the look above already said everything (spec §9).
+            if not ctx.dry_run:
+                OnCooldown.unless_allowed(self.policy.claim_cooldown(ctx, spec))
+        except OnCooldown as exc:
+            result = Result.failure(exc.decision.code, "on cooldown", dict(exc.decision.info))
         except MissingValue as exc:
             result = error_result(
                 "E_MISSING_VALUE", f"missing value: {exc.reference}", reference=exc.reference
@@ -165,12 +183,6 @@ class Executor:
         except UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
-            # And claimed again with no await before it runs: expanding the arguments can wait on the
-            # database, and a burst of the same command must not all get through a shared bucket in that
-            # gap. !explain --run looks but never starts one (spec §9).
-            claim = self.policy.claim_cooldown(ctx, spec, commit=not ctx.dry_run)
-            if not claim.allowed:
-                return self._refuse(inv, scope, claim)
             args = Args(values, params, inv.raw_tail)
             cmd_ctx = CommandContext(ctx, inv.index, inv.name, prev)
             try:
@@ -197,13 +209,6 @@ class Executor:
             if result.data_size() > MAX_DATA_BYTES:
                 result = error_result("E_DATA_TOO_LARGE", f"{inv.name} produced too much data")
             scope.executed.append(inv.index)
-        scope.results[inv.index] = result
-        return result
-
-    @staticmethod
-    def _refuse(inv: Invocation, scope: Scope, decision: Decision) -> Result:
-        """An invocation that didn't run because of a cooldown: code 128, carrying `{cooldown.*}`."""
-        result = Result(Code.COOLDOWN, "on cooldown", dict(decision.info))
         scope.results[inv.index] = result
         return result
 
