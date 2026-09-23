@@ -1,4 +1,4 @@
-"""Permissions, cooldowns, toggles, callbacks and chat admin commands against a real bot.db (ADR-0006)."""
+"""Permissions, cooldowns, toggles, callbacks and chat admin commands against a real `bot` schema (ADR-0006)."""
 
 from __future__ import annotations
 

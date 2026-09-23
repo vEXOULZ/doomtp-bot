@@ -1,4 +1,4 @@
-"""OAuth token persistence in bot.db (oauth_tokens). The bot token uses identity 'bot'."""
+"""OAuth token persistence in the `bot` schema (oauth_tokens). The bot token uses identity 'bot'."""
 
 from __future__ import annotations
 

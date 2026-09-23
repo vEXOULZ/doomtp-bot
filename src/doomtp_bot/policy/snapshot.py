@@ -1,4 +1,4 @@
-"""Immutable in-memory view of all policy tables in bot.db (ADR-0006 §5). Rebuilt after every write."""
+"""Immutable in-memory view of all policy tables in the `bot` schema (ADR-0006 §5). Rebuilt after every write."""
 
 from __future__ import annotations
 

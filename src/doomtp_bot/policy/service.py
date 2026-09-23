@@ -1,4 +1,4 @@
-"""PolicyService: the runtime's policy gate backed by bot.db (ADR-0006).
+"""PolicyService: the runtime's policy gate backed by the `bot` schema (ADR-0006).
 
 Checks run against an in-memory snapshot; writes go through PolicyRepository and rebuild the snapshot.
 """
