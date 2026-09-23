@@ -18,10 +18,6 @@ class Actor:
     via: str = "chat"  # chat | api | web | system
 
 
-# Channel settings stored as boolean rather than 0/1 (ADR-0014).
-_BOOL_SETTINGS = frozenset({"active", "log_enabled", "history_backfill", "quiet_errors", "cc_edit_notice"})
-
-
 class PolicyRepository:
     def __init__(self, conn: Connection) -> None:
         self.conn = conn
@@ -78,12 +74,8 @@ class PolicyRepository:
             before = await self._one(
                 f"SELECT {column} AS v FROM channels WHERE channel_id = %s", (channel_id,)
             )
-            if column in _BOOL_SETTINGS:
-                # These were 0/1 integers under SQLite and callers still pass either; Postgres wants a
-                # boolean and says so. Coercing here means no caller has to remember which is which.
-                stored: object = bool(value)
-            elif column == "capabilities" and isinstance(value, (set, frozenset, list)):
-                stored = json.dumps(sorted(value))
+            if column == "capabilities" and isinstance(value, (set, frozenset, list)):
+                stored: object = json.dumps(sorted(value))
             else:
                 stored = value
             await self.conn.execute(
@@ -109,7 +101,7 @@ class PolicyRepository:
     async def delete_role(self, role_id: int, actor: Actor) -> None:
         async with transaction(self.conn):
             row = await self._one(
-                "SELECT channel_id, name, rank FROM roles WHERE id = %s AND builtin = 0", (role_id,)
+                "SELECT channel_id, name, rank FROM roles WHERE id = %s AND NOT builtin", (role_id,)
             )
             if row is None:
                 return

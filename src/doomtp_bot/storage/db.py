@@ -131,13 +131,8 @@ async def execute(conn: Connection, sql: str, params: Params = ()) -> int:
         return cur.rowcount
 
 
-async def current_version(conn: Connection, schema: str) -> int:
-    await conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations ("
-        " version integer PRIMARY KEY,"
-        " name text NOT NULL,"
-        " applied_at timestamptz NOT NULL DEFAULT now())"
-    )
+async def current_version(conn: Connection) -> int:
+    """The schema version this connection's schema is at. `migrate` has made sure the table exists."""
     value = await fetch_value(conn, "SELECT coalesce(max(version), 0) AS v FROM schema_migrations")
     return int(value or 0)
 
@@ -145,7 +140,13 @@ async def current_version(conn: Connection, schema: str) -> int:
 async def migrate(conn: Connection, schema: str) -> int:
     """Apply pending migrations. Returns the resulting schema version."""
     migrations = load_migrations(schema)
-    version = await current_version(conn, schema)
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        " version integer PRIMARY KEY,"
+        " name text NOT NULL,"
+        " applied_at timestamptz NOT NULL DEFAULT now())"
+    )
+    version = await current_version(conn)
     if version > len(migrations):
         raise RuntimeError(
             f"{schema} schema version {version} is newer than this build ({len(migrations)}); refusing to start"
@@ -159,7 +160,7 @@ async def migrate(conn: Connection, schema: str) -> int:
                 "INSERT INTO schema_migrations (version, name) VALUES (%s, %s)",
                 (migration.version, migration.name),
             )
-    return await current_version(conn, schema)
+    return await current_version(conn)
 
 
 @dataclass

@@ -91,16 +91,16 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
             snap.channels[r["channel_id"]] = ChannelSettings(
                 channel_id=r["channel_id"],
                 login=r["login"],
-                active=bool(r["active"]),
+                active=r["active"],
                 status=r["status"],
                 tier=r["tier"],
                 capabilities=frozenset(json.loads(r["capabilities"] or "[]")),
                 prefix=r["prefix"],
                 reply_hold_ms=r["reply_hold_ms"],
-                log_enabled=bool(r["log_enabled"]),
-                history_backfill=bool(r["history_backfill"]),
-                quiet_errors=bool(r["quiet_errors"]),
-                cc_edit_notice=bool(r["cc_edit_notice"]),
+                log_enabled=r["log_enabled"],
+                history_backfill=r["history_backfill"],
+                quiet_errors=r["quiet_errors"],
+                cc_edit_notice=r["cc_edit_notice"],
                 timezone=r["timezone"],
                 automod_action=r["automod_action"],
                 automod_timeout_s=r["automod_timeout_s"],
@@ -113,7 +113,7 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
 
     async with await conn.execute("SELECT id, channel_id, name, rank, builtin FROM roles") as cur:
         for r in await cur.fetchall():
-            role = Role(r["id"], r["channel_id"], r["name"], r["rank"], bool(r["builtin"]))
+            role = Role(r["id"], r["channel_id"], r["name"], r["rank"], r["builtin"])
             snap.roles_by_id[role.id] = role
             snap.roles_by_scope.setdefault(role.channel_id, {})[role.name] = role
 
@@ -128,14 +128,14 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
 
     async with await conn.execute("SELECT channel_id, module, enabled FROM module_toggles") as cur:
         for r in await cur.fetchall():
-            snap.module_toggles[(r["channel_id"], r["module"])] = bool(r["enabled"])
+            snap.module_toggles[(r["channel_id"], r["module"])] = r["enabled"]
 
     async with await conn.execute(
         "SELECT channel_id, command, enabled, log_level FROM command_toggles"
     ) as cur:
         for r in await cur.fetchall():
             if r["enabled"] is not None:
-                snap.command_toggles[(r["channel_id"], r["command"])] = bool(r["enabled"])
+                snap.command_toggles[(r["channel_id"], r["command"])] = r["enabled"]
             if r["log_level"] is not None:
                 snap.command_log_levels[(r["channel_id"], r["command"])] = r["log_level"]
 

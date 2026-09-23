@@ -67,7 +67,7 @@ class ChannelManager:
     async def part(self, channel_id: str, actor: Actor) -> None:
         async def mark_parted(repo: PolicyRepository) -> None:
             await repo.set_channel_field(channel_id, "status", "parted", actor)
-            await repo.set_channel_field(channel_id, "active", 0, actor)
+            await repo.set_channel_field(channel_id, "active", False, actor)
 
         await self.policy.mutate(mark_parted)
         if self.subscriber is not None:
@@ -89,7 +89,7 @@ class ChannelManager:
         async def mark(repo: PolicyRepository) -> None:
             await repo.ensure_channel(channel_id, login, actor, self.default_prefix)
             await repo.set_channel_field(channel_id, "status", "joined", actor)
-            await repo.set_channel_field(channel_id, "active", 1, actor)
+            await repo.set_channel_field(channel_id, "active", True, actor)
 
         if not self.is_active(channel_id):
             await self.policy.mutate(mark)

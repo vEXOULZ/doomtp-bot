@@ -183,6 +183,13 @@ async def test_role_grant_rules(h: Harness) -> None:
     assert await h.reply("mod", "!role add moderator @viewer") == "you can't manage moderator"
 
 
+async def test_a_custom_role_can_be_deleted_and_a_builtin_cannot(h: Harness) -> None:
+    assert await h.reply("mod", "!role create helper 70") == "created role helper (rank 70)"
+    assert await h.reply("mod", "!role delete helper") == "deleted role helper"
+    assert await h.reply("mod", "!role who helper") == "unknown role helper"
+    assert await h.reply("streamer", "!role delete moderator") == "you can't delete moderator"
+
+
 async def test_bot_owner_manages_admins(h: Harness) -> None:
     report = await h.say("streamer", "!admin add @viewer")
     assert report is not None and report.result.code == Code.DENIED
