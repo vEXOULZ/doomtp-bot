@@ -18,6 +18,7 @@
   <a href="#filter">Word filter</a><br>
   <a href="#moderation">Moderation-aware replies</a><br>
   <a href="#logging">Chat log and history</a><br>
+  <a href="#quotes">Quotes</a><br>
   <a href="#channels">Channels and onboarding</a><br>
   <a href="#explain">Explaining an expression</a><br>
   <a href="#api">API and admin</a>
@@ -33,7 +34,7 @@ chat.</p>
   <tr><td><code>&amp;&amp;</code></td><td>Run the right side only if the left succeeded.</td>
       <td><code>{{ p }}var incr channel.deaths &amp;&amp; echo oof</code></td></tr>
   <tr><td><code>||</code></td><td>Run the right side only if the left failed. This is how you handle errors.</td>
-      <td><code>{{ p }}weather {arg.1} || echo no idea</code></td></tr>
+      <td><code>{{ p }}quote {arg.1} || echo no such quote</code></td></tr>
   <tr><td><code>( )</code></td><td>Grouping, so an operator applies to a whole section.</td>
       <td><code>( {{ p }}a || default 5 ) &gt; channel.x</code></td></tr>
   <tr><td><code>&gt;</code> and <code>&gt;&gt;</code></td><td>Store the result in a variable; <code>&gt;&gt;</code> appends. Only on success.</td>
@@ -253,6 +254,23 @@ run commands</strong> — they only go to the log.</p>
 <p>Opting in is the broadcaster's call and nothing happens until they make it:</p>
 <pre>{{ p }}backfill          # what it is, and which service would be asked
 {{ p }}backfill on       # broadcaster only</pre>
+
+<h3>Searching it from chat</h3>
+<pre>{{ p }}logsearch speedrun          # the newest message saying it, and how many more
+{{ p }}logsearch @alice speedrun   # …from one chatter</pre>
+<p>For moderators, unless a channel opens it up. Chat only ever sees what is still in chat: deleted
+messages, those of chatters timed out or banned since, and the bot's own lines never come back this
+way.</p>
+
+<h2 id="quotes">Quotes</h2>
+<pre>{{ p }}quote                     # a random one
+{{ p }}quote 12                  # that one
+{{ p }}quote meant               # the newest saying it
+{{ p }}quote add I meant to do that   # moderators; remembers the game when live
+{{ p }}quote del 12              # moderators</pre>
+<p>A quote keeps its number for good: deleting #12 leaves #12 empty rather than moving #13 into its
+place, so a number said on stream still means the same quote. Quotes go through the word filter before
+they are kept, and adding and deleting show in the audit log.</p>
 
 <h2 id="channels">Channels and onboarding</h2>
 <p>A broadcaster types <code>{{ p }}join</code> in the bot's own chat, and the bot starts reading and

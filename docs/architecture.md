@@ -290,6 +290,12 @@ class Result:
 
 ### 4.2 Command specification (self-documenting)
 
+The example is a `weather` command because it shows every part of a spec: a fallback to a variable, typed
+data for a pipe, per-tier cooldowns. It is an illustration, not a module the bot ships. *(Changed in
+revision 5: §12 used to plan a `weather` module. It would be the bot's first outside service run on
+behalf of chat, with a key, a rate limit and a location lookup to choose, and nobody has asked for it;
+it stays here as the example. Adding it means an ADR for the source first.)*
+
 ```python
 @command(
     name="weather", module="weather", aliases=["w"],
@@ -634,11 +640,11 @@ src/doomtp_bot/
 ├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ audit/       log.py                                                     ✔
+├─ quotes.py    numbered per channel, never renumbered                     ✔ the quotes module's table
 ├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔ connections and migrations only
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
-│               moderation.py                                              ✔ timeout, shoutout (§4.3)
-│                                                                          ·  weather, quotes, logsearch…
+│               moderation.py quotes.py logsearch.py                       ✔ timeout, shoutout (§4.3); quotes; log search
 ├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
 └─ api/         app.py keys.py routes/ (health auth language data)         ✔
                 webui/static/editor/editor.js                              ✔ the built editor bundle, committed

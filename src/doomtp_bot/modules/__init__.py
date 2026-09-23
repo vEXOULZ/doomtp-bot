@@ -16,7 +16,9 @@ def builtin_registry() -> CommandRegistry:
         explain,
         filters,
         help,
+        logsearch,
         moderation,
+        quotes,
         triggers,
         variables,
     )
@@ -33,6 +35,8 @@ def builtin_registry() -> CommandRegistry:
         filters,
         automod,
         moderation,
+        quotes,
+        logsearch,
         triggers,
         explain,
     ):

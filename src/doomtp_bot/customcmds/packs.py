@@ -22,7 +22,19 @@ if TYPE_CHECKING:
 # Every built-in module (a test keeps this in step with the registry) plus `custom`, the one custom commands
 # share. Importing the registry here instead would be circular.
 RESERVED_PACK_NAMES = frozenset(
-    {"core", "core_admin", "custom", "customcmds", "help", "basic", "moderation", "triggers", "variables"}
+    {
+        "core",
+        "core_admin",
+        "custom",
+        "customcmds",
+        "help",
+        "basic",
+        "logsearch",
+        "moderation",
+        "quotes",
+        "triggers",
+        "variables",
+    }
 )
 
 

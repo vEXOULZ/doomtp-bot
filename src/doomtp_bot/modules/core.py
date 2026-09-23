@@ -40,7 +40,7 @@ async def false_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         name="default",
         summary="Produce a fallback value",
         params=(Param("1+", "value", required=True, description="The value to produce"),),
-        examples=(Example("( {sign}weather x || default unknown ) > chatter.w", "unknown"),),
+        examples=(Example("( {sign}quote 999 || default none yet ) > channel.last_quote", "none yet"),),
     )
 )
 async def default_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
