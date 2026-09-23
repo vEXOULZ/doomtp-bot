@@ -285,7 +285,7 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
     assert [text for _, text, _ in h.twitch.sent] == ["one", "two"]  # the notice is off by default
 
     await h.policy.mutate(
-        lambda repo: repo.set_channel_field(CHANNEL_ID, "cc_edit_notice", 1, Actor(None, "system"))
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "cc_edit_notice", True, Actor(None, "system"))
     )
     await h.commands.edit(edited, "echo three")
     await h.say("bob", "!hi")

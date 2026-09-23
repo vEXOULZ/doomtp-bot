@@ -6,6 +6,7 @@ can't drift from the code. Admin pages need the local admin password and are LAN
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -107,9 +108,10 @@ def _channels(request: Request) -> list[Any]:
 
 
 def _channel_or_404(request: Request, login: str) -> Any:
-    for settings in _channels(request):
-        if settings.login == login.lower():
-            return settings
+    policy = _state(request, "policy")
+    settings = policy.snapshot.channel_by_login(login) if policy is not None else None
+    if settings is not None:
+        return settings
     raise HTTPException(status_code=404, detail=f"unknown channel {login}")
 
 
@@ -252,7 +254,8 @@ async def login_form(request: Request, error: str = "") -> HTMLResponse:
 @router.post("/admin/login")
 async def login(request: Request, password: str = Form("")) -> RedirectResponse:
     auth = _auth(request)
-    if not auth.enabled or not auth.check_password(password):
+    # scrypt takes tens of milliseconds by design; off the event loop, so chat keeps flowing meanwhile.
+    if not auth.enabled or not await asyncio.to_thread(auth.check_password, password):
         return RedirectResponse("/admin/login?error=wrong+password", status_code=303)
     session = auth.login()
     response = RedirectResponse("/admin", status_code=303)

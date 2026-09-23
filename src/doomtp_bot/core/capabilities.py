@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
@@ -74,12 +74,10 @@ class CapabilityProbe:
         policy: PolicyService,
         channels: ChannelManager,
         prober: Prober | None,
-        interval_s: float = INTERVAL_S,
     ) -> None:
         self.policy = policy
         self.channels = channels
         self.prober = prober
-        self.interval_s = interval_s
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -95,7 +93,7 @@ class CapabilityProbe:
 
     async def _loop(self) -> None:
         while True:
-            await asyncio.sleep(self.interval_s)
+            await asyncio.sleep(INTERVAL_S)
             try:
                 await self.probe_all()
             except Exception:
@@ -148,9 +146,3 @@ class CapabilityProbe:
 
         await self.policy.mutate(write)
         log.info("capabilities.changed", channel=channel_id, tier=tier, has=sorted(capabilities))
-
-
-def missing_for(requires: tuple[str, ...] | list[str], settings: Any) -> list[str]:
-    """Which declared requirements this channel doesn't meet — used to explain, not to fail late."""
-    have = set(getattr(settings, "capabilities", ()) or ())
-    return sorted(set(requires) - have)

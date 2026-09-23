@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from doomtp_bot.clock import now_ms
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import to_json
 from doomtp_bot.storage.db import Connection
 
@@ -26,12 +27,15 @@ async def write_audit(
     before: Any = None,
     after: Any = None,
 ) -> None:
-    """Insert one audit row. Callers run this inside the same transaction as the change it records."""
+    """Insert one audit row. Callers run this inside the same transaction as the change it records.
+
+    A change to the global scope (`GLOBAL`) is recorded with no channel, whichever way the caller spells it.
+    """
     await conn.execute(
         "INSERT INTO audit_log (channel_id, actor_user_id, via, action, target, before, after, at)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (
-            channel_id,
+            None if channel_id == GLOBAL else channel_id,
             actor_user_id,
             via,
             action,

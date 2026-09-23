@@ -275,8 +275,8 @@ async def run(settings: Settings) -> None:
         return ComponentHealth(
             Status.OK,
             {
-                "bot_schema": await current_version(dbs.bot, "bot"),
-                "chatlog_schema": await current_version(dbs.chatlog, "chatlog"),
+                "bot_schema": await current_version(dbs.bot),
+                "chatlog_schema": await current_version(dbs.chatlog),
             },
         )
 

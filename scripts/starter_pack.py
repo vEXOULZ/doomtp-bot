@@ -6,7 +6,7 @@ off per channel like anything else (`!module disable starter`, or `!cmd disable 
 
 They belong to the bot's own account and go out as one pack, so a channel takes the set or none of it:
 
-    python scripts/starter_pack.py --data-dir ./data
+    python scripts/starter_pack.py --database-url postgresql://doomtp@localhost/doomtp
     docker compose --profile tools run --rm starter-pack
 
 Running it again edits what changed here and leaves the rest alone, which is how an upgrade ships a fix.
@@ -21,14 +21,16 @@ import asyncio
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
+import psycopg
+
+from doomtp_bot.config import Settings
 from doomtp_bot.customcmds import params
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import Connection, connect
+from doomtp_bot.storage.db import Connection, configure_event_loop, connect
 
 PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
@@ -150,7 +152,11 @@ async def bot_account(conn: Connection) -> tuple[str, str] | None:
 
 
 async def run(args: argparse.Namespace) -> int:
-    conn = await connect(args.data_dir / "bot.db")
+    try:
+        conn = await connect(args.database_url or Settings().database_dsn(), "bot")
+    except psycopg.OperationalError as exc:
+        print(f"cannot reach the database: {exc}", file=sys.stderr)
+        return 2
     try:
         owner = (args.owner_id, args.owner_login) if args.owner_id and args.owner_login else None
         owner = owner or await bot_account(conn)
@@ -181,14 +187,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--data-dir", type=Path, default=Path("/data"), help="where bot.db lives")
+    parser.add_argument(
+        "--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)"
+    )
     parser.add_argument("--owner-id", default="", help="Twitch user ID to own the commands")
     parser.add_argument("--owner-login", default="", help="that account's login")
     parser.add_argument("--dry-run", action="store_true", help="say what would change, change nothing")
     args = parser.parse_args(argv)
-    if not (args.data_dir / "bot.db").is_file():
-        print(f"{args.data_dir / 'bot.db'}: not found", file=sys.stderr)
-        return 2
+    configure_event_loop()
     return asyncio.run(run(args))
 
 

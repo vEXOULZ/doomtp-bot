@@ -59,9 +59,9 @@ def _policy(request: Request) -> PolicyService:
 
 
 def _channel(request: Request, login: str) -> ChannelSettings:
-    for settings in _policy(request).snapshot.channels.values():
-        if settings.login == login.lower().lstrip("#"):
-            return settings
+    settings = _policy(request).snapshot.channel_by_login(login)
+    if settings is not None:
+        return settings
     raise HTTPException(status_code=404, detail=f"no channel named {login}")
 
 
@@ -101,13 +101,6 @@ WRITE = Depends(require("write"))
 
 
 # ── channels ────────────────────────────────────────────────────────────────
-def _setter(channel_id: str, column: str, value: object) -> Callable[[Any], Awaitable[None]]:
-    """A one-field channel write, bound early so a loop doesn't hand the same variable to every call."""
-
-    async def write(repo: Any) -> None:
-        await repo.set_channel_field(channel_id, column, value, ACTOR)
-
-    return write
 
 
 def _channel_json(settings: ChannelSettings) -> dict[str, Any]:
@@ -197,9 +190,12 @@ async def patch_channel(request: Request, login: str, body: ChannelPatch, _: str
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in SETTABLE}
     if not changes:
         raise HTTPException(status_code=400, detail=f"nothing to change; fields: {', '.join(SETTABLE)}")
-    for column, value in changes.items():
-        stored: object = int(value) if isinstance(value, bool) else value
-        await policy.mutate(_setter(settings.channel_id, column, stored))
+
+    async def write(repo: Any) -> None:
+        for column, value in changes.items():
+            await repo.set_channel_field(settings.channel_id, column, value, ACTOR)
+
+    await policy.mutate(write)  # one snapshot reload for the whole patch
     return _channel_json(_channel(request, settings.login))
 
 

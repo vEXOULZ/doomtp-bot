@@ -229,7 +229,6 @@ class Dispatcher:
                     invoker=chatter,
                     trigger_type="chat",
                     message_id=msg.message_id,
-                    message_sent_at=msg.sent_at / 1000,
                     is_cancelled=invalidated,
                 )
                 report = await self.runtime.run(msg.text, ctx, reply_parent_login=msg.reply_mentions)

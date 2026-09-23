@@ -1,4 +1,4 @@
-"""TwitchService: owns the TwitchIO client — tokens from bot.db, EventSub subscriptions, sending, user lookups.
+"""TwitchService: owns the TwitchIO client — tokens from the `bot` schema, EventSub subscriptions, sending, user lookups.
 
 This is the only module that imports twitchio (ADR-0002).
 """

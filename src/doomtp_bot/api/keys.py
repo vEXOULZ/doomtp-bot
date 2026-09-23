@@ -87,9 +87,9 @@ class ApiKeyService:
         await self.conn.execute("UPDATE api_keys SET last_used_at = %s WHERE id = %s", (now_ms(), row["id"]))
         return _key(row)
 
-    async def list(self, *, include_revoked: bool = False) -> list[ApiKey]:
-        where = "" if include_revoked else " WHERE revoked_at IS NULL"
-        async with await self.conn.execute(f"{_SELECT}{where} ORDER BY id") as cur:
+    async def list(self) -> list[ApiKey]:
+        """The keys still in use; revoked ones stay in the table for the audit trail."""
+        async with await self.conn.execute(f"{_SELECT} WHERE revoked_at IS NULL ORDER BY id") as cur:
             return [_key(row) for row in await cur.fetchall()]
 
     async def revoke(self, key_id: int) -> bool:

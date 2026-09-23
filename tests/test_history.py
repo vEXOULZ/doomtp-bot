@@ -220,3 +220,23 @@ async def test_a_completed_gap_is_not_fetched_twice(dbs: Databases) -> None:
     assert len(await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN)) == 1
     assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []  # already filled
     await service.writer.stop()
+
+
+async def test_a_gap_that_took_two_runs_to_fill_is_not_fetched_again(dbs: Databases) -> None:
+    """Any complete run settles a gap, whatever order the earlier incomplete ones were recorded in."""
+    provider = FakeProvider(HistoryResponse(lines=(PRIVMSG,)))
+    service = await backfill_for(dbs, provider)
+    await dbs.chatlog.execute(
+        """
+        INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason)
+             VALUES ('100', 0, 1100, 'shutdown');
+        INSERT INTO log_sessions (channel_id, started_at) VALUES ('100', 60000);
+        INSERT INTO backfill_runs (channel_id, gap_from, gap_to, fetched, inserted, complete, error, at)
+             VALUES ('100', 1100, 60000, 0, 0, false, 'channel_not_joined', 1),
+                    ('100', 1100, 60000, 1, 1, true, '', 2);
+        """
+    )
+
+    assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []
+    assert provider.calls == []
+    await service.writer.stop()

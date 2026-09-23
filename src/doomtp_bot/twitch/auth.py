@@ -1,6 +1,6 @@
 """The two OAuth flows, both served by our FastAPI app (architecture §3.1, ADR-0007).
 
-  * **the bot account**, once: `/auth/login` → Twitch → `/auth/callback` → token in bot.db → client starts.
+  * **the bot account**, once: `/auth/login` → Twitch → `/auth/callback` → token in the `bot` schema → client starts.
   * **a broadcaster**, per channel: `/auth/connect` → Twitch → the same `/auth/callback` → the token is
     stored as `broadcaster:<user_id>`, which is what buys the full tier (redemptions, cheers, the badge).
 

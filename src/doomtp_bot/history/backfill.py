@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -53,6 +54,20 @@ class BackfillOutcome:
     error: str = ""
 
 
+def gaps_between(sessions: Sequence[tuple[int, int | None]]) -> list[tuple[int, int]]:
+    """`(from, to)` between each session's end and the next one's start, for sessions ordered by start.
+
+    The one rule both the bot's backfill and `scripts/coverage.py` go by.
+    """
+    found: list[tuple[int, int]] = []
+    for (_, ended_at), (next_start, _) in zip(sessions, sessions[1:], strict=False):
+        if ended_at is None:
+            continue  # an unclosed session is closed at startup (chatlog.close_stale_sessions)
+        if next_start - int(ended_at) >= MIN_GAP_MS:
+            found.append((int(ended_at), next_start))
+    return found
+
+
 async def find_gaps(conn: Connection, channel_id: str, channel_login: str) -> list[Gap]:
     """Coverage gaps for one channel: between each session's end and the next session's start."""
     async with await conn.execute(
@@ -60,13 +75,7 @@ async def find_gaps(conn: Connection, channel_id: str, channel_login: str) -> li
         (channel_id,),
     ) as cur:
         sessions = [(int(r["started_at"]), r["ended_at"]) for r in await cur.fetchall()]
-    gaps: list[Gap] = []
-    for (_, ended_at), (next_start, _) in zip(sessions, sessions[1:], strict=False):
-        if ended_at is None:
-            continue  # an unclosed session is closed at startup (chatlog.close_stale_sessions)
-        if next_start - int(ended_at) >= MIN_GAP_MS:
-            gaps.append(Gap(channel_id, channel_login, int(ended_at), next_start))
-    return gaps
+    return [Gap(channel_id, channel_login, start, end) for start, end in gaps_between(sessions)]
 
 
 def to_events(
@@ -145,12 +154,12 @@ class BackfillService:
         ]
 
     async def run_for_channel(self, channel_id: str, channel_login: str) -> list[BackfillOutcome]:
-        outcomes: list[BackfillOutcome] = []
-        for gap in await find_gaps(self.conn, channel_id, channel_login):
-            if await self._already_filled(gap):
-                continue
-            outcomes.append(await self.fill(gap))
-        return outcomes
+        filled = await self._filled_gaps(channel_id)
+        return [
+            await self.fill(gap)
+            for gap in await find_gaps(self.conn, channel_id, channel_login)
+            if (gap.from_ms, gap.to_ms) not in filled
+        ]
 
     async def run_all(self) -> list[BackfillOutcome]:
         outcomes: list[BackfillOutcome] = []
@@ -207,13 +216,14 @@ class BackfillService:
             case MessageDeleted() | UserCleared() | ChatCleared():
                 await self.writer.moderation(event)
 
-    async def _already_filled(self, gap: Gap) -> bool:
+    async def _filled_gaps(self, channel_id: str) -> set[tuple[int, int]]:
+        """Gaps some run has already filled completely, in one query rather than one per gap."""
         async with await self.conn.execute(
-            "SELECT complete FROM backfill_runs WHERE channel_id = %s AND gap_from = %s AND gap_to = %s",
-            (gap.channel_id, gap.from_ms, gap.to_ms),
+            "SELECT gap_from, gap_to FROM backfill_runs WHERE channel_id = %s"
+            " GROUP BY gap_from, gap_to HAVING bool_or(complete)",
+            (channel_id,),
         ) as cur:
-            row = await cur.fetchone()
-        return row is not None and bool(row["complete"])
+            return {(int(r["gap_from"]), int(r["gap_to"])) for r in await cur.fetchall()}
 
     async def _record(self, outcome: BackfillOutcome) -> None:
         async with transaction(self.conn):

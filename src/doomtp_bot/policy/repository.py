@@ -9,17 +9,13 @@ from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import Connection, Row, fetch_value, transaction
+from doomtp_bot.storage.db import Connection, fetch_one, fetch_value, transaction
 
 
 @dataclass(frozen=True, slots=True)
 class Actor:
     user_id: str | None
     via: str = "chat"  # chat | api | web | system
-
-
-# Channel settings stored as boolean rather than 0/1 (ADR-0014).
-_BOOL_SETTINGS = frozenset({"active", "log_enabled", "history_backfill", "quiet_errors", "cc_edit_notice"})
 
 
 class PolicyRepository:
@@ -34,15 +30,11 @@ class PolicyRepository:
             action=action,
             actor_user_id=actor.user_id,
             via=actor.via,
-            channel_id=None if channel_id == GLOBAL else channel_id,
+            channel_id=channel_id,
             target=target,
             before=before,
             after=after,
         )
-
-    async def _one(self, sql: str, params: tuple[object, ...]) -> Row | None:
-        async with await self.conn.execute(sql, params) as cur:
-            return await cur.fetchone()
 
     # ── channels ────────────────────────────────────────────────────────────
     async def ensure_channel(
@@ -50,7 +42,9 @@ class PolicyRepository:
     ) -> bool:
         """Create the channel row if missing. Returns True if it was created."""
         async with transaction(self.conn):
-            existing = await self._one("SELECT login FROM channels WHERE channel_id = %s", (channel_id,))
+            existing = await fetch_one(
+                self.conn, "SELECT login FROM channels WHERE channel_id = %s", (channel_id,)
+            )
             ts = now_ms()
             if existing is not None:
                 if existing["login"] != login:
@@ -75,15 +69,11 @@ class PolicyRepository:
         if column not in allowed:
             raise ValueError(f"unknown channel setting {column}")
         async with transaction(self.conn):
-            before = await self._one(
-                f"SELECT {column} AS v FROM channels WHERE channel_id = %s", (channel_id,)
+            before = await fetch_one(
+                self.conn, f"SELECT {column} AS v FROM channels WHERE channel_id = %s", (channel_id,)
             )
-            if column in _BOOL_SETTINGS:
-                # These were 0/1 integers under SQLite and callers still pass either; Postgres wants a
-                # boolean and says so. Coercing here means no caller has to remember which is which.
-                stored: object = bool(value)
-            elif column == "capabilities" and isinstance(value, (set, frozenset, list)):
-                stored = json.dumps(sorted(value))
+            if column == "capabilities" and isinstance(value, (set, frozenset, list)):
+                stored: object = json.dumps(sorted(value))
             else:
                 stored = value
             await self.conn.execute(
@@ -108,8 +98,10 @@ class PolicyRepository:
 
     async def delete_role(self, role_id: int, actor: Actor) -> None:
         async with transaction(self.conn):
-            row = await self._one(
-                "SELECT channel_id, name, rank FROM roles WHERE id = %s AND builtin = 0", (role_id,)
+            row = await fetch_one(
+                self.conn,
+                "SELECT channel_id, name, rank FROM roles WHERE id = %s AND NOT builtin",
+                (role_id,),
             )
             if row is None:
                 return
@@ -214,7 +206,8 @@ class PolicyRepository:
         clear_enabled: bool = False,
     ) -> None:
         async with transaction(self.conn):
-            row = await self._one(
+            row = await fetch_one(
+                self.conn,
                 "SELECT enabled, log_level FROM command_toggles WHERE channel_id = %s AND command = %s",
                 (channel_id, command),
             )

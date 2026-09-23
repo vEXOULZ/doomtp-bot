@@ -6,11 +6,12 @@ so they commit atomically with the rest of the line.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.modules._common import rank, user_arg
+from doomtp_bot.modules._common import rank, reject_filtered, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.namespaces import CHATTER_KEY, VAR_NAMESPACES
@@ -60,14 +61,6 @@ def _key_for_user(ctx: CommandContext, ns: str, name: str, user_id: str) -> VarK
     if column is None:
         raise CommandError(f"{ns} has no per-user values")
     return dataclasses.replace(key_for(ctx.exec, ns, name), **{column: user_id})
-
-
-def _reject_filtered(ctx: CommandContext, text: str) -> None:
-    """Stored text goes through the channel's filter too (architecture §9)."""
-    filters = ctx.exec.services.get("filters")
-    hits = filters.rejects(ctx.channel.id, text) if filters is not None else []
-    if hits:
-        raise CommandError(f"the filter rejects that: {', '.join(hits)}")
 
 
 def _var_admin(ctx: CommandContext) -> bool:
@@ -151,10 +144,13 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         space_key = key_for(ctx.exec, ns, name)
         rows = await _store(ctx).top(ns, space_key.key1, space_key.key2, name, count)
         resolve_login = ctx.exec.services.get("login_for")
-        ranked = []
-        for i, (user_id, value) in enumerate(rows, start=1):
-            login = (await resolve_login(user_id)) if resolve_login else None
-            ranked.append((i, login or user_id, value))
+        # All at once: a cold cache is a Helix call per row, and one after another a long board would
+        # run past the command's stage timeout.
+        logins = await asyncio.gather(*(resolve_login(uid) for uid, _ in rows)) if resolve_login else []
+        ranked = [
+            (i, (logins[i - 1] if logins else None) or user_id, value)
+            for i, (user_id, value) in enumerate(rows, start=1)
+        ]
         if not ranked:
             return Result.success(f"nobody has {v[1]} yet", [])
         text = ", ".join(f"{i}. {who} {render(val)}" for i, who, val in ranked)
@@ -164,7 +160,7 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
 
     if action in ("set", "incr"):
         if action == "set":
-            _reject_filtered(ctx, " ".join(v[2:]))
+            reject_filtered(ctx, " ".join(v[2:]))
         if not access.can_write(ctx.exec, ns, name):
             # Raised, not returned: a write denial is the runtime's 126, not a command's own failure code.
             raise CommandError(f"you can't change {ns}.{name}", Code.DENIED)

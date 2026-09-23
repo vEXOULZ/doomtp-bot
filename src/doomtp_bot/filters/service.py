@@ -8,8 +8,6 @@ Entries are held in memory per scope and rebuilt on write, the same shape as the
 
 from __future__ import annotations
 
-from typing import Literal
-
 import structlog
 
 from doomtp_bot.audit.log import write_audit
@@ -111,7 +109,7 @@ class FilterService:
                 action="filter.add",
                 actor_user_id=actor_user_id,
                 via="chat",
-                channel_id=None if channel_id == GLOBAL else channel_id,
+                channel_id=channel_id,
                 target=pattern,
                 after={"kind": kind, "action": action},
             )
@@ -129,7 +127,7 @@ class FilterService:
                     action="filter.remove",
                     actor_user_id=actor_user_id,
                     via="chat",
-                    channel_id=None if channel_id == GLOBAL else channel_id,
+                    channel_id=channel_id,
                     target=str(entry_id),
                 )
         if cur.rowcount:
@@ -150,7 +148,7 @@ class FilterService:
                     action="filter.enable" if enabled else "filter.disable",
                     actor_user_id=actor_user_id,
                     via="chat",
-                    channel_id=None if channel_id == GLOBAL else channel_id,
+                    channel_id=channel_id,
                     target=str(entry_id),
                 )
         if cur.rowcount:
@@ -158,5 +156,4 @@ class FilterService:
         return bool(cur.rowcount)
 
 
-Scope = Literal["channel", "global"]
-__all__ = ["ACTIONS", "KINDS", "FilterError", "FilterService", "Scope"]
+__all__ = ["ACTIONS", "KINDS", "FilterError", "FilterService"]

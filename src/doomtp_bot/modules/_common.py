@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.repository import Actor
@@ -12,9 +12,34 @@ from doomtp_bot.runtime.result import CommandError
 from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.runtime.values import ConversionError, convert
 
+if TYPE_CHECKING:
+    from doomtp_bot.policy.service import PolicyService
+
 
 def rank(ctx: CommandContext) -> int:
     return ctx.invoker.rank if ctx.invoker else 0
+
+
+def policy_of(ctx: CommandContext) -> PolicyService:
+    return ctx.service("policy")  # type: ignore[no-any-return]
+
+
+def need(values: list[str], count: int, usage: str) -> None:
+    """Fail with the usage line unless at least `count` arguments were given."""
+    if len(values) < count:
+        raise CommandError(f"usage: {usage}")
+
+
+def reject_filtered(ctx: CommandContext, *texts: str) -> None:
+    """Text that gets stored is read out later — as a name, a usage line or a reply — so it goes through
+    the channel's filter before it is saved (architecture §9, ADR-0009 item 4)."""
+    filters = ctx.exec.services.get("filters")
+    if filters is None:
+        return
+    for text in texts:
+        hits = filters.rejects(ctx.channel.id, text)
+        if hits:
+            raise CommandError(f"the filter rejects that: {', '.join(hits)}")
 
 
 def actor(ctx: CommandContext) -> Actor:

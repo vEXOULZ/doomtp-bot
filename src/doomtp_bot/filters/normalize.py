@@ -7,7 +7,6 @@ masked in the *original* text without disturbing anything else.
 
 from __future__ import annotations
 
-import re
 import unicodedata
 from dataclasses import dataclass
 
@@ -19,7 +18,6 @@ CONFUSABLES = {
     "@": "a", "$": "s", "!": "i", "|": "i", "£": "l", "€": "e", "+": "t", "¡": "i",
     "ø": "o", "œ": "oe", "æ": "ae", "ß": "ss", "ð": "d", "þ": "th", "ł": "l", "đ": "d", "ı": "i",
 }  # fmt: skip
-SEPARATORS = re.compile(r"[\s._\-*'\"`~^,;:()\[\]{}<>/\\]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +36,7 @@ class Normalized:
         return (first, last + 1)
 
 
-def normalize(text: str, *, collapse_repeats: bool = True) -> Normalized:
+def normalize(text: str) -> Normalized:
     """Fold case, accents, confusables and repeated letters, keeping a map back to the original text.
 
     Separators are kept: patterns tolerate them between letters instead (matcher.GAP), so `b a d` is
@@ -54,7 +52,7 @@ def normalize(text: str, *, collapse_repeats: bool = True) -> Normalized:
                 continue
             folded = CONFUSABLES.get(decomposed.casefold(), decomposed.casefold())
             for char in folded:
-                if collapse_repeats and chars and chars[-1] == char:
+                if chars and chars[-1] == char:
                     continue  # "niiiice" → "nice"; patterns are normalized the same way
                 chars.append(char)
                 origin.append(index)

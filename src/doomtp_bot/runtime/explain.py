@@ -129,16 +129,16 @@ async def explain(
     if runtime.custom is not None:
         resolver = await runtime.custom.resolver_for(ctx, node, resolver)
 
-    pre = preflight(node, ctx, resolver, runtime.policy, ctx.variables.access, runtime.max_invocations)
+    pre = preflight(node, ctx, resolver, runtime.policy, ctx.variables.access)
     report.invocations = [
         _describe(inv, ctx, runtime, resolver, pre.resolved.get(inv.index)) for inv in invocations(node)
     ]
-    report.stores = _stores(node, ctx, runtime)
+    report.stores = _stores(node, ctx)
     if not pre.ok:
         report.failure, report.failed_index = pre.result, pre.failed_index
         return report
     if run:
-        await _dry_run(runtime, node, text, ctx, report, context)
+        await _dry_run(runtime, text, ctx, report, context)
     return report
 
 
@@ -180,7 +180,7 @@ def _describe(inv: Any, ctx: ExecContext, runtime: Runtime, resolver: Any, resol
     )
 
 
-def _stores(node: Node, ctx: ExecContext, runtime: Runtime) -> list[dict[str, Any]]:
+def _stores(node: Node, ctx: ExecContext) -> list[dict[str, Any]]:
     return [
         {
             "variable": f"{store.target.namespace}.{store.target.name}",
@@ -192,7 +192,7 @@ def _stores(node: Node, ctx: ExecContext, runtime: Runtime) -> list[dict[str, An
 
 
 async def _dry_run(
-    runtime: Runtime, node: Node, text: str, ctx: ExecContext, report: ExplainReport, context: Context
+    runtime: Runtime, text: str, ctx: ExecContext, report: ExplainReport, context: Context
 ) -> None:
     """Run for real, then throw away everything it would have changed (spec §9)."""
     sub = runtime.make_context(

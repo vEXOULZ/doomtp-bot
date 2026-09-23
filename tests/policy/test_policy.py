@@ -1,4 +1,4 @@
-"""Permissions, cooldowns, toggles, callbacks and chat admin commands against a real bot.db (ADR-0006)."""
+"""Permissions, cooldowns, toggles, callbacks and chat admin commands against a real `bot` schema (ADR-0006)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from doomtp_bot.runtime.registry import CommandRegistry, command
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown
 from doomtp_bot.storage.db import Databases
+from tests.fakes import FakeClock
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 OWNER_ID = "1"
@@ -34,14 +35,6 @@ USERS = {
     "owner": {"id": OWNER_ID, "name": "owner", "display": "Owner"},
 }
 BADGES = {"streamer": {"broadcaster"}, "mod": {"moderator"}, "vip": {"vip"}}
-
-
-@dataclass
-class FakeClock:
-    now: float = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
 
 
 @command(
@@ -102,7 +95,7 @@ async def resolve_user(login: str) -> dict[str, Any] | None:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    clock = FakeClock()
+    clock = FakeClock(1000.0)
     policy = PolicyService(dbs.bot, bot_owner_ids=frozenset({OWNER_ID}), clock=clock)
     await policy.reload()
     registry: CommandRegistry = builtin_registry()
@@ -181,6 +174,13 @@ async def test_role_grant_rules(h: Harness) -> None:
     assert await h.reply("streamer", "!role add lead @mod 1h") == "gave lead to Mod for 1h"
     assert await h.reply("streamer", "!role who lead") == "lead: mod"
     assert await h.reply("mod", "!role add moderator @viewer") == "you can't manage moderator"
+
+
+async def test_a_custom_role_can_be_deleted_and_a_builtin_cannot(h: Harness) -> None:
+    assert await h.reply("mod", "!role create helper 70") == "created role helper (rank 70)"
+    assert await h.reply("mod", "!role delete helper") == "deleted role helper"
+    assert await h.reply("mod", "!role who helper") == "unknown role helper"
+    assert await h.reply("streamer", "!role delete moderator") == "you can't delete moderator"
 
 
 async def test_bot_owner_manages_admins(h: Harness) -> None:

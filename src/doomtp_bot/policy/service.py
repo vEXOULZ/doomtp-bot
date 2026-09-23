@@ -1,4 +1,4 @@
-"""PolicyService: the runtime's policy gate backed by bot.db (ADR-0006).
+"""PolicyService: the runtime's policy gate backed by the `bot` schema (ADR-0006).
 
 Checks run against an in-memory snapshot; writes go through PolicyRepository and rebuild the snapshot.
 """
@@ -39,7 +39,7 @@ CALLBACK_PRUNE_AT = 10_000
 
 
 class _Bucket(NamedTuple):
-    """One invocation's cooldown buckets, worked out once and used by both the look and the claim."""
+    """One invocation's cooldown buckets: what a single look or claim works out once and uses throughout."""
 
     channel_id: str
     key: str

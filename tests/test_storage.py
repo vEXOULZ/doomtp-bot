@@ -13,8 +13,8 @@ from doomtp_bot.storage.db import (
 
 
 async def test_migrations_apply_and_are_idempotent(dbs: Databases) -> None:
-    assert await current_version(dbs.bot, "bot") == len(load_migrations("bot"))
-    assert await current_version(dbs.chatlog, "chatlog") == len(load_migrations("chatlog"))
+    assert await current_version(dbs.bot) == len(load_migrations("bot"))
+    assert await current_version(dbs.chatlog) == len(load_migrations("chatlog"))
     # Running again is a no-op.
     assert await migrate(dbs.bot, "bot") == len(load_migrations("bot"))
 

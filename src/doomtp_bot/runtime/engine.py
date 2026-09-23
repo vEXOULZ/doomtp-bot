@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -19,7 +19,7 @@ from doomtp_bot.runtime.executor import Executor, Scope, ScopeArgs
 from doomtp_bot.runtime.namespaces import is_reserved_var_name
 from doomtp_bot.runtime.output import CallbackKind, Origin, decide_output
 from doomtp_bot.runtime.policy import AllowAllPolicy, Policy
-from doomtp_bot.runtime.preflight import MAX_INVOCATIONS, preflight
+from doomtp_bot.runtime.preflight import preflight
 from doomtp_bot.runtime.registry import CommandRegistry
 from doomtp_bot.runtime.resolver import BuiltinResolver, CustomTarget, Resolver
 from doomtp_bot.runtime.result import Code, Result, error_result
@@ -55,7 +55,6 @@ class RunReport:
     cancelled: bool = False
     duration_ms: int = 0
     ast: Node | None = None
-    callback_report: RunReport | None = None
 
 
 def _record_executed(report: RunReport, scope: Scope) -> None:
@@ -66,9 +65,6 @@ def _record_executed(report: RunReport, scope: Scope) -> None:
         for index in report.executed
         if (resolved := scope.resolved.get(index)) is not None and resolved.custom is not None
     ]
-
-
-CommitHook = Callable[[ExecContext, list[WriteOp]], Awaitable[None]]
 
 
 class CustomLoader(Protocol):
@@ -93,12 +89,10 @@ class Runtime:
         store: VariableStore | None = None,
         access: VariableAccess | None = None,
         resolve_user: UserResolver | None = None,
-        on_commit: CommitHook | None = None,
         callbacks: CallbackProvider | None = None,
         custom: CustomLoader | None = None,
         services: dict[str, Any] | None = None,
         expr_timeout: float = EXPR_TIMEOUT_S,
-        max_invocations: int = MAX_INVOCATIONS,
     ) -> None:
         self.registry = registry
         self.policy: Policy = policy or AllowAllPolicy()
@@ -106,12 +100,10 @@ class Runtime:
         self.store: VariableStore = store or InMemoryVariableStore()
         self.access: VariableAccess = access or AllowAllAccess()
         self.resolve_user = resolve_user
-        self.on_commit = on_commit
         self.callbacks = callbacks
         self.custom = custom
         self.services: dict[str, Any] = {"registry": registry, "runtime": self, **(services or {})}
         self.expr_timeout = expr_timeout
-        self.max_invocations = max_invocations
         self.executor = Executor(self.policy)
 
     # ── context construction ────────────────────────────────────────────────
@@ -175,7 +167,7 @@ class Runtime:
         resolver = self.resolver
         if self.custom is not None:
             resolver = await self.custom.resolver_for(ctx, node, resolver)
-        pre = preflight(node, ctx, resolver, self.policy, ctx.variables.access, self.max_invocations)
+        pre = preflight(node, ctx, resolver, self.policy, ctx.variables.access)
         if not pre.ok:
             assert pre.result is not None
             report = RunReport(
@@ -212,8 +204,6 @@ class Runtime:
             except VariableError as exc:
                 log.warning("variables.commit_failed", run_id=ctx.run_id, error=exc.message)
                 report.result = exc.result()
-            if report.committed and self.on_commit is not None:
-                await self.on_commit(ctx, report.committed)
         _record_executed(report, scope)
         await self._settle(report, ctx)
         return self._finish(report, started)
@@ -255,7 +245,6 @@ class Runtime:
         sub = await self.run(expr, sub_ctx)
         if sub is not None:
             report.send = sub.send
-            report.callback_report = sub
 
     def _decide(self, report: RunReport, ctx: ExecContext) -> None:
         decision = decide_output(

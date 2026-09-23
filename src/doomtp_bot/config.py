@@ -53,19 +53,11 @@ class Settings(BaseSettings):
 
     def client_secret(self) -> str | None:
         """TWITCH_CLIENT_SECRET, or the contents of TWITCH_CLIENT_SECRET_FILE."""
-        if self.twitch_client_secret is not None:
-            return self.twitch_client_secret.get_secret_value()
-        if self.twitch_client_secret_file and self.twitch_client_secret_file.is_file():
-            return self.twitch_client_secret_file.read_text(encoding="utf-8").strip() or None
-        return None
+        return _secret(self.twitch_client_secret, self.twitch_client_secret_file)
 
     def admin_password_value(self) -> str | None:
         """ADMIN_PASSWORD, or the contents of ADMIN_PASSWORD_FILE."""
-        if self.admin_password is not None:
-            return self.admin_password.get_secret_value() or None
-        if self.admin_password_file and self.admin_password_file.is_file():
-            return self.admin_password_file.read_text(encoding="utf-8").strip() or None
-        return None
+        return _secret(self.admin_password, self.admin_password_file)
 
     def database_dsn(self) -> str:
         """DATABASE_URL with DATABASE_PASSWORD (or the contents of DATABASE_PASSWORD_FILE) spliced in.
@@ -73,11 +65,7 @@ class Settings(BaseSettings):
         Returned rather than stored so the password never sits on the Settings object, where a repr in
         a log line or a traceback would print it.
         """
-        password = None
-        if self.database_password is not None:
-            password = self.database_password.get_secret_value() or None
-        elif self.database_password_file and self.database_password_file.is_file():
-            password = self.database_password_file.read_text(encoding="utf-8").strip() or None
+        password = _secret(self.database_password, self.database_password_file)
         if password is None:
             return self.database_url
         parts = urlsplit(self.database_url)
@@ -92,3 +80,12 @@ class Settings(BaseSettings):
     @property
     def lock_path(self) -> Path:
         return self.data_dir / ".lock"
+
+
+def _secret(value: SecretStr | None, file: Path | None) -> str | None:
+    """A secret given inline, else read from its file; blank counts as not set."""
+    if value is not None:
+        return value.get_secret_value() or None
+    if file and file.is_file():
+        return file.read_text(encoding="utf-8").strip() or None
+    return None

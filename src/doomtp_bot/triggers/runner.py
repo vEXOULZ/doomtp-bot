@@ -32,12 +32,10 @@ class TriggerRunner:
         runtime: Runtime,
         policy: PolicyService,
         outbox: Outbox,
-        on_run: Callable[[Trigger, RunReport], Any] | None = None,
     ) -> None:
         self.runtime = runtime
         self.policy = policy
         self.outbox = outbox
-        self.on_run = on_run
 
     async def run(
         self,
@@ -79,8 +77,6 @@ class TriggerRunner:
                 is_invalidated=is_cancelled or (lambda: False),
                 run_ref=ctx.run_id,
             )
-        if self.on_run is not None:
-            await self.on_run(trigger, report)
         log.info(
             "trigger.ran",
             trigger=trigger.id,

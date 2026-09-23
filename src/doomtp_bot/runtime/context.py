@@ -85,7 +85,6 @@ class ExecContext:
     trigger_type: str = "chat"
     trigger_id: str | None = None
     message_id: str | None = None
-    message_sent_at: float | None = None
     publisher: Publisher | None = None
     event: dict[str, Any] = field(default_factory=dict)
     match: dict[str, Any] = field(default_factory=dict)
@@ -134,7 +133,6 @@ class CommandContext:
     """What a command handler sees."""
 
     exec: ExecContext
-    invocation_index: int
     name: str
     prev: Result | None = None  # the Result visible as {_} (spec §6.4)
 

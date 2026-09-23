@@ -43,13 +43,14 @@ class ChannelManager:
         sessions: SessionLog,
         *,
         default_prefix: str = DEFAULT_PREFIX,
-        on_joined: Callable[[str], Awaitable[object]] | None = None,
     ) -> None:
         self.policy = policy
         self.subscriber = subscriber
         self.sessions = sessions
         self.default_prefix = default_prefix
-        self.on_joined = on_joined  # the capability probe, once the channel is subscribed (ADR-0007)
+        # The capability probe, once the channel is subscribed (ADR-0007). Set after construction: the
+        # probe needs this manager first.
+        self.on_joined: Callable[[str], Awaitable[object]] | None = None
 
     def active_channels(self) -> list[ChannelSettings]:
         return [c for c in self.policy.snapshot.channels.values() if _is_joined(c)]
@@ -67,7 +68,7 @@ class ChannelManager:
     async def part(self, channel_id: str, actor: Actor) -> None:
         async def mark_parted(repo: PolicyRepository) -> None:
             await repo.set_channel_field(channel_id, "status", "parted", actor)
-            await repo.set_channel_field(channel_id, "active", 0, actor)
+            await repo.set_channel_field(channel_id, "active", False, actor)
 
         await self.policy.mutate(mark_parted)
         if self.subscriber is not None:
@@ -89,7 +90,7 @@ class ChannelManager:
         async def mark(repo: PolicyRepository) -> None:
             await repo.ensure_channel(channel_id, login, actor, self.default_prefix)
             await repo.set_channel_field(channel_id, "status", "joined", actor)
-            await repo.set_channel_field(channel_id, "active", 1, actor)
+            await repo.set_channel_field(channel_id, "active", True, actor)
 
         if not self.is_active(channel_id):
             await self.policy.mutate(mark)

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from doomtp_bot.filters.matcher import Action, FilterError, Kind
 from doomtp_bot.filters.service import ACTIONS, KINDS
-from doomtp_bot.modules._common import rank
+from doomtp_bot.modules._common import need, rank
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
@@ -39,11 +39,6 @@ def _scope(ctx: CommandContext, words: list[str]) -> str:
     return ctx.channel.id
 
 
-def _need(values: list[str], count: int) -> None:
-    if len(values) < count:
-        raise CommandError(f"usage: {USAGE}")
-
-
 @command(
     CommandSpec(
         name="filter",
@@ -63,7 +58,7 @@ def _need(values: list[str], count: int) -> None:
 async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     service = _filters(ctx)
     values = list(args.values)
-    _need(values, 1)
+    need(values, 1, USAGE)
     action = values[0].lower()
     actor_id = ctx.invoker.id if ctx.invoker else None
 
@@ -79,7 +74,7 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         return Result.success(listing, [{"id": e.id, "pattern": e.pattern, "kind": e.kind} for e in entries])
 
     if action == "test":
-        _need(values, 2)
+        need(values, 2, USAGE)
         text = " ".join(values[1:])
         result = service.check(ctx.channel.id, text)
         if result.blocked:
@@ -93,7 +88,7 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
 
     scope = _scope(ctx, values)
     if action == "add":
-        _need(values, 3)
+        need(values, 3, USAGE)
         pattern = values[2]
         if values[1].lower() not in KINDS:
             raise CommandError(f"kind must be one of: {', '.join(KINDS)}")
@@ -118,7 +113,7 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
             f"filtering {pattern} ({kind}/{entry_action}) {where}, entry {entry.id}", {"id": entry.id}
         )
 
-    _need(values, 2)
+    need(values, 2, USAGE)
     if not values[1].isdigit():
         raise CommandError(f"give the entry id from {ctx.channel.prefix}filter list")
     entry_id = int(values[1])

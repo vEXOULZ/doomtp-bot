@@ -1,4 +1,4 @@
-"""Immutable in-memory view of all policy tables in bot.db (ADR-0006 §5). Rebuilt after every write."""
+"""Immutable in-memory view of all policy tables in the `bot` schema (ADR-0006 §5). Rebuilt after every write."""
 
 from __future__ import annotations
 
@@ -71,8 +71,13 @@ class PolicySnapshot:
             name
         )
 
-    def custom_roles_for(self, channel_id: str, user_id: str, now_ms: int | None = None) -> list[Role]:
-        now_ms = clock.now_ms() if now_ms is None else now_ms
+    def channel_by_login(self, login: str) -> ChannelSettings | None:
+        """A joined or parted channel by its login, as typed: any case, with or without a leading `#`."""
+        wanted = login.lower().lstrip("#")
+        return next((c for c in self.channels.values() if c.login == wanted), None)
+
+    def custom_roles_for(self, channel_id: str, user_id: str) -> list[Role]:
+        now_ms = clock.now_ms()
         found: list[Role] = []
         for m in self.memberships.get(user_id, ()):
             if m.expires_at is not None and m.expires_at <= now_ms:
@@ -91,16 +96,16 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
             snap.channels[r["channel_id"]] = ChannelSettings(
                 channel_id=r["channel_id"],
                 login=r["login"],
-                active=bool(r["active"]),
+                active=r["active"],
                 status=r["status"],
                 tier=r["tier"],
                 capabilities=frozenset(json.loads(r["capabilities"] or "[]")),
                 prefix=r["prefix"],
                 reply_hold_ms=r["reply_hold_ms"],
-                log_enabled=bool(r["log_enabled"]),
-                history_backfill=bool(r["history_backfill"]),
-                quiet_errors=bool(r["quiet_errors"]),
-                cc_edit_notice=bool(r["cc_edit_notice"]),
+                log_enabled=r["log_enabled"],
+                history_backfill=r["history_backfill"],
+                quiet_errors=r["quiet_errors"],
+                cc_edit_notice=r["cc_edit_notice"],
                 timezone=r["timezone"],
                 automod_action=r["automod_action"],
                 automod_timeout_s=r["automod_timeout_s"],
@@ -113,7 +118,7 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
 
     async with await conn.execute("SELECT id, channel_id, name, rank, builtin FROM roles") as cur:
         for r in await cur.fetchall():
-            role = Role(r["id"], r["channel_id"], r["name"], r["rank"], bool(r["builtin"]))
+            role = Role(r["id"], r["channel_id"], r["name"], r["rank"], r["builtin"])
             snap.roles_by_id[role.id] = role
             snap.roles_by_scope.setdefault(role.channel_id, {})[role.name] = role
 
@@ -128,14 +133,14 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
 
     async with await conn.execute("SELECT channel_id, module, enabled FROM module_toggles") as cur:
         for r in await cur.fetchall():
-            snap.module_toggles[(r["channel_id"], r["module"])] = bool(r["enabled"])
+            snap.module_toggles[(r["channel_id"], r["module"])] = r["enabled"]
 
     async with await conn.execute(
         "SELECT channel_id, command, enabled, log_level FROM command_toggles"
     ) as cur:
         for r in await cur.fetchall():
             if r["enabled"] is not None:
-                snap.command_toggles[(r["channel_id"], r["command"])] = bool(r["enabled"])
+                snap.command_toggles[(r["channel_id"], r["command"])] = r["enabled"]
             if r["log_level"] is not None:
                 snap.command_log_levels[(r["channel_id"], r["command"])] = r["log_level"]
 
