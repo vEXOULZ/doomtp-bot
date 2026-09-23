@@ -38,13 +38,13 @@ It exists for the day you need it, not for the day you are in a hurry.
 
 GitHub enforces the same rule on the server, because a local hook protects only the person who
 installed it. `main` on [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot) accepts
-changes only through a pull request, and a pull request merges only when all five CI jobs are green on a
+changes only through a pull request, and a pull request merges only when all four CI jobs are green on a
 branch that is up to date with `main`:
 
 | Check | What it guards |
 |-------|----------------|
 | `branch-name` | the Conventional Branch rule above, the same script the hook runs |
-| `python (3.11)`, `python (3.12)` | lint, types, the suite against Postgres 17, grammar and railroad checks |
+| `python (3.12)` | lint, types, the suite against Postgres 17, grammar and railroad checks |
 | `web-editor` | vitest, and that the committed editor bundle matches its source |
 | `docker` | the image builds and the server compose files parse together |
 

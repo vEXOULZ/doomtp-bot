@@ -3,7 +3,7 @@ name = "doomtp-bot"
 version = "0.1.0"
 description = "Multi-channel Twitch chat bot with a composable command language"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "twitchio>=3,<4",
     "aiohttp>=3.9",
@@ -54,7 +54,7 @@ xfail_strict = true
 
 [tool.ruff]
 line-length = 110
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM"]
@@ -66,7 +66,7 @@ ignore = ["E501"]  # line length is enforced by `ruff format`; long docstrings/c
 exclude = ["*.md"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 packages = ["doomtp_bot"]
 mypy_path = "src"
 ignore_missing_imports = true

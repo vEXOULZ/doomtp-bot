@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TypeAlias
 
-Span: TypeAlias = tuple[int, int]
+type Span = tuple[int, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +28,8 @@ class Placeholder:
     span: Span
 
 
-Part: TypeAlias = Text | Placeholder
-Arg: TypeAlias = tuple[Part, ...]
+type Part = Text | Placeholder
+type Arg = tuple[Part, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +78,7 @@ class Store:
     append: bool
 
 
-Node: TypeAlias = And | Or | Pipe | Group | Store | Invocation
+type Node = And | Or | Pipe | Group | Store | Invocation
 
 
 def invocations(node: Node) -> list[Invocation]:
