@@ -18,7 +18,7 @@ from twitchio import eventsub
 
 from doomtp_bot.core.events import Event
 from doomtp_bot.core.health import ComponentHealth, Status
-from doomtp_bot.core.outbox import SendResult
+from doomtp_bot.core.outbox import BANNED, SendResult
 from doomtp_bot.twitch import mapping
 from doomtp_bot.twitch.tokens import BOT_IDENTITY, TokenStore
 
@@ -278,9 +278,17 @@ class TwitchService:
         if self.client is None or self.bot_id is None:
             return SendResult(None, "not_connected")
         channel = self.client.create_partialuser(channel_id)
-        sent = await channel.send_message(
-            text, self.bot_id, token_for=self.bot_id, reply_to_message_id=reply_to
-        )
+        try:
+            sent = await channel.send_message(
+                text, self.bot_id, token_for=self.bot_id, reply_to_message_id=reply_to
+            )
+        except twitchio.HTTPException as exc:
+            # Send Chat Message answers 403 when "the sender is not permitted to send chat messages to
+            # the broadcaster's chat room": a ban. Anything else stays an ordinary failure.
+            if exc.status != 403:
+                raise
+            log.warning("twitch.send_forbidden", channel=channel_id, error=exc.extra.get("message", ""))
+            return SendResult(None, BANNED)
         if not sent.sent:
             return SendResult(sent.id or None, f"twitch_rejected:{sent.dropped_code}")
         return SendResult(sent.id)

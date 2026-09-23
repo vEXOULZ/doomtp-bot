@@ -31,6 +31,14 @@ class SessionLog(Protocol):
     async def end_session(self, channel_id: str, reason: str) -> None: ...
 
 
+class ChannelBanned(Exception):
+    """The bot left this channel because Twitch said it was banned there. Coming back is deliberate."""
+
+    def __init__(self, login: str) -> None:
+        super().__init__(f"the bot left #{login} after Twitch refused its message with 403 (banned there)")
+        self.login = login
+
+
 def _is_joined(settings: ChannelSettings | None) -> bool:
     return settings is not None and settings.active and settings.status == "joined"
 
@@ -58,23 +66,47 @@ class ChannelManager:
     def is_active(self, channel_id: str) -> bool:
         return _is_joined(self.policy.channel_settings(channel_id))
 
-    async def join(self, channel_id: str, login: str, actor: Actor) -> list[str]:
-        """Mark the channel joined and subscribe. Returns failed subscription types (empty on success)."""
+    def is_banned(self, channel_id: str) -> bool:
+        settings = self.policy.channel_settings(channel_id)
+        return settings is not None and settings.status == "banned"
+
+    async def join(self, channel_id: str, login: str, actor: Actor, *, rejoin: bool = False) -> list[str]:
+        """Mark the channel joined and subscribe. Returns failed subscription types (empty on success).
+
+        A channel the bot left because it was banned there stays left unless the caller passes `rejoin`,
+        so nothing brings the bot back by accident (architecture §10). Raises ChannelBanned otherwise.
+        """
+        if self.is_banned(channel_id) and not rejoin:
+            raise ChannelBanned(login)
         await self._mark_joined(channel_id, login, actor)
         failed = await self._subscribe(channel_id)
         log.info("channel.join", channel=login, failed=failed)
         return failed
 
-    async def part(self, channel_id: str, actor: Actor) -> None:
+    async def part(self, channel_id: str, actor: Actor, *, status: str = "parted") -> None:
         async def mark_parted(repo: PolicyRepository) -> None:
-            await repo.set_channel_field(channel_id, "status", "parted", actor)
+            await repo.set_channel_field(channel_id, "status", status, actor)
             await repo.set_channel_field(channel_id, "active", False, actor)
 
         await self.policy.mutate(mark_parted)
         if self.subscriber is not None:
             await self.subscriber.unsubscribe_channel(channel_id)
         await self.sessions.end_session(channel_id, "part")
-        log.info("channel.part", channel_id=channel_id)
+        log.info("channel.part", channel_id=channel_id, status=status)
+
+    async def leave_banned(self, channel_id: str) -> None:
+        """Twitch refused a message here with 403: leave, and flag the channel `banned` (architecture §10).
+
+        The part is audited as the system's. The bot's own channel is never left: nobody can be banned
+        from their own chat, so a 403 there means the bot's token lost its chat scope, not a ban.
+        """
+        if self.subscriber is not None and channel_id == self.subscriber.bot_id:
+            log.error("channel.send_forbidden_at_home", channel_id=channel_id)
+            return
+        if not self.is_active(channel_id):
+            return  # already left; a refused send from a run still in flight changes nothing
+        await self.part(channel_id, Actor(None, "system"), status="banned")
+        log.warning("channel.left_banned", channel_id=channel_id)
 
     async def ensure_home(self, bot_id: str, bot_login: str) -> None:
         """The bot's own channel is always joined, so broadcasters can type !join there. subscribe_all() connects it."""

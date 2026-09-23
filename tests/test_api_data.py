@@ -223,6 +223,23 @@ async def test_joining_and_parting_a_channel(client: httpx.AsyncClient, write_ke
     assert missing.status_code == 404
 
 
+async def test_a_banned_channel_needs_rejoin(
+    client: httpx.AsyncClient, write_key: str, app_and_keys: tuple[Any, ApiKeyService]
+) -> None:
+    await client.post("/api/v1/channels", json={"login": "friend"}, headers=auth(write_key))
+    await app_and_keys[0].state.channels.leave_banned("200")
+    flagged = (await client.get("/api/v1/channels/friend", headers=auth(write_key))).json()
+    assert flagged["status"] == "banned" and flagged["banned"] is True and flagged["active"] is False
+
+    refused = await client.post("/api/v1/channels", json={"login": "friend"}, headers=auth(write_key))
+    assert refused.status_code == 409 and "rejoin" in refused.json()["detail"]
+    back = await client.post(
+        "/api/v1/channels", json={"login": "friend", "rejoin": True}, headers=auth(write_key)
+    )
+    assert back.status_code == 201
+    assert (await client.get("/api/v1/channels/friend", headers=auth(write_key))).json()["banned"] is False
+
+
 async def test_modules_and_commands_are_toggled_through_the_same_services(
     client: httpx.AsyncClient, write_key: str
 ) -> None:

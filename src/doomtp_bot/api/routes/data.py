@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.audit.log import read_audit
+from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
@@ -108,6 +109,8 @@ def _channel_json(settings: ChannelSettings) -> dict[str, Any]:
         "login": settings.login,
         "active": settings.active,
         "status": settings.status,
+        # Left after Twitch refused a message with 403. Only a join with `rejoin` brings it back.
+        "banned": settings.status == "banned",
         "tier": settings.tier,
         "capabilities": sorted(settings.capabilities),
         "prefix": settings.prefix,
@@ -147,6 +150,8 @@ class ChannelPatch(BaseModel):
 
 class JoinRequest(BaseModel):
     login: str = Field(min_length=1, max_length=40)
+    # Needed to come back to a channel the bot left because it was banned there (architecture §10).
+    rejoin: bool = False
 
 
 class Enabled(BaseModel):
@@ -171,7 +176,10 @@ async def join_channel(request: Request, body: JoinRequest, _: str = WRITE) -> d
     user = await twitch.resolve_user(body.login)
     if user is None:
         raise HTTPException(status_code=404, detail=f"no Twitch user named {body.login}")
-    failed = await channels.join(user["id"], user["name"], ACTOR)
+    try:
+        failed = await channels.join(user["id"], user["name"], ACTOR, rejoin=body.rejoin)
+    except ChannelBanned as exc:
+        raise HTTPException(status_code=409, detail=f"{exc}; send rejoin=true to join anyway") from exc
     return {"login": user["name"], "channel_id": user["id"], "failed_subscriptions": failed}
 
 

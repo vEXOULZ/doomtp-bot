@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
@@ -286,6 +287,43 @@ async def test_toggling_a_module_from_the_admin_page(
 
     audit = await read_audit(services["bot_db"])  # type: ignore[arg-type]
     assert [r["via"] for r in audit if r["action"] == "module.toggle"] == ["web"]  # audited as a web action
+
+
+async def test_a_banned_channel_says_so_and_rejoins_only_by_hand(services: dict[str, object]) -> None:
+    from doomtp_bot.core.channels import ChannelManager
+
+    class Nobody:
+        bot_id = "999"
+
+        async def subscribe_channel(self, channel_id: str) -> list[str]:
+            return []
+
+        async def unsubscribe_channel(self, channel_id: str) -> None:
+            return None
+
+        async def start_session(self, channel_id: str) -> None:
+            return None
+
+        async def end_session(self, channel_id: str, reason: str) -> None:
+            return None
+
+    channels = ChannelManager(services["policy"], Nobody(), Nobody())  # type: ignore[arg-type]
+    await channels.leave_banned(CHANNEL_ID)
+    app = _app({**services, "channels": channels}, password=PASSWORD)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await _rejoin_by_hand(client, channels)
+
+
+async def _rejoin_by_hand(client: httpx.AsyncClient, channels: Any) -> None:
+    await client.post("/admin/login", data={"password": PASSWORD})
+    page = (await client.get(f"/admin/channels/{CHANNEL_LOGIN}")).text
+    assert "banned here" in page and "rejoin #doomtp" in page
+    assert "banned" in (await client.get("/admin")).text
+    csrf = page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = await client.post(f"/admin/channels/{CHANNEL_LOGIN}/rejoin", data={"csrf": csrf})
+    assert response.status_code == 303 and channels.is_active(CHANNEL_ID)
+    assert "rejoin #doomtp" not in (await client.get(f"/admin/channels/{CHANNEL_LOGIN}")).text
 
 
 async def test_toggling_triggers_and_filters_from_the_admin_page_is_audited_as_web(

@@ -549,7 +549,15 @@ A **race window** remains: a mod can act after the message has already been sent
 - **Etiquette:**
   - Join only when a broadcaster, mod or bot owner asks.
   - Leave with `!part`.
-  - Auto-leave and flag the channel if the bot gets a 403 (banned).
+  - Auto-leave and flag the channel if the bot gets a 403 (banned). Helix Send Chat Message answers 403
+    when the sender may not talk in that room; the Twitch adapter reports it as the drop reason `banned`,
+    and the outbox hands the channel to `ChannelManager.leave_banned`, which parts it as the `system`
+    actor (so the audit log has it) with `status='banned'` rather than `parted`. The rest of that message
+    is not sent. The bot's own channel is never left this way: nobody can be banned from their own chat,
+    so a 403 there is logged as a token problem. The flag shows on the admin pages and as `banned` in
+    `/api/v1/channels`, and coming back is deliberate: `!join <channel> rejoin` for a bot admin, the
+    admin page's rejoin button, `"rejoin": true` on `POST /api/v1/channels` (409 without it), or the
+    broadcaster inviting the bot again themselves (`!join` in the bot's chat, or `/auth/connect`).
   - Never send unsolicited messages in basic-tier channels. Timers and alerts there require an explicit opt-in by a mod.
 - **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (opt-in), `log_enabled`, `quiet_errors`, `cc_edit_notice` (off by default) and the callback defaults.
 - **Prefix validation:** a prefix can't start with `/` or `.`, because Twitch clients treat those as chat commands. Its length is 1–3 characters and it can't contain whitespace.
