@@ -82,6 +82,14 @@ class FilterService:
         result = self.check(channel_id, text)
         return result.patterns() if result.changed else []
 
+    def rejects_any(self, channel_id: str, *texts: str) -> list[str]:
+        """`rejects` for the first of `texts` the filter refuses. Empty means all of them are fine."""
+        for text in texts:
+            hits = self.rejects(channel_id, text)
+            if hits:
+                return hits
+        return []
+
     # ── management ──────────────────────────────────────────────────────────
     async def add(
         self,
@@ -93,7 +101,12 @@ class FilterService:
         category: str = "",
         replacement: str = "",
         actor_user_id: str | None,
+        via: str,
     ) -> FilterEntry:
+        if kind not in KINDS:
+            raise FilterError(f"kind must be one of: {', '.join(KINDS)}")
+        if action not in ACTIONS:
+            raise FilterError(f"action must be one of: {', '.join(ACTIONS)}")
         entry = FilterEntry(0, channel_id, pattern, kind, action, category, replacement)
         _compile(entry)  # raises FilterError before anything is stored
         async with transaction(self.conn):
@@ -108,7 +121,7 @@ class FilterService:
                 self.conn,
                 action="filter.add",
                 actor_user_id=actor_user_id,
-                via="chat",
+                via=via,
                 channel_id=channel_id,
                 target=pattern,
                 after={"kind": kind, "action": action},
@@ -116,7 +129,7 @@ class FilterService:
         await self.reload()
         return FilterEntry(int(entry_id or 0), channel_id, pattern, kind, action, category, replacement)
 
-    async def remove(self, *, channel_id: str, entry_id: int, actor_user_id: str | None) -> bool:
+    async def remove(self, *, channel_id: str, entry_id: int, actor_user_id: str | None, via: str) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
                 "DELETE FROM filters WHERE id = %s AND channel_id = %s", (entry_id, channel_id)
@@ -126,7 +139,7 @@ class FilterService:
                     self.conn,
                     action="filter.remove",
                     actor_user_id=actor_user_id,
-                    via="chat",
+                    via=via,
                     channel_id=channel_id,
                     target=str(entry_id),
                 )
@@ -135,7 +148,7 @@ class FilterService:
         return bool(cur.rowcount)
 
     async def set_enabled(
-        self, *, channel_id: str, entry_id: int, enabled: bool, actor_user_id: str | None
+        self, *, channel_id: str, entry_id: int, enabled: bool, actor_user_id: str | None, via: str
     ) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
@@ -147,7 +160,7 @@ class FilterService:
                     self.conn,
                     action="filter.enable" if enabled else "filter.disable",
                     actor_user_id=actor_user_id,
-                    via="chat",
+                    via=via,
                     channel_id=channel_id,
                     target=str(entry_id),
                 )

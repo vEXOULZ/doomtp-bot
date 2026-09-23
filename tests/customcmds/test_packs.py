@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from doomtp_bot.customcmds.packs import PackService
+from doomtp_bot.customcmds.packs import RESERVED_PACK_NAMES, PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.modules import builtin_registry
@@ -58,7 +58,12 @@ class Harness:
     async def add(self, who: str, name: str, body: str) -> Any:
         user = USERS[who]
         return await self.service.create(
-            owner_user_id=user["id"], owner_login=user["name"], name=name, body=body
+            owner_user_id=user["id"],
+            owner_login=user["name"],
+            name=name,
+            body=body,
+            channel_id=CHANNEL_ID,
+            prefix="!",
         )
 
 
@@ -159,9 +164,16 @@ async def test_publishing_a_pack_refuses_name_clashes_and_changes_nothing(h: Har
     assert await h.say("mod", "!hit") == "mod's hit"  # unchanged
 
 
-async def test_pack_names_cannot_shadow_a_builtin_module(h: Harness) -> None:
-    refused = await h.run("alice", "!cc pack create core_admin")
+@pytest.mark.parametrize("name", ["core_admin", "triggers"])
+async def test_pack_names_cannot_shadow_a_builtin_module(h: Harness, name: str) -> None:
+    refused = await h.run("alice", f"!cc pack create {name}")
     assert refused.result.code == Code.USAGE and "built-in module" in (refused.result.message or "")
+
+
+def test_every_builtin_module_name_is_reserved() -> None:
+    # A pack's name is its module name for `!module disable`, so one named after a built-in would switch both.
+    modules = {c.spec.module for c in builtin_registry().all()}
+    assert modules - RESERVED_PACK_NAMES == set()
 
 
 async def test_pack_info_lists_members_and_where_it_runs(h: Harness) -> None:
@@ -245,3 +257,29 @@ async def test_duplicate_pack_names_per_owner(h: Harness) -> None:
 
 async def test_global_scope_constant_is_the_policy_sentinel() -> None:
     assert GLOBAL == "*"
+
+
+async def test_pack_writes_are_audited_with_the_source_they_came_from(h: Harness) -> None:
+    alice, mod = USERS["alice"]["id"], USERS["mod"]["id"]
+    hit = await h.add("alice", "hit", "echo hit me")
+    pack = await h.packs.create(owner_user_id=alice, name="blackjack", actor_via="api")
+    await h.packs.add_member(pack, hit, actor_via="api")
+    await h.packs.publish(channel_id=CHANNEL_ID, pack=pack, published_by=mod, actor_via="api")
+    await h.packs.unpublish(channel_id=CHANNEL_ID, pack=pack, actor_user_id=mod, actor_via="api")
+    assert await h.packs.remove_member(pack, hit, actor_via="api")
+    await h.packs.delete(pack, actor_via="api")
+    await h.say("alice", "!cc pack create cards")
+
+    async with await h.dbs.bot.execute(
+        "SELECT action, via FROM audit_log WHERE action LIKE 'pack.%%' ORDER BY id"
+    ) as cur:
+        rows = [(r["action"], r["via"]) for r in await cur.fetchall()]
+    assert rows == [
+        ("pack.create", "api"),
+        ("pack.add", "api"),
+        ("pack.publish", "api"),
+        ("pack.unpublish", "api"),
+        ("pack.rm", "api"),
+        ("pack.delete", "api"),
+        ("pack.create", "chat"),  # chat still says chat
+    ]

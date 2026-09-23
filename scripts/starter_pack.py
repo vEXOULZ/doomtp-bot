@@ -29,6 +29,8 @@ from doomtp_bot.config import Settings
 from doomtp_bot.customcmds import params
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
+from doomtp_bot.filters.service import FilterService
+from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.storage.db import Connection, configure_event_loop, connect
 
@@ -95,7 +97,9 @@ async def install(
     conn: Connection, *, owner_user_id: str, owner_login: str, dry_run: bool = False
 ) -> list[str]:
     """Create or update the starter commands and publish the pack globally. Returns what it did."""
-    commands = CustomCommandService(conn)
+    filters = FilterService(conn)
+    await filters.reload()  # the global list: these bodies are read out in every channel
+    commands = CustomCommandService(conn, filters=filters)
     packs = PackService(conn, commands)
     done: list[str] = []
 
@@ -103,7 +107,9 @@ async def install(
     if pack is None:
         done.append(f"create pack {PACK}")
         if not dry_run:
-            pack = await packs.create(owner_user_id=owner_user_id, name=PACK, summary=PACK_SUMMARY)
+            pack = await packs.create(
+                owner_user_id=owner_user_id, name=PACK, summary=PACK_SUMMARY, actor_via="script"
+            )
     members = {c.name for c in await packs.members(pack.id)} if pack is not None else set()
 
     for derived in STARTER:
@@ -126,21 +132,25 @@ async def install(
                 owner_login=owner_login,
                 name=derived.name,
                 body=derived.body,
+                channel_id=GLOBAL,
+                prefix=DEFAULT_PREFIX,
                 actor_via="script",
             )
         elif command.body != derived.body:
-            command = await commands.edit(command, derived.body, actor_via="script")
+            command = await commands.edit(
+                command, derived.body, channel_id=GLOBAL, prefix=DEFAULT_PREFIX, actor_via="script"
+            )
         if command.params != declared:
             command = await commands.set_params(command, list(declared), actor_via="script")
         if command.summary != derived.summary:
             await commands.set_summary(command, derived.summary, actor_via="script")
         if pack is not None and derived.name not in members:
-            await packs.add_member(pack, command)
+            await packs.add_member(pack, command, actor_via="script")
 
     if pack is None or not any(p.pack_id == pack.id for p, _ in await packs.publications_in(GLOBAL)):
         done.append(f"publish {PACK} globally")
     if pack is not None and not dry_run:
-        await packs.publish(channel_id=GLOBAL, pack=pack, published_by=owner_user_id)
+        await packs.publish(channel_id=GLOBAL, pack=pack, published_by=owner_user_id, actor_via="script")
     return done
 
 

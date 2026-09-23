@@ -236,7 +236,9 @@ class Runtime:
             denied=info if report.callback == "on_denied" else {},
             run_as_rank=ctx.run_as_rank,
             trigger_type=ctx.trigger_type,
+            trigger_id=ctx.trigger_id,  # the trigger's own cooldown buckets
             message_id=ctx.message_id,
+            dry_run=ctx.dry_run,  # a callback inside `!explain --run` keeps nothing either
             is_cancelled=ctx.is_cancelled,
             rng=ctx.rng,
             clock=ctx.clock,

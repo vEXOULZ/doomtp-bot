@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
-from doomtp_bot.filters.service import ACTIONS, KINDS, FilterService
+from doomtp_bot.filters.service import FilterService
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
@@ -312,8 +312,6 @@ async def list_filters(request: Request, login: str, _: str = READ) -> dict[str,
 async def add_filter(request: Request, login: str, body: FilterBody, _: str = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     filters: FilterService = _state(request, "filters")
-    if body.kind not in KINDS or body.action not in ACTIONS:
-        raise HTTPException(status_code=400, detail="unknown kind or action")
     try:
         entry = await filters.add(
             channel_id=settings.channel_id,
@@ -323,6 +321,7 @@ async def add_filter(request: Request, login: str, body: FilterBody, _: str = WR
             category=body.category,
             replacement=body.replacement,
             actor_user_id=None,
+            via=ACTOR.via,
         )
     except FilterError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -336,7 +335,11 @@ async def set_filter_enabled(
     settings = _channel(request, login)
     filters: FilterService = _state(request, "filters")
     changed = await filters.set_enabled(
-        channel_id=settings.channel_id, entry_id=entry_id, enabled=body.enabled, actor_user_id=None
+        channel_id=settings.channel_id,
+        entry_id=entry_id,
+        enabled=body.enabled,
+        actor_user_id=None,
+        via=ACTOR.via,
     )
     if not changed:
         raise HTTPException(status_code=404, detail=f"no filter {entry_id} here")
@@ -347,7 +350,9 @@ async def set_filter_enabled(
 async def remove_filter(request: Request, login: str, entry_id: int, _: str = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     filters: FilterService = _state(request, "filters")
-    if not await filters.remove(channel_id=settings.channel_id, entry_id=entry_id, actor_user_id=None):
+    if not await filters.remove(
+        channel_id=settings.channel_id, entry_id=entry_id, actor_user_id=None, via=ACTOR.via
+    ):
         raise HTTPException(status_code=404, detail=f"no filter {entry_id} here")
     return {"id": entry_id, "removed": True}
 
@@ -397,6 +402,8 @@ async def add_trigger(request: Request, login: str, body: TriggerBody, _: str = 
             run_as_rank=body.run_as_rank,
             log_level=LogLevel(body.log_level),
             created_by=None,
+            prefix=settings.prefix,
+            via=ACTOR.via,
         )
     except TriggerError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -410,7 +417,11 @@ async def set_trigger_enabled(
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
     changed = await triggers.set_enabled(
-        channel_id=settings.channel_id, trigger_id=trigger_id, enabled=body.enabled, actor_user_id=None
+        channel_id=settings.channel_id,
+        trigger_id=trigger_id,
+        enabled=body.enabled,
+        actor_user_id=None,
+        via=ACTOR.via,
     )
     if not changed:
         raise HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
@@ -421,7 +432,9 @@ async def set_trigger_enabled(
 async def remove_trigger(request: Request, login: str, trigger_id: int, _: str = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
-    if not await triggers.remove(channel_id=settings.channel_id, trigger_id=trigger_id, actor_user_id=None):
+    if not await triggers.remove(
+        channel_id=settings.channel_id, trigger_id=trigger_id, actor_user_id=None, via=ACTOR.via
+    ):
         raise HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
     return {"id": trigger_id, "removed": True}
 

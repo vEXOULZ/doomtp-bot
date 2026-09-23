@@ -145,8 +145,12 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     await channels.ensure_home(BOT_ID, BOT_LOGIN)
     await channels.join(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system"))
     await policy.mutate(lambda r: r.set_channel_field(CHANNEL_ID, "prefix", "!", Actor(None, "test")))
-    await filters.add(channel_id=CHANNEL_ID, pattern="slur", kind="word", action="block", actor_user_id=None)
-    await filters.add(channel_id=CHANNEL_ID, pattern="darn", kind="word", action="mask", actor_user_id=None)
+    await filters.add(
+        channel_id=CHANNEL_ID, pattern="slur", kind="word", action="block", actor_user_id=None, via="chat"
+    )
+    await filters.add(
+        channel_id=CHANNEL_ID, pattern="darn", kind="word", action="mask", actor_user_id=None, via="chat"
+    )
     harness = Harness(policy, filters, twitch, dispatcher, runtime, writer)
     await harness.moderate_capability(True)
     try:

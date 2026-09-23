@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from doomtp_bot.filters.normalize import Normalized, normalize, normalize_pattern
+from doomtp_bot.patterns import PatternError, compile_pattern, find_all
+
+if TYPE_CHECKING:
+    from doomtp_bot.patterns import Match, Pattern
 
 Kind = Literal["word", "wildcard", "regex", "allow"]
 Action = Literal["mask", "replace", "tag", "block"]
@@ -74,31 +78,35 @@ class FilterResult:
         return seen
 
 
-def compile_entry(entry: FilterEntry) -> tuple[re.Pattern[str], Target]:
-    """One entry → a regex plus which text it runs against. Raises FilterError for anything unusable."""
+def compile_entry(entry: FilterEntry) -> tuple[Pattern, Target]:
+    """One entry → a regex plus which text it runs against. Raises FilterError for anything unusable.
+
+    Word and wildcard entries become regexes too, and a few wildcards between gaps backtrack as badly as
+    any hand-written regex, so all of them go through `doomtp_bot.patterns`.
+    """
     if not entry.pattern or len(entry.pattern) > MAX_PATTERN_CHARS:
         raise FilterError(f"patterns must be 1–{MAX_PATTERN_CHARS} characters")
     if entry.kind == "regex":
         try:
-            return re.compile(entry.pattern, re.IGNORECASE), "raw"
-        except re.error as exc:
+            return compile_pattern(entry.pattern), "raw"
+        except PatternError as exc:
             raise FilterError(f"invalid regex: {exc}") from exc
     normalized = normalize_pattern(entry.pattern)
     if not normalized:
         raise FilterError("the pattern normalizes to nothing")
     if entry.kind == "wildcard":
         body = GAP.join(".*" if ch == "*" else re.escape(ch) for ch in normalized)
-        return re.compile(rf"\b{body}", re.IGNORECASE), "normalized"
+        return compile_pattern(rf"\b{body}"), "normalized"
     body = GAP.join(re.escape(ch) for ch in normalized)  # word: tolerate separators between letters
-    return re.compile(rf"\b{body}\b", re.IGNORECASE), "normalized"
+    return compile_pattern(rf"\b{body}\b"), "normalized"
 
 
 class ChannelFilter:
     """The compiled entries for one scope, ready to apply."""
 
     def __init__(self, entries: list[FilterEntry]) -> None:
-        self.blocking: list[tuple[FilterEntry, re.Pattern[str], Target]] = []
-        self.allowed: list[tuple[re.Pattern[str], Target]] = []
+        self.blocking: list[tuple[FilterEntry, Pattern, Target]] = []
+        self.allowed: list[tuple[Pattern, Target]] = []
         for entry in entries:
             if not entry.enabled:
                 continue
@@ -122,11 +130,11 @@ class ChannelFilter:
         skip = [
             _span(match, normalized, target)
             for pattern, target in self.allowed
-            for match in pattern.finditer(normalized.text if target == "normalized" else text)
+            for match in find_all(pattern, normalized.text if target == "normalized" else text)
         ]
         hits: list[Hit] = []
         for entry, pattern, target in self.blocking:
-            for match in pattern.finditer(normalized.text if target == "normalized" else text):
+            for match in find_all(pattern, normalized.text if target == "normalized" else text):
                 start, end = _span(match, normalized, target)
                 if end <= start:
                     continue
@@ -152,7 +160,7 @@ class ChannelFilter:
         return "".join(out)
 
 
-def _span(match: re.Match[str], normalized: Normalized, target: Target) -> tuple[int, int]:
+def _span(match: Match, normalized: Normalized, target: Target) -> tuple[int, int]:
     if target == "raw":
         return match.span()
     return normalized.span(*match.span())
