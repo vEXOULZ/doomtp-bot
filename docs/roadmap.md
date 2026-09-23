@@ -1,8 +1,13 @@
 # Roadmap and progress
 
-**As of 2026-09-22** (third revision of the day: storage moved to Postgres, the repository got a remote, and cooldowns moved to runtime). Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-23** (the architecture's own promises are now tracked beside the ADRs'). Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
+
+[architecture.md](architecture.md) makes promises of its own that no ADR carries as an action item.
+Until 2026-09-23 nothing counted them, so the score below could reach 79 of 79 with parts of the design
+unbuilt. They are listed under [Promised in the architecture](#promised-in-the-architecture-not-yet-built)
+as `ARCH-N`, and close the same way: build it, or change the architecture so it no longer promises it.
 
 ## Where the plan stands
 
@@ -23,8 +28,11 @@ hand — when an item closes, tick it in its ADR and update the row here in the 
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 
-**75 of 79 action items are closed.** The four that aren't are below, and none of them is waiting on
-code — they are waiting on a person or a server.
+| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 0/9 | Open, all code or docs |
+
+**75 of 79 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
+code — they are waiting on a person or a server. **None of the 9 architecture promises is closed**, and
+all of them are waiting on code or on a decision to drop them.
 
 ## What is left, and why
 
@@ -59,6 +67,26 @@ within the documented reach. **Contacting the maintainer about the bot integrati
 interval is still open, and should happen before backfill is enabled for a real channel.** This is a
 courtesy item, not a technical one — which is exactly the sort that quietly never gets done.
 
+### Promised in the architecture, not yet built
+
+Found on 2026-09-23 by reading [architecture.md](architecture.md) against `src/`. Each one is written
+there as part of the design, not as "later", and none is an ADR action item. Closing one means building
+it or rewriting the architecture so it stops promising it — either is fine, silence is not. Items that
+choose a dependency or a new outside service (`ARCH-1`, and the weather source in `ARCH-6`) need an ADR
+first.
+
+| Item | Promise | Where it stands |
+|------|---------|-----------------|
+| `ARCH-1` | **Metrics** (§13): nine named counters — `messages_logged_total{source}`, `runs_total{code}`, `outbox_dropped_total{reason}`, `eventsub_reconnects_total` and the rest | None is exported. The outbox keeps a `dropped` count in memory and `/readyz` reports queue depth, but nothing can be scraped or graphed. Needs an ADR for the format and where it is served (the API is LAN-only). |
+| `ARCH-2` | **Leave when banned** (§10 etiquette): auto-leave and flag a channel when Twitch answers a send with 403 | Not built. `core/outbox.py` logs `outbox.send_failed` and drops the message; the bot stays joined and keeps trying. The only 401/403 handling is for a revoked broadcaster token (`twitch/client.py`). |
+| `ARCH-3` | **`!explain` report page** (§4.4): the chat summary links to a full report in the web UI | Chat and `POST /api/v1/explain` exist; there is no page, and no link. |
+| `ARCH-4` | **Side-effect built-ins** (§4.3): `!timeout`, `!shoutout` and Helix writes run at their stage and check the moderation index right before acting | None exists, so the checkpoint has nothing to guard. `side_effects=True` is declared in `runtime/spec.py` and read by nobody. The starter pack's `so` is a custom command that only talks. |
+| `ARCH-5` | **Enforced `reads`/`writes`** (§4.2) | Declarations only, as the architecture says — until the first built-in other than `!var` writes. Closes with `ARCH-4` or `ARCH-6`, whichever writes first. |
+| `ARCH-6` | **Modules `weather`, `quotes`, `logsearch`** (§12, marked `·`) | Not built. `weather` is the spec's running example (§4.2) and needs an outside API, so an ADR; `quotes` and `logsearch` need only the database. |
+| `ARCH-7` | **`chatlog/queries.py` and `storage/repos/`** (§12, marked `·`) | Not on disk. Message search is written inside `api/routes/data.py`. Build them when `logsearch` needs the same query, or take them off the layout. |
+| `ARCH-8` | **A pluggable `Authenticator`** (§11), so Twitch login for a per-user dashboard can come later without rework | Not there: `webui/auth.py` is the admin password and `api/keys.py` the keys, each checked where it is used. |
+| `ARCH-9` | **Docs that match the code** | §7 says listeners use `re` with an RE2 check through `google-re2`; the code uses the `regex` module with a match timeout (`patterns.py`) and no RE2. The architecture's header still reads *Status: Proposed*. Both are edits to the doc, not the code. |
+
 ## Deferred by design
 
 These are decided, not forgotten. See the [language proposal §6](command-language-proposal.md) for the
@@ -77,8 +105,8 @@ branch that never runs is never held to a cooldown (ADR-0006 item 5).
 
 ## What is built
 
-Everything in [architecture.md §12](architecture.md#12-package-layout) marked ✔, which is now the whole
-of it: the command language and its runtime, permissions, cooldowns and toggles, variables with grants,
+Everything in [architecture.md §12](architecture.md#12-package-layout) marked ✔ — which is the whole of
+the layout except the `·` entries, whose gaps are `ARCH-6` and `ARCH-7` above: the command language and its runtime, permissions, cooldowns and toggles, variables with grants,
 the chat log with gap detection and backfill, custom commands with versions, links, publications and
 packs, derived commands, triggers and timers, the badword filter, moderation-aware replies, the REST API
 and web UI with the CodeMirror editor, OAuth for the bot and for broadcasters, capability tiers, backups,
@@ -99,5 +127,10 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
    items 5 and 6 and ADR-0014 item 10 on the way. Everything upstream of the guest is now proven.
 2. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
    and read what `scripts/coverage.py` says the next morning.
-3. **Run the bot in its own channel for a week** before inviting anyone else. Every remaining unknown in
+3. **Close `ARCH-1` and `ARCH-2` before real chat.** A week in a channel is only worth something if its
+   counters can be read afterwards, and a bot that keeps sending into a channel that banned it is the
+   etiquette failure most likely to get the account itself restricted.
+4. **Run the bot in its own channel for a week** before inviting anyone else. Every remaining unknown in
    this project is about what real chat does to it, not about what the code does.
+5. **Work through `ARCH-3` to `ARCH-9`**, cheapest first: `ARCH-9` is a doc edit, `ARCH-3` a page over an
+   endpoint that exists. `ARCH-4` and `ARCH-5` land together.
