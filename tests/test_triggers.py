@@ -141,6 +141,25 @@ async def test_triggers_run_at_the_creators_rank(h: Harness) -> None:
     assert trigger.run_as_rank == 80  # the moderator who created it, never higher
 
 
+async def test_a_trigger_made_by_a_trigger_never_outranks_it(h: Harness) -> None:
+    # A moderator-rank listener set off by the broadcaster: what it creates gets the listener's rank, not the
+    # broadcaster's, or a trigger could hand out more than it was ever given.
+    await h.triggers.add(
+        channel_id=CHANNEL_ID,
+        type_="listener",
+        expr="trigger add raid echo raid!",
+        match={"regex": r"\bmake one\b"},
+        run_as_rank=80,
+        created_by="300",
+    )
+    [(listener, fields)] = h.triggers.listeners_matching(CHANNEL_ID, "make one")
+    report = await h.runner.run(
+        listener, channel_login=CHANNEL_LOGIN, match=fields, user=(CHANNEL_ID, CHANNEL_LOGIN, "DoomTP")
+    )
+    assert report is not None and report.result.ok, report and report.result.message
+    assert [t.run_as_rank for t in h.triggers.in_channel(CHANNEL_ID) if t.type == "raid"] == [80]
+
+
 # ── running them ───────────────────────────────────────────────────────────
 async def test_a_listener_runs_with_its_captures(h: Harness) -> None:
     await h.say("mod", r"!trigger listen my name is (?P<name>\w+) => echo nice to meet you {match.name}")
