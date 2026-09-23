@@ -311,9 +311,13 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
 async def test_custom_command_sees_the_stream_while_live(h: Harness) -> None:
     """{channel.live} and {channel.title} come from what the Helix poller last saw (ADR-0007)."""
     created = await h.commands.create(
-        owner_user_id=USERS["alice"], owner_login="alice", name="status",
+        owner_user_id=USERS["alice"],
+        owner_login="alice",
+        name="status",
         body="echo live={channel.live} title={channel.title}",
-    )  # fmt: skip
+        channel_id=CHANNEL_ID,
+        prefix="!",
+    )
     await h.commands.publish(channel_id=CHANNEL_ID, name="status", command=created, published_by="1")
     h.streams.streams[CHANNEL_ID] = {
         "title": "any% glitchless", "game": "DOOM", "viewers": 42, "started_at": "2026-01-01T00:00:00+00:00",
