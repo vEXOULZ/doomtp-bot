@@ -15,7 +15,6 @@ from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
@@ -24,6 +23,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
 from doomtp_bot.webui.emoji import emojify
 from doomtp_bot.webui.pages import GRAMMAR_RULES
+from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
@@ -31,12 +31,7 @@ PASSWORD = "correct horse battery staple"
 
 @pytest.fixture
 async def services(dbs: Databases) -> AsyncIterator[dict[str, object]]:
-    policy = PolicyService(dbs.bot)
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    await policy.mutate(
-        lambda repo: repo.set_channel_field(CHANNEL_ID, "status", "joined", Actor(None, "system"))
-    )
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True)
     filters = FilterService(dbs.bot)
     await filters.reload()
     customcmds = CustomCommandService(dbs.bot, filters=filters)

@@ -13,7 +13,6 @@ from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import explain
@@ -22,7 +21,7 @@ from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
-from tests.fakes import TickingClock
+from tests.fakes import TickingClock, policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {"mod": ("300", "mod", "Mod"), "alice": ("400", "alice", "Alice")}
@@ -55,9 +54,7 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot, clock=TickingClock())
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), clock=TickingClock())
     store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()

@@ -13,7 +13,6 @@ from doomtp_bot.customcmds.packs import RESERVED_PACK_NAMES, PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import RunReport, Runtime
@@ -29,6 +28,7 @@ from tests.customcmds.test_customcmds import (
     TickingClock,
     resolve_user,
 )
+from tests.fakes import policy_with_channels
 
 OTHER_CHANNEL = "200"
 
@@ -69,10 +69,13 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot, bot_owner_ids=frozenset({USERS["owner"]["id"]}), clock=TickingClock())
-    await policy.reload()
-    for channel, login in ((CHANNEL_ID, CHANNEL_LOGIN), (OTHER_CHANNEL, "other")):
-        await policy.mutate(lambda repo, c=channel, n=login: repo.ensure_channel(c, n, Actor(None, "system")))
+    policy = await policy_with_channels(
+        dbs.bot,
+        (CHANNEL_ID, CHANNEL_LOGIN),
+        (OTHER_CHANNEL, "other"),
+        bot_owner_ids=frozenset({USERS["owner"]["id"]}),
+        clock=TickingClock(),
+    )
     store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()

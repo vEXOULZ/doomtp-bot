@@ -22,7 +22,7 @@ from doomtp_bot.runtime.variables import VarKey, WriteOp
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import Actor, VariableAccessPolicy, actor_of
 from doomtp_bot.variables.store import PostgresVariableStore
-from tests.fakes import TickingClock
+from tests.fakes import TickingClock, policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {
@@ -82,8 +82,7 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot, clock=TickingClock())
-    await policy.reload()
+    policy = await policy_with_channels(dbs.bot, clock=TickingClock())
     store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()

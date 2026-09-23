@@ -18,13 +18,12 @@ from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.repository import Actor
-from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.variables.store import PostgresVariableStore
 from doomtp_bot.webui.auth import SESSION_COOKIE
+from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
@@ -61,9 +60,7 @@ async def _ok_check() -> ComponentHealth:
 
 @pytest.fixture
 async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService]]:
-    policy = PolicyService(dbs.bot)
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN))
     filters = FilterService(dbs.bot)
     await filters.reload()
     customcmds = CustomCommandService(dbs.bot, filters=filters)

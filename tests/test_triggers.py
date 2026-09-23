@@ -30,7 +30,7 @@ from doomtp_bot.triggers.service import (
     parse_every,
 )
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
-from tests.fakes import FakeClock, TickingClock
+from tests.fakes import FakeClock, TickingClock, policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {"mod": ("300", "mod", "Mod"), "alice": ("400", "alice", "Alice")}
@@ -70,9 +70,7 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = PolicyService(dbs.bot, clock=TickingClock())
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), clock=TickingClock())
     filters = FilterService(dbs.bot)
     await filters.reload()
     triggers = TriggerService(dbs.bot, filters=filters)
@@ -238,10 +236,9 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
     from doomtp_bot.core.events import ChatMessage, StreamStatusChanged
     from doomtp_bot.moderation.index import ModerationIndex
 
-    policy = PolicyService(dbs.bot, clock=TickingClock())
-    await policy.reload()
-    await policy.mutate(lambda repo: repo.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, Actor(None, "system")))
-    await policy.mutate(lambda repo: repo.set_channel_field(CHANNEL_ID, "status", "joined", Actor(None, "s")))
+    policy = await policy_with_channels(
+        dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, clock=TickingClock()
+    )
     triggers = TriggerService(dbs.bot)
     await triggers.add(
         channel_id=CHANNEL_ID,
