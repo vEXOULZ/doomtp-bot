@@ -44,7 +44,8 @@ class InvocationReport:
     def summary(self) -> str:
         if self.allowed:
             waiting = max(self.cooldown_tier_s, self.cooldown_user_s)
-            return f"{self.index}:{self.name} ✓" + (f" (ready in {waiting:.0f}s)" if waiting > 0 else "")
+            # Cooldowns don't fail preflight (spec 1.1): this one would fail with 128 when it is reached.
+            return f"{self.index}:{self.name} ✓" + (f" (on cooldown, {waiting:.0f}s)" if waiting > 0 else "")
         return f"{self.index}:{self.name} ✗ {self.reason}"
 
 

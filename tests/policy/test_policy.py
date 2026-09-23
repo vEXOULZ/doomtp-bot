@@ -15,8 +15,9 @@ from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
-from doomtp_bot.runtime.context import Chatter
+from doomtp_bot.runtime.context import Chatter, ExecContext
 from doomtp_bot.runtime.engine import RunReport, Runtime
+from doomtp_bot.runtime.explain import explain
 from doomtp_bot.runtime.registry import CommandRegistry, command
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown
@@ -74,14 +75,16 @@ class Harness:
             CHANNEL_ID, u["id"], u["name"], u["display"], frozenset(BADGES.get(who, set()))
         )
 
-    async def say(self, who: str, text: str, **ctx_kwargs: Any) -> RunReport | None:
+    def context(self, who: str, **ctx_kwargs: Any) -> ExecContext:
         channel = self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN, **ctx_kwargs.pop("live", {}))
         if channel.prefix == DEFAULT_PREFIX:  # these tests type the ASCII sign, unless one was set
             channel = dataclasses.replace(channel, prefix="!")
-        ctx = self.runtime.make_context(
+        return self.runtime.make_context(
             channel=channel, invoker=self.chatter(who), rng=random.Random(1), **ctx_kwargs
         )
-        return await self.runtime.run(text, ctx)
+
+    async def say(self, who: str, text: str, **ctx_kwargs: Any) -> RunReport | None:
+        return await self.runtime.run(text, self.context(who, **ctx_kwargs))
 
     async def reply(self, who: str, text: str, **kw: Any) -> str | None:
         report = await self.say(who, text, **kw)
@@ -238,7 +241,9 @@ async def test_tier_and_user_buckets_both_required(h: Harness) -> None:
     h.clock.now += 11
     report = await h.say("viewer", "!dice")  # tier clear, but personal 30s bucket still running
     assert report is not None and report.result.code == Code.COOLDOWN
-    assert report.decision is not None and report.decision.info["user_remaining"] == 8
+    # A runtime failure since spec 1.1: the fields ride on the Result, not on a preflight decision.
+    assert report.origin == "runtime" and report.decision is None
+    assert report.result.data["user_remaining"] == 8
 
 
 async def test_moderators_default_to_no_cooldown_and_tiers_are_separate(h: Harness) -> None:
@@ -255,6 +260,60 @@ async def test_moderators_default_to_no_cooldown_and_tiers_are_separate(h: Harne
 async def test_cooldown_only_committed_for_executed_commands(h: Harness) -> None:
     assert await h.reply("viewer", "!ping || !dice") == "pong"
     assert await h.reply("viewer2", "!dice") == "rolled"
+
+
+# ── cooldowns at runtime (spec 1.1, ADR-0006 item 5) ────────────────────────
+async def test_or_routes_around_a_command_on_cooldown(h: Harness) -> None:
+    assert await h.reply("viewer", "!dice") == "rolled"
+    assert await h.reply("viewer", "!dice || !ping") == "pong"
+
+
+async def test_a_command_never_reached_is_not_held_to_its_cooldown(h: Harness) -> None:
+    assert await h.reply("viewer", "!dice") == "rolled"
+    assert await h.reply("viewer", "!ping || !dice") == "pong"  # 1.0 refused this whole line with 128
+
+
+async def test_a_repeat_in_one_line_meets_the_cooldown_its_first_run_started(h: Harness) -> None:
+    report = await h.say("viewer", "!dice && !dice")
+    assert report is not None
+    # The first ran and started the buckets; the second is refused by them. Only the final Result is
+    # ever sent, so the line is silent. Under 1.0 both passed preflight and both ran.
+    assert (report.result.code, report.executed, report.send) == (Code.COOLDOWN, [1], None)
+
+
+async def test_two_runs_past_the_early_look_get_one_claim_between_them(h: Harness) -> None:
+    """The race the second claim closes. Both runs can be past the early look while one waits on the
+    database to expand its arguments; the claim just before running decides, and only one gets it."""
+    first, second = h.context("viewer"), h.context("viewer2")
+    assert h.policy.claim_cooldown(first, dice.spec, commit=False).allowed
+    assert h.policy.claim_cooldown(second, dice.spec, commit=False).allowed  # nobody has claimed yet
+    assert h.policy.claim_cooldown(first, dice.spec).allowed
+    refused = h.policy.claim_cooldown(second, dice.spec)  # same shared `everyone` bucket
+    assert (refused.allowed, refused.code, refused.info["tier_remaining"]) == (False, Code.COOLDOWN, 10)
+
+
+async def test_a_cooldown_callback_fires_when_the_command_is_typed_by_an_alias(h: Harness) -> None:
+    await h.reply("mod", "!cooldown set random everyone 10 30")
+    await h.reply("mod", "!callback set on_cooldown command:random echo {cooldown.command} is resting")
+    assert await h.reply("viewer", "!rng 1-6") is not None
+    # Looked up by canonical name, as cooldown rules are. 1.0 looked up `command:rng` and found nothing.
+    assert await h.reply("viewer", "!rng 1-6") == "random is resting"
+
+
+# !explain lives here rather than in test_explain.py for these two: that harness's clock jumps a minute on
+# every read so cooldowns never get in its way, which also means no cooldown assertion there can fail.
+async def test_explain_run_does_not_start_a_cooldown(h: Harness) -> None:
+    report = await explain(h.runtime, "!dice", h.context("viewer"), run=True)
+    assert report.run_result is not None and report.run_result.ok
+    assert await h.reply("viewer", "!dice") == "rolled"  # the clock hasn't moved: only a real run starts it
+
+
+async def test_explain_shows_a_cooldown_without_failing_preflight(h: Harness) -> None:
+    assert await h.reply("viewer", "!dice") == "rolled"
+    report = await explain(h.runtime, "!dice", h.context("viewer"), run=True)
+    assert report.failure is None  # not a preflight failure since spec 1.1
+    assert report.invocations[0].summary() == "1:dice ✓ (on cooldown, 30s)"
+    assert report.run_result is not None and report.run_result.code == Code.COOLDOWN  # which --run shows
 
 
 # ── callbacks ──────────────────────────────────────────────────────────────

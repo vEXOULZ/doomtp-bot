@@ -28,7 +28,7 @@ from doomtp_bot.runtime.values import (
 from doomtp_bot.runtime.variables import VariableError, WriteOp, key_for
 
 if TYPE_CHECKING:
-    from doomtp_bot.runtime.policy import Policy
+    from doomtp_bot.runtime.policy import Decision, Policy
     from doomtp_bot.runtime.resolver import Resolved
     from doomtp_bot.runtime.spec import CommandSpec
 
@@ -148,6 +148,13 @@ class Executor:
         ctx.ensure_not_cancelled()
         resolved = scope.resolved[inv.index]
         spec = resolved.spec
+        # Cooldowns are this invocation's own failure, not the line's (spec §6.3, 1.1), so `||` can route
+        # around one and a branch that never runs never trips one. Looked at before the arguments, so a
+        # command on cooldown stays silent even when it is typed wrong — the cooldown is still what keeps
+        # a spammed command quiet.
+        waiting = self.policy.claim_cooldown(ctx, spec, commit=False)
+        if not waiting.allowed:
+            return self._refuse(inv, scope, waiting)
         try:
             values = tuple([await self.expand(arg, ctx, scope, prev) for arg in inv.args])
             params = await self.bind(spec, values, ctx)
@@ -158,8 +165,12 @@ class Executor:
         except UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
-            if not ctx.dry_run:  # !explain --run must not use up a cooldown (spec §9)
-                self.policy.commit_cooldown(ctx, spec)
+            # And claimed again with no await before it runs: expanding the arguments can wait on the
+            # database, and a burst of the same command must not all get through a shared bucket in that
+            # gap. !explain --run looks but never starts one (spec §9).
+            claim = self.policy.claim_cooldown(ctx, spec, commit=not ctx.dry_run)
+            if not claim.allowed:
+                return self._refuse(inv, scope, claim)
             args = Args(values, params, inv.raw_tail)
             cmd_ctx = CommandContext(ctx, inv.index, inv.name, prev)
             try:
@@ -186,6 +197,13 @@ class Executor:
             if result.data_size() > MAX_DATA_BYTES:
                 result = error_result("E_DATA_TOO_LARGE", f"{inv.name} produced too much data")
             scope.executed.append(inv.index)
+        scope.results[inv.index] = result
+        return result
+
+    @staticmethod
+    def _refuse(inv: Invocation, scope: Scope, decision: Decision) -> Result:
+        """An invocation that didn't run because of a cooldown: code 128, carrying `{cooldown.*}`."""
+        result = Result(Code.COOLDOWN, "on cooldown", dict(decision.info))
         scope.results[inv.index] = result
         return result
 

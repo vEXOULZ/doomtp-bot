@@ -226,7 +226,17 @@ class Runtime:
         self._decide(report, ctx)
         if report.callback is None or self.callbacks is None or ctx.in_callback:
             return
-        command = report.failed_name
+        # A denial comes from preflight and carries its decision. A cooldown comes from the invocation
+        # that hit it at runtime (spec 1.1), which put the same fields in its Result instead.
+        if report.decision is not None:
+            info = dict(report.decision.info)
+        elif isinstance(report.result.data, dict):
+            info = dict(report.result.data)
+        else:
+            info = {}
+        # By canonical name, the way cooldown rules are keyed: a callback set for `command:random` has
+        # to fire when someone types one of its aliases too.
+        command = info.get("command") or report.failed_name
         module = None
         if command:
             resolved = self.resolver.resolve_name(ctx, command)
@@ -234,7 +244,6 @@ class Runtime:
         expr = self.callbacks.callback_expr(ctx, command, module, report.callback)
         if not expr:
             return
-        info = dict(report.decision.info) if report.decision else {}
         sub_ctx = self.make_context(
             channel=ctx.channel,
             invoker=ctx.invoker,
