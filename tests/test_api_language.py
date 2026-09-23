@@ -104,3 +104,30 @@ async def test_the_language_api_is_unavailable_without_a_runtime() -> None:
     app = create_app(HealthRegistry(), None)
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         assert (await http.post("/api/v1/parse", json={"text": "echo hi"})).status_code == 503
+
+
+async def test_explain_as_another_user_needs_an_admin_session_or_a_key(dbs: Databases) -> None:
+    class Users:
+        async def resolve_user(self, login: str) -> dict[str, str] | None:
+            return {"id": "300", "name": login, "display": login} if login == "mod" else None
+
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN))
+    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
+    app = create_app(
+        HealthRegistry(),
+        None,
+        runtime=runtime,
+        policy=policy,
+        services={"twitch": Users()},
+        admin_password="pw",
+    )
+    request = {"text": "role list", "context": "body", "channel": CHANNEL_LOGIN, "as_user": "mod"}
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        assert (await http.post("/api/v1/explain", json=request)).status_code == 401
+        await http.post("/admin/login", data={"password": "pw"})
+        as_mod = (await http.post("/api/v1/explain", json={**request, "badges": ["moderator"]})).json()
+        assert as_mod["invocations"][0]["allowed"] is True and as_mod["invocations"][0]["rank"] == 80
+        no_channel = await http.post("/api/v1/explain", json={**request, "channel": None})
+        assert no_channel.status_code == 422
+        ghost = await http.post("/api/v1/explain", json={**request, "as_user": "ghost"})
+        assert ghost.status_code == 404

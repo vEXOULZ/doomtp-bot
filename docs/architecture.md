@@ -334,7 +334,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 
 ### 4.4 `!explain <expr>`
 
-`!explain` returns a compact summary in chat, plus a link to a full report in the web UI when the UI is enabled. The report shows:
+`!explain` returns a compact summary in chat, plus a link to a full report in the web UI when chat can reach it. The report shows:
 
 - the AST with operator precedence
 - how each name resolved (built-in, published in the channel with its version, or personal link)
@@ -342,6 +342,16 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 - which branches would run
 - the placeholders each command references, and whether they can be satisfied
 - the executed result, only if `!explain --run` is used, and even then without committing variable writes or sending anything
+
+**The report page** is `GET /explain/<token>`, on the public side, because it is what chat links to. The
+web UI is LAN-only by default, so the link is added only when `PUBLIC_WEB_UI=true` says `PUBLIC_BASE_URL`
+is reachable from outside (a reverse proxy, a tunnel); otherwise chat gets the summary alone. Reports are
+kept in memory for an hour, at most 500, under an unguessable token (`runtime/explain.py` `ReportStore`),
+and a report holds only what its caller typed and was shown. Checking *as someone else* is admin-only:
+`/admin/explain` and `as_user` on `POST /api/v1/explain` (§11). Their reports are shown to the admin and
+never kept, so no public link ever says whose view it was. Chat badges (moderator, VIP, subscriber) only
+arrive with a chat message, so these take the badges to assume; custom roles, the broadcaster and bot
+admins are looked up as in chat.
 
 ### 4.5 Command usage logging (per-command log level)
 
@@ -577,13 +587,14 @@ A **race window** remains: a mod can act after the message has already been sent
 | `GET /api/v1/commands` | Early | **All** commands with their full specs. Feeds the public docs page. |
 | `GET /api/v1/channels/{login}/commands` | Early | The effective command list for a channel, including enabled state, roles, cooldowns and publications |
 | `POST /api/v1/parse` | Early | Tokens, AST, errors and warnings from the authoritative parser (ADR-0011). Powers editor diagnostics. |
-| `POST /api/v1/explain` | Early | Same output as `!explain`, with an optional `as_user` for admins |
+| `POST /api/v1/explain` | **Now** | Same output as `!explain`. Public, as the editor's preview. The optional `as_user` (with the `badges` to assume) needs an API key or an admin session (§4.4). |
 | `GET /api/v1/language` | Early | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
 | `GET /api/v1/channels/{login}/commands`, `/publications`, `GET /api/v1/custom-commands` | **Now** | Public, like the pages that already show them |
 | `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables, message search, command runs, `/api/v1/audit` | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked on the admin page, and the key is shown once, on the page that creates it, never through a redirect where it would land in logs and history. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
-| `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. |
+| `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. `/admin/explain` explains as a chatter you name (§4.4). |
+| `GET /explain/<token>` | **Now** | The full `!explain` report chat links to (§4.4). Public, short-lived, and it shows only what its caller saw. |
 | `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. The command reference and the channel pages share one compact table: a line per command, a `<details>` pane for arguments, cooldowns and examples, and a search box that filters client-side over a precomputed `data-search` string (so it needs no request per keystroke, and the page still lists everything without JavaScript). |
 
 **UI technology:**

@@ -15,7 +15,7 @@ from doomtp_bot.lang.parser import Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
-from doomtp_bot.runtime.explain import explain
+from doomtp_bot.runtime.explain import ReportStore, explain
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
@@ -153,3 +153,33 @@ async def test_the_chat_command_answers_in_one_line(h: Harness) -> None:
 
     ran = await h.say("alice", "!explain --run !ping")
     assert ran is not None and "would send: pong" in ran
+
+
+async def test_the_chat_reply_links_the_full_report_only_when_chat_can_open_it(h: Harness) -> None:
+    h.runtime.services["explain_reports"] = ReportStore()  # PUBLIC_WEB_UI off: no base URL
+    reply = await h.say("alice", "!explain !ping")
+    assert reply is not None and "full report" not in reply
+
+    reports = ReportStore("https://bot.example/")
+    h.runtime.services["explain_reports"] = reports
+    reply = await h.say("alice", "!explain !random 1-6 | echo {1}")
+    assert reply is not None and " — full report: https://bot.example/explain/" in reply
+    kept = reports.get(reply.rsplit("/", 1)[1])
+    assert kept is not None and kept["channel"] == CHANNEL_LOGIN
+    assert [i["name"] for i in kept["invocations"]] == ["random", "echo"]
+
+
+def test_kept_reports_expire_and_the_oldest_go_first() -> None:
+    now = [0.0]
+    reports = ReportStore("https://bot.example", ttl_s=60, limit=2, clock=lambda: now[0])
+    first, second, third = (reports.keep({"n": n}) for n in range(3))
+    assert reports.get(first) is None and reports.get(second) == {"n": 1}  # over the limit
+    assert reports.link(third) == f"https://bot.example/explain/{third}"
+    now[0] = 61
+    assert reports.get(third) is None
+    assert ReportStore().link(third) is None
+
+
+async def test_a_line_without_the_command_sign_is_reported_as_chat(h: Harness) -> None:
+    reply = await h.say("alice", "!explain ping")
+    assert reply == "parse error: not a command: a line starts with the command sign !"

@@ -7,12 +7,16 @@ what actually happens. `--run` evaluates too, with writes discarded and nothing 
 from __future__ import annotations
 
 import dataclasses
+import secrets
+import time
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.lang.ast import Node, invocations, stores, to_canonical
 from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import Context, parse
+from doomtp_bot.lang.parser import Context, NotACommand, parse
 from doomtp_bot.runtime.namespaces import root_available
 from doomtp_bot.runtime.preflight import placeholders_in, preflight
 from doomtp_bot.runtime.result import Result
@@ -22,6 +26,52 @@ if TYPE_CHECKING:
     from doomtp_bot.runtime.engine import Runtime
 
 MAX_SUMMARY_COMMANDS = 6
+REPORT_TTL_S = 3600.0
+MAX_KEPT_REPORTS = 500
+
+
+class ReportStore:
+    """Recent `!explain` reports, kept so the chat summary can link to the whole thing (architecture §4.4).
+
+    Memory only, for an hour, and at most a few hundred: a report is something to read right after asking,
+    not a record. The link is an unguessable token, and a report holds only what its caller typed and was
+    shown — never whose rank it was checked against by name. `base_url` is where chat readers can reach
+    the public pages; without it, chat gets no link.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        *,
+        ttl_s: float = REPORT_TTL_S,
+        limit: int = MAX_KEPT_REPORTS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.base_url = base_url.rstrip("/") if base_url else None
+        self.ttl_s = ttl_s
+        self.limit = limit
+        self.clock = clock
+        self._reports: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+
+    def keep(self, report: dict[str, Any]) -> str:
+        token = secrets.token_urlsafe(12)
+        self._reports[token] = (self.clock() + self.ttl_s, report)
+        while len(self._reports) > self.limit:
+            self._reports.popitem(last=False)
+        return token
+
+    def get(self, token: str) -> dict[str, Any] | None:
+        found = self._reports.get(token)
+        if found is None:
+            return None
+        expires, report = found
+        if expires < self.clock():
+            del self._reports[token]
+            return None
+        return report
+
+    def link(self, token: str) -> str | None:
+        return f"{self.base_url}/explain/{token}" if self.base_url else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +172,9 @@ async def explain(
         node = parse(text, context, params)
     except ParseError as exc:
         report.parse_error = str(exc)
+        return report
+    except NotACommand:  # in chat this line would just be chat, which is the answer
+        report.parse_error = f"not a command: a line starts with the command sign {ctx.channel.prefix}"
         return report
     report.ast = to_canonical(node)
 

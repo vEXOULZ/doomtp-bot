@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,7 +17,9 @@ from fastapi.templating import Jinja2Templates
 
 from doomtp_bot import __version__
 from doomtp_bot.api.keys import ApiKeyError
+from doomtp_bot.api.routes.language import chatter_for
 from doomtp_bot.audit.log import read_audit
+from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.parser import (
     DEFAULT_PREFIX,
@@ -25,8 +27,10 @@ from doomtp_bot.lang.parser import (
     REGISTERED_ROOTS,
     TYPE_NAMES,
     VAR_NAMESPACES,
+    Context,
 )
 from doomtp_bot.policy.roles import BUILTIN_RANKS, GLOBAL
+from doomtp_bot.runtime.explain import explain
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH, MAX_INVOCATIONS
 from doomtp_bot.runtime.spec import with_sign
 from doomtp_bot.webui import emoji
@@ -61,6 +65,8 @@ def _grammar_rules(text: str) -> list[dict[str, str]]:
 
 
 GRAMMAR_RULES = _grammar_rules(GRAMMAR)
+# The chat badges the admin explain page lets you assume; broadcaster follows from the user, founder is sub.
+EXPLAIN_BADGES = ("subscriber", "vip", "moderator", "lead_moderator")
 router = APIRouter(tags=["web"])
 
 
@@ -244,6 +250,21 @@ async def channel_page(request: Request, login: str) -> HTMLResponse:
     return _page(request, "channel.html", channel=settings, rows=rows, packs=published_packs)
 
 
+@router.get("/explain/{token}", response_class=HTMLResponse)
+async def explain_report(request: Request, token: str) -> HTMLResponse:
+    """The full report behind a chat `explain` link (architecture §4.4).
+
+    Public, because chat links here, and so it shows only what the report's caller typed and was shown.
+    Checking as someone else is the admin page's job.
+    """
+    reports = _state(request, "explain_reports")
+    report = reports.get(token) if reports is not None else None
+    response = _page(request, "explain.html", report=report)
+    if report is None:
+        response.status_code = 404
+    return response
+
+
 # ── admin ───────────────────────────────────────────────────────────────────
 @router.get("/admin/login", response_class=HTMLResponse)
 async def login_form(request: Request, error: str = "") -> HTMLResponse:
@@ -360,6 +381,56 @@ async def admin_channel(request: Request, login: str) -> HTMLResponse:
         filters=filters.entries_for(settings.channel_id) if filters else [],
         publications=publications,
         ignored=sorted(policy.ignored_in(settings.channel_id)) if policy else [],
+    )
+
+
+@router.get("/admin/explain", response_class=HTMLResponse)
+async def admin_explain_form(request: Request) -> HTMLResponse:
+    _require_admin(request)
+    return _explain_page(request, {"channel": "", "text": "", "as_user": "", "badges": [], "run": False})
+
+
+@router.post("/admin/explain", response_class=HTMLResponse)
+async def admin_explain(
+    request: Request,
+    csrf: str = Form(""),
+    channel: str = Form(""),
+    text: str = Form(""),
+    as_user: str = Form(""),
+    badges: Annotated[list[str] | None, Form()] = None,
+    run: str = Form(""),
+) -> HTMLResponse:
+    """Explain as a chatter you name (architecture §11 `as_user`): admin only, never on a public link."""
+    _require_csrf(request, csrf)
+    login, dry_run = as_user.strip(), run == "on"
+    form = {"channel": channel, "text": text, "as_user": login, "badges": badges or [], "run": dry_run}
+    runtime, policy = _state(request, "runtime"), _state(request, "policy")
+    settings = policy.channel_by_login(channel) if policy is not None else None
+    if runtime is None or settings is None:
+        return _explain_page(request, form, error=f"unknown channel {channel}" if runtime else "no runtime")
+    info = policy.channel_info(
+        settings.channel_id, settings.login, **live_fields(_state(request, "streams"), settings.channel_id)
+    )
+    invoker = None
+    if login:
+        try:
+            invoker = await chatter_for(request, info, login, frozenset(badges or ()) & set(EXPLAIN_BADGES))
+        except HTTPException as exc:
+            return _explain_page(request, form, error=str(exc.detail))
+    ctx = runtime.make_context(channel=info, invoker=invoker)
+    # Body context, as in the editor: what a custom command's body would do, no command sign needed.
+    report = await explain(runtime, text, ctx, context=Context.BODY, run=dry_run)
+    return _explain_page(request, form, report={**report.as_dict(), "channel": settings.login})
+
+
+def _explain_page(request: Request, form: dict[str, Any], **context: Any) -> HTMLResponse:
+    return _page(
+        request,
+        "admin_explain.html",
+        form=form,
+        channels=_channels(request),
+        badge_choices=EXPLAIN_BADGES,
+        **context,
     )
 
 
