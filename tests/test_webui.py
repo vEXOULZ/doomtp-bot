@@ -19,6 +19,7 @@ from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
+from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
@@ -381,3 +382,78 @@ def test_the_password_is_not_stored_in_the_clear() -> None:
     auth = AdminAuth(password=PASSWORD)
     assert auth.check_password(PASSWORD) and not auth.check_password("nope")
     assert PASSWORD.encode() not in bytes(auth._digest)  # noqa: SLF001 - the point of the test
+
+
+# ── explain ────────────────────────────────────────────────────────────────
+class _Users:
+    async def resolve_user(self, login: str) -> dict[str, str] | None:
+        known = {"mod": {"id": "300", "name": "mod", "display": "Mod"}}
+        return known.get(login.lower())
+
+
+async def test_a_chat_explain_link_opens_the_full_report_without_signing_in(
+    services: dict[str, object],
+) -> None:
+    reports = ReportStore("https://bot.example")
+    token = reports.keep(
+        {
+            "expression": "!role list",
+            "context": "line",
+            "channel": CHANNEL_LOGIN,
+            "ast": 'role["list"]',
+            "parse_error": None,
+            "invocations": [
+                {
+                    "index": 1,
+                    "name": "role",
+                    "source": "builtin",
+                    "owner": "",
+                    "version": 0,
+                    "required_role": "moderator",
+                    "rank": 0,
+                    "allowed": False,
+                    "reason": "requires moderator",
+                    "cooldown_tier_s": 0.0,
+                    "cooldown_user_s": 0.0,
+                    "input_mode": "none",
+                    "placeholders": [],
+                    "grants": [],
+                }
+            ],
+            "stores": [],
+            "failure": {"code": 3, "message": "requires moderator", "data": None},
+            "failed_index": 1,
+            "ran": False,
+            "result": None,
+            "executed": [],
+            "would_send": None,
+        }
+    )
+    app = _app({**services, "explain_reports": reports}, password=PASSWORD)
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        page = await http.get(f"/explain/{token}")
+        assert page.status_code == 200
+        assert "role[&#34;list&#34;]" in page.text and "no — requires moderator" in page.text
+        assert "Would fail at command 1" in page.text
+        gone = await http.get("/explain/not-a-token")
+        assert gone.status_code == 404 and "kept in memory for an hour" in gone.text
+
+
+async def test_explaining_as_someone_else_is_admin_only(services: dict[str, object]) -> None:
+    app = _app({**services, "twitch": _Users()}, password=PASSWORD)
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        assert (await http.get("/admin/explain")).status_code == 303  # to the login page
+        await http.post("/admin/login", data={"password": PASSWORD})
+        page = (await http.get("/admin/explain")).text
+        csrf = page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        form = {"csrf": csrf, "channel": CHANNEL_LOGIN, "text": "role list", "as_user": "mod"}
+
+        as_viewer = (await http.post("/admin/explain", data=form)).text
+        assert "Checked as <strong>mod</strong>" in as_viewer and "no — requires moderator" in as_viewer
+        as_mod = (await http.post("/admin/explain", data={**form, "badges": ["moderator"]})).text
+        assert "no — requires moderator" not in as_mod and "Would run" in as_mod
+
+        unknown = (await http.post("/admin/explain", data={**form, "as_user": "ghost"})).text
+        assert "unknown Twitch user ghost" in unknown
+        stale = await http.post("/admin/explain", data={**form, "csrf": "stale"})
+        assert stale.status_code == 403

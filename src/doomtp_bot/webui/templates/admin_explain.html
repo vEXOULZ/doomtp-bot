@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_explain.html" import report_view %}
+{% block title %}explain — admin{% endblock %}
+{% block content %}
+<h1>Explain</h1>
+<p><a href="/admin">← admin</a></p>
+<p class="muted">What an expression would do in a channel, checked as a chatter you name. Chat badges
+(moderator, VIP, subscriber) only arrive with a chat message, so tick the ones to assume; custom roles,
+the broadcaster and bot admins are looked up as in chat. <code>run</code> evaluates it too, with variable
+writes discarded, cooldowns untouched and nothing sent.</p>
+<form method="post" action="/admin/explain">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p>
+    <select name="channel">
+      {% for c in channels %}<option value="{{ c.login }}" {{ 'selected' if c.login == form.channel }}>#{{ c.login }}</option>{% endfor %}
+    </select>
+    <input type="text" name="text" value="{{ form.text }}" placeholder="random 1-6 | echo you rolled {1}" size="50" required>
+  </p>
+  <p>
+    as <input type="text" name="as_user" value="{{ form.as_user }}" placeholder="nobody">
+    {% for badge in badge_choices %}
+    <label><input type="checkbox" name="badges" value="{{ badge }}" {{ 'checked' if badge in form.badges }}> {{ badge }}</label>
+    {% endfor %}
+    <label><input type="checkbox" name="run" value="on" {{ 'checked' if form.run }}> run</label>
+    <button type="submit">explain</button>
+  </p>
+</form>
+{% if error %}<p class="pill off">{{ error }}</p>{% endif %}
+{% if report %}
+{% if form.as_user %}<p class="muted">Checked as <strong>{{ form.as_user }}</strong>.</p>{% endif %}
+{{ report_view(report) }}
+{% endif %}
+{% endblock %}

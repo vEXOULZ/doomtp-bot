@@ -55,7 +55,12 @@ async def explain_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         context=Context.BODY if "--as-body" in flags else Context.LINE,
         run="--run" in flags,
     )
-    return Result.success(report.one_line(), report.as_dict())
+    summary, data = report.one_line(), report.as_dict()
+    reports = ctx.exec.services.get("explain_reports")
+    if reports is not None and reports.base_url:  # only when chat readers can open the page (§4.4)
+        link = reports.link(reports.keep({**data, "channel": ctx.channel.login}))
+        summary, data = f"{summary} — full report: {link}", {**data, "report_url": link}
+    return Result.success(summary, data)
 
 
 COMMANDS: tuple[Command, ...] = (explain_cmd,)

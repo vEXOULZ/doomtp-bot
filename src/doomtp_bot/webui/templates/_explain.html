@@ -1,0 +1,52 @@
+{# The full `!explain` report (spec §9, architecture §4.4), shared by the public and the admin page. #}
+{% macro report_view(r) %}
+<p><code>{{ r.expression }}</code> <span class="pill">{{ r.context }} context</span>
+{% if r.channel %}<span class="pill">#{{ r.channel }}</span>{% endif %}</p>
+
+{% if r.parse_error %}
+<p class="pill off">Parse error: {{ r.parse_error }}</p>
+{% else %}
+<h2>Parsed as</h2>
+<pre>{{ r.ast }}</pre>
+
+<h2>Commands</h2>
+<table>
+  <tr><th>#</th><th>Command</th><th>From</th><th>Needs</th><th>Allowed</th><th>Cooldown</th><th>Input</th><th>Placeholders</th></tr>
+  {% for inv in r.invocations %}
+  <tr>
+    <td>{{ inv.index }}</td>
+    <td><code>{{ inv.name }}</code></td>
+    <td>{{ inv.source }}{% if inv.owner %} by {{ inv.owner }} v{{ inv.version }}{% endif %}</td>
+    <td>{{ inv.required_role or '—' }} <span class="muted">(rank {{ inv.rank }} checked)</span></td>
+    <td class="{{ 'on' if inv.allowed else 'off' }}">{{ 'yes' if inv.allowed else 'no — ' ~ inv.reason }}</td>
+    <td>{% set wait = [inv.cooldown_tier_s, inv.cooldown_user_s] | max %}{{ '%.0fs left' | format(wait) if wait > 0 else 'ready' }}</td>
+    <td>{{ inv.input_mode }}</td>
+    <td>
+      {% for ph in inv.placeholders %}<code>{{ ph.reference }}</code>{% if not ph.available %} <span class="off">not here{% if ph.has_fallback %}, falls back{% endif %}</span>{% endif %}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">none</span>{% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if r.stores %}
+<h2>Variable writes</h2>
+<table>
+  <tr><th>Variable</th><th>How</th><th>Allowed</th></tr>
+  {% for s in r.stores %}
+  <tr><td><code>{{ s.variable }}</code></td><td>{{ 'append' if s.append else 'set' }}</td>
+      <td class="{{ 'on' if s.allowed else 'off' }}">{{ 'yes' if s.allowed else 'no — the write would go nowhere' }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Outcome</h2>
+{% if r.failure %}
+<p class="off">Would fail{% if r.failed_index %} at command {{ r.failed_index }}{% endif %}: {{ r.failure.message }} (code {{ r.failure.code }})</p>
+{% elif r.ran and r.result %}
+<p>Ran with variable writes discarded and nothing sent: code {{ r.result.code }}{% if r.executed %}, commands {{ r.executed | join(', ') }} executed{% endif %}.</p>
+<p>Would send: {% if r.would_send %}<code>{{ r.would_send }}</code>{% else %}<span class="muted">nothing</span>{% endif %}</p>
+{% else %}
+<p>Would run. Add <code>--run</code> to evaluate it too.</p>
+{% endif %}
+{% endif %}
+{% endmacro %}

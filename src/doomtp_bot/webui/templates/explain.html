@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% from "_explain.html" import report_view %}
+{% block title %}explain — doomtp-bot{% endblock %}
+{% block content %}
+<h1>What this would do</h1>
+{% if report %}
+{{ report_view(report) }}
+<p class="muted">The report is checked against the rank of whoever asked, and kept for an hour.</p>
+{% else %}
+<p class="muted">This report is gone. Reports are kept in memory for an hour, and not across a restart —
+run <code>explain</code> in chat again for a fresh link.</p>
+{% endif %}
+{% endblock %}

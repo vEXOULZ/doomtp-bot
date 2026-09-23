@@ -11,6 +11,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from doomtp_bot.api.routes.data import _authenticate
 from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
@@ -44,6 +45,10 @@ class ParseRequest(BaseModel):
 
 class ExplainRequest(ParseRequest):
     run: bool = False  # evaluate too, with writes discarded and nothing sent (spec §9)
+    # Check as this chatter instead of nobody (architecture §11). Needs an API key or an admin session:
+    # whose view a report was checked against is not for the public side.
+    as_user: str | None = Field(default=None, max_length=25)
+    badges: list[str] = Field(default_factory=list, max_length=10)  # chat badges, unknown outside chat
 
 
 def _runtime(request: Request) -> Any:
@@ -115,9 +120,29 @@ async def explain_expression(request: Request, body: ExplainRequest) -> dict[str
     """The full explain report (spec §9). `run` evaluates with writes and sends disabled."""
     runtime = _runtime(request)
     channel = _channel(request, body.channel)
-    ctx = runtime.make_context(channel=channel, invoker=None)
+    invoker = None
+    if body.as_user:
+        await _authenticate(request, "read")
+        invoker = await chatter_for(request, channel, body.as_user, frozenset(body.badges))
+    ctx = runtime.make_context(channel=channel, invoker=invoker)
     report = await explain(runtime, body.text, ctx, context=Context(body.context), run=body.run)
     return report.as_dict()
+
+
+async def chatter_for(request: Request, channel: Any, login: str, badges: frozenset[str]) -> Any:
+    """The chatter `login` as the bot would see them in `channel`, for an explain run as them.
+
+    Custom roles, the broadcaster and bot admins come from the policy as in chat. Badges (moderator, VIP,
+    subscriber) only arrive with a chat message, so the caller says which to assume.
+    """
+    if channel.id == "*":
+        raise HTTPException(status_code=422, detail="as_user needs a channel")
+    twitch = getattr(request.app.state, "twitch", None)
+    user = await twitch.resolve_user(login) if twitch is not None else None
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"unknown Twitch user {login}")
+    policy = request.app.state.policy
+    return policy.build_chatter(channel.id, user["id"], user["name"], user["display"], badges)
 
 
 @router.get("/language")

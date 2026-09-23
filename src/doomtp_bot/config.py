@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     web_host: str = "127.0.0.1"
     web_port: int = 8080
     public_base_url: str = "http://localhost:8080"
+    # The public pages can be opened by chat at PUBLIC_BASE_URL (a reverse proxy, a tunnel). Off by
+    # default, because the web UI is LAN-only until then; on, `!explain` links to its full report.
+    public_web_ui: bool = False
 
     default_prefix: str = DEFAULT_PREFIX
 

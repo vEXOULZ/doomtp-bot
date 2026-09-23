@@ -36,6 +36,7 @@ from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import MODERATOR_RANK
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
+from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.storage.db import Databases, configure_event_loop, current_version
 from doomtp_bot.triggers.runner import TriggerRunner
 from doomtp_bot.triggers.service import TriggerService
@@ -102,6 +103,8 @@ async def run(settings: Settings) -> None:
     streams = StreamStatus()
     channels = ChannelManager(policy, twitch, writer, default_prefix=settings.default_prefix)
     probe = CapabilityProbe(policy=policy, channels=channels, prober=twitch)
+    # `!explain` links its full report only where chat can open it (architecture §4.4).
+    explain_reports = ReportStore(settings.public_base_url if settings.public_web_ui else None)
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
     services: dict[str, object] = {
         "policy": policy,
@@ -113,6 +116,7 @@ async def run(settings: Settings) -> None:
         "triggers": triggers,
         "variable_access": access,
         "history": history,  # the backfill command names the service before anything is sent to it
+        "explain_reports": explain_reports,
     }
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for)
@@ -316,6 +320,7 @@ async def run(settings: Settings) -> None:
             "chatlog_db": dbs.chatlog,
             "api_keys": ApiKeyService(dbs.bot),
             "streams": streams,  # {channel.live} and friends in /explain runs
+            "explain_reports": explain_reports,
         },
         admin_password=settings.admin_password_value(),
     )
