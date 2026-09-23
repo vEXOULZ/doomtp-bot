@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -25,7 +25,7 @@ from doomtp_bot.lang.ast import Node
 from doomtp_bot.lang.parser import Context, ParserParams, parse
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import to_json
-from doomtp_bot.storage.db import Connection, Row, transaction
+from doomtp_bot.storage.db import Connection, Row, fetch_one, transaction
 
 log = structlog.get_logger(__name__)
 
@@ -104,10 +104,6 @@ class CustomCommandService:
         return cached
 
     # ── reads ───────────────────────────────────────────────────────────────
-    async def _row(self, sql: str, params: Sequence[Any]) -> Row | None:
-        async with await self.conn.execute(sql, tuple(params)) as cur:
-            return await cur.fetchone()
-
     @staticmethod
     def _command(row: Row) -> CustomCommand:
         return CustomCommand(
@@ -137,14 +133,15 @@ class CustomCommandService:
     )
 
     async def by_id(self, command_id: str, *, include_deleted: bool = False) -> CustomCommand | None:
-        row = await self._row(f"{self._SELECT} WHERE c.id = %s", (command_id,))
+        row = await fetch_one(self.conn, f"{self._SELECT} WHERE c.id = %s", (command_id,))
         if row is None:
             return None
         command = self._command(row)
         return command if include_deleted or command.status == "active" else None
 
     async def by_owner(self, owner_user_id: str, name: str) -> CustomCommand | None:
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             f"{self._SELECT} WHERE c.owner_user_id = %s AND c.name = %s AND c.status = 'active'",
             (owner_user_id, name.lower()),
         )
@@ -188,7 +185,8 @@ class CustomCommandService:
         )
 
     async def publication(self, channel_id: str, name: str) -> tuple[Publication, CustomCommand] | None:
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             f"{self._SELECT_PUB} WHERE p.channel_id = %s AND p.name = %s AND p.status = 'active'"
             " AND c.status = 'active'",
             (channel_id, name.lower()),
@@ -202,7 +200,8 @@ class CustomCommandService:
         return await self.publication(channel_id, name) or await self.publication(GLOBAL, name)
 
     async def personal(self, user_id: str, alias: str) -> CustomCommand | None:
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             f"{self._SELECT} JOIN custom_command_links l ON l.command_id = c.id"
             " WHERE l.user_id = %s AND l.alias = %s AND c.status = 'active'",
             (user_id, alias.lower()),
@@ -218,7 +217,8 @@ class CustomCommandService:
             return [(r["version"], r["body"], r["created_at"]) for r in await cur.fetchall()]
 
     async def count_owned(self, owner_user_id: str) -> int:
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             "SELECT COUNT(*) AS n FROM custom_commands WHERE owner_user_id = %s AND status = 'active'",
             (owner_user_id,),
         )
@@ -226,10 +226,11 @@ class CustomCommandService:
 
     async def usage_of(self, command_id: str) -> tuple[int, int]:
         """(links, active publications) — what an edit or delete affects."""
-        links = await self._row(
-            "SELECT COUNT(*) AS n FROM custom_command_links WHERE command_id = %s", (command_id,)
+        links = await fetch_one(
+            self.conn, "SELECT COUNT(*) AS n FROM custom_command_links WHERE command_id = %s", (command_id,)
         )
-        pubs = await self._row(
+        pubs = await fetch_one(
+            self.conn,
             "SELECT COUNT(*) AS n FROM custom_command_publications WHERE command_id = %s AND status = 'active'",
             (command_id,),
         )
@@ -279,7 +280,8 @@ class CustomCommandService:
         return updated
 
     async def revert(self, command: CustomCommand, version: int, *, actor_via: str = "chat") -> CustomCommand:
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             "SELECT body FROM custom_command_versions WHERE command_id = %s AND version = %s",
             (command.id, version),
         )
@@ -376,7 +378,8 @@ class CustomCommandService:
         name = name.lower()
         if not NAME_RE.match(name):
             raise CustomCommandError("published names: lowercase letters, digits, _ and -, up to 32")
-        existing = await self._row(
+        existing = await fetch_one(
+            self.conn,
             "SELECT command_id FROM custom_command_publications WHERE channel_id = %s AND name = %s",
             (channel_id, name),
         )
@@ -424,7 +427,8 @@ class CustomCommandService:
         self, *, channel_id: str, name: str, actor_user_id: str | None, actor_via: str = "chat"
     ) -> str | None:
         """Remove a publication and its write grants. Returns the command id it pointed at."""
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             "SELECT command_id FROM custom_command_publications WHERE channel_id = %s AND name = %s",
             (channel_id, name.lower()),
         )

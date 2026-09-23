@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse
-from doomtp_bot.modules._common import actor, command_spec, rank, user_arg
+from doomtp_bot.modules._common import actor, command_spec, need, policy_of, rank, user_arg
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
     BOT_ADMIN_RANK,
@@ -29,15 +29,11 @@ from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 from doomtp_bot.runtime.values import ConversionError, convert
 
 if TYPE_CHECKING:
-    from doomtp_bot.policy.service import PolicyService
+    pass
 
 MODULE = "core_admin"
 ROLE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 PREFIX_FORBIDDEN = set('{}"\\|&>()')
-
-
-def _policy(ctx: CommandContext) -> PolicyService:
-    return ctx.service("policy")  # type: ignore[no-any-return]
 
 
 def _registry(ctx: CommandContext) -> CommandRegistry:
@@ -52,7 +48,7 @@ async def _write(
     ctx: CommandContext, operation: Callable[[PolicyRepository], Any], scope: str | None = None
 ) -> Any:
     """Apply a policy write. Channel-scoped writes first create the channel row if it doesn't exist yet."""
-    policy = _policy(ctx)
+    policy = policy_of(ctx)
     if scope != GLOBAL and policy.channel_settings(ctx.channel.id) is None:
         await policy.mutate(
             lambda repo: repo.ensure_channel(
@@ -83,11 +79,6 @@ def _handler(fn: Any) -> Any:
     return wrapped
 
 
-def _need(values: list[str], count: int, usage: str) -> None:
-    if len(values) < count:
-        raise CommandError(f"usage: {usage}")
-
-
 def _int(raw: str, what: str, lo: int, hi: int) -> int:
     if not raw.lstrip("-").isdigit() or not lo <= int(raw) <= hi:
         raise CommandError(f"{what} must be a whole number from {lo} to {hi}")
@@ -100,8 +91,8 @@ ROLE_USAGE = "role list | create <name> <rank 1-99> | delete <name> | add <name>
 
 @_handler
 async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
-    _need(v, 1, ROLE_USAGE)
+    policy = policy_of(ctx)
+    need(v, 1, ROLE_USAGE)
     action, channel_id = v[0].lower(), ctx.channel.id
     if action == "list":
         roles = {
@@ -111,10 +102,10 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
         listing = ", ".join(f"{r.name} ({r.rank})" for r in sorted(roles.values(), key=lambda r: -r.rank))
         return Result.success(listing, [{"name": r.name, "rank": r.rank} for r in roles.values()])
 
-    _need(v, 2, ROLE_USAGE)
+    need(v, 2, ROLE_USAGE)
     name = v[1].lower()
     if action == "create":
-        _need(v, 3, ROLE_USAGE)
+        need(v, 3, ROLE_USAGE)
         new_rank = _int(v[2], "rank", CUSTOM_RANK_MIN, CUSTOM_RANK_MAX)
         if not ROLE_NAME_RE.match(name) or name in BUILTIN_RANKS:
             raise CommandError("role names: lowercase letters, digits, _ (not a built-in role)")
@@ -150,7 +141,7 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
         await policy.mutate(lambda repo: repo.delete_role(role.id, actor(ctx)))
         return Result.success(f"deleted role {name}")
     if action in ("add", "remove"):
-        _need(v, 3, ROLE_USAGE)
+        need(v, 3, ROLE_USAGE)
         if not manageable:
             return Result.failure(Code.FAIL, f"you can't manage {name}")
         user = await user_arg(ctx, v[2])
@@ -183,8 +174,8 @@ PERM_USAGE = "perm show <command> | set <command> <role> | allow <command> <role
 
 @_handler
 async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
-    _need(v, 2, PERM_USAGE)
+    policy = policy_of(ctx)
+    need(v, 2, PERM_USAGE)
     action, spec, channel_id = v[0].lower(), command_spec(ctx, v[1]), ctx.channel.id
     if action == "show":
         required, allowed = policy.required_role(channel_id, spec)
@@ -197,14 +188,14 @@ async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if spec.module == MODULE and rank(ctx) < BOT_ADMIN_RANK:
         return Result.failure(Code.FAIL, "only bot admins can change admin command permissions")
     if action == "set":
-        _need(v, 3, PERM_USAGE)
+        need(v, 3, PERM_USAGE)
         role = v[2].lower()
         if policy.rank_of(channel_id, role) is None:
             raise CommandError(f"unknown role {role}")
         await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.name, role, None, actor(ctx)))
         return Result.success(f"{spec.name} now requires {role}")
     if action == "allow":
-        _need(v, 3, PERM_USAGE)
+        need(v, 3, PERM_USAGE)
         roles = [r.strip().lower() for r in " ".join(v[2:]).split(",") if r.strip()]
         unknown = [r for r in roles if policy.rank_of(channel_id, r) is None]
         if not roles or unknown:
@@ -226,8 +217,8 @@ COOLDOWN_USAGE = "cooldown show <command> | set <command> <role> <tier_s> <user_
 
 @_handler
 async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
-    _need(v, 2, COOLDOWN_USAGE)
+    policy = policy_of(ctx)
+    need(v, 2, COOLDOWN_USAGE)
     action, spec, channel_id = v[0].lower(), command_spec(ctx, v[1]), ctx.channel.id
     if action == "show":
         rules = policy.cooldown_rules(channel_id, spec)
@@ -239,12 +230,12 @@ async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
         )
     if spec.fixed_policy:
         return Result.failure(Code.FAIL, f"{spec.name} never has cooldowns")
-    _need(v, 3, COOLDOWN_USAGE)
+    need(v, 3, COOLDOWN_USAGE)
     role = v[2].lower()
     if policy.rank_of(channel_id, role) is None:
         raise CommandError(f"unknown role {role}")
     if action == "set":
-        _need(v, 5, COOLDOWN_USAGE)
+        need(v, 5, COOLDOWN_USAGE)
         tier_s, user_s = _int(v[3], "tier_s", 0, 86_400), _int(v[4], "user_s", 0, 86_400)
         await _write(
             ctx, lambda repo: repo.set_cooldown(channel_id, spec.name, role, tier_s, user_s, actor(ctx))
@@ -285,8 +276,8 @@ def _scope(ctx: CommandContext, v: list[str], position: int) -> str:
 
 @_handler
 async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy, registry = _policy(ctx), _registry(ctx)
-    _need(v, 1, MODULE_USAGE)
+    policy, registry = policy_of(ctx), _registry(ctx)
+    need(v, 1, MODULE_USAGE)
     specs = {c.spec.module: c.spec for c in registry.all()}
     specs.update(await _pack_modules(ctx))  # packs published here toggle like any module (ADR-0012)
     modules = sorted(specs)
@@ -295,7 +286,7 @@ async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
         # A module is "on" when its toggle layers allow it; individual command overrides aren't shown here.
         states = {m: policy.is_enabled(ctx.channel.id, specs[m]) for m in modules}
         return Result.success(", ".join(f"{m} {'on' if on else 'off'}" for m, on in states.items()), states)
-    _need(v, 2, MODULE_USAGE)
+    need(v, 2, MODULE_USAGE)
     module = v[1].lower()
     if module not in modules:
         raise CommandError(f"unknown module {module}")
@@ -314,10 +305,10 @@ async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 @_handler
 async def _cmd(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2, CMD_USAGE)
+    need(v, 2, CMD_USAGE)
     action, spec = v[0].lower(), command_spec(ctx, v[1])
     if action == "log":
-        _need(v, 3, CMD_USAGE)
+        need(v, 3, CMD_USAGE)
         try:
             level = LogLevel(v[2].lower())
         except ValueError as exc:
@@ -354,13 +345,13 @@ IGNORE_USAGE = "ignore list | add|remove <user> [global]"
 
 @_handler
 async def _ignore(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
-    _need(v, 1, IGNORE_USAGE)
+    policy = policy_of(ctx)
+    need(v, 1, IGNORE_USAGE)
     action = v[0].lower()
     if action == "list":
         ids = sorted(policy.snapshot.ignored.get(ctx.channel.id, frozenset()))
         return Result.success(f"{len(ids)} ignored here", ids)
-    _need(v, 2, IGNORE_USAGE)
+    need(v, 2, IGNORE_USAGE)
     if action not in ("add", "remove"):
         raise CommandError(f"usage: {IGNORE_USAGE}")
     user, scope = await user_arg(ctx, v[1]), _scope(ctx, v, 2)
@@ -401,8 +392,8 @@ ADMIN_USAGE = "admin add|remove <user>"
 
 @_handler
 async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
-    _need(v, 2, ADMIN_USAGE)
+    policy = policy_of(ctx)
+    need(v, 2, ADMIN_USAGE)
     action = v[0].lower()
     if action not in ("add", "remove"):
         raise CommandError(f"usage: {ADMIN_USAGE}")
@@ -420,8 +411,8 @@ SCOPE_RE = re.compile(r"^(channel|module:[a-z0-9_]+|command:[a-z0-9][a-z0-9_-]*)
 
 @_handler
 async def _callback(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    policy = _policy(ctx)
-    _need(v, 3, CALLBACK_USAGE)
+    policy = policy_of(ctx)
+    need(v, 3, CALLBACK_USAGE)
     action, kind, scope = v[0].lower(), v[1].lower(), v[2].lower()
     if kind not in ("on_cooldown", "on_denied") or not SCOPE_RE.match(scope):
         raise CommandError(f"usage: {CALLBACK_USAGE}")

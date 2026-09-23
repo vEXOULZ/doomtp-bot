@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, parse
-from doomtp_bot.modules._common import rank
+from doomtp_bot.modules._common import need, rank, reject_filtered
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import CommandError, Result
@@ -44,21 +44,13 @@ def _service(ctx: CommandContext) -> TriggerService:
     return ctx.service("triggers")  # type: ignore[no-any-return]
 
 
-def _need(values: list[str], count: int, usage: str) -> None:
-    if len(values) < count:
-        raise CommandError(f"usage: {usage}")
-
-
 def _check_expression(ctx: CommandContext, expr: str, context: Context) -> None:
     runtime = ctx.service("runtime")
     try:
         parse(expr, context, runtime.parser_params(ctx.channel.prefix))
     except ParseError as exc:
         raise CommandError(str(exc)) from exc
-    filters = ctx.exec.services.get("filters")
-    hits = filters.rejects(ctx.channel.id, expr) if filters is not None else []
-    if hits:
-        raise CommandError(f"the filter rejects that: {', '.join(hits)}")
+    reject_filtered(ctx, expr)
 
 
 def _describe(trigger: Trigger) -> str:
@@ -81,7 +73,7 @@ async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
 
 
 async def _remove_or_toggle(ctx: CommandContext, action: str, values: list[str], usage: str) -> Result:
-    _need(values, 2, usage)
+    need(values, 2, usage)
     if not values[1].isdigit():
         raise CommandError("give the id from the list")
     actor = ctx.invoker.id if ctx.invoker else None
@@ -119,7 +111,7 @@ async def _remove_or_toggle(ctx: CommandContext, action: str, values: list[str],
 )
 async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     values = list(args.values)
-    _need(values, 1, TRIGGER_USAGE)
+    need(values, 1, TRIGGER_USAGE)
     action = values[0].lower()
     if action == "list":
         return await _listing(ctx, tuple(t for t in TRIGGER_TYPES if t != "timer"))
@@ -143,7 +135,7 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
             raise CommandError(str(exc)) from exc
         _check_expression(ctx, expr, Context.LISTENER)
     elif action == "add":
-        _need(values, 2, TRIGGER_USAGE)
+        need(values, 2, TRIGGER_USAGE)
         type_ = values[1].lower()
         if type_ not in TRIGGER_TYPES or type_ in ("listener", "timer"):
             raise CommandError(f"usage: {TRIGGER_USAGE}")
@@ -192,7 +184,7 @@ def _warning(ctx: CommandContext, type_: str) -> str:
 )
 async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     values = list(args.values)
-    _need(values, 1, TIMER_USAGE)
+    need(values, 1, TIMER_USAGE)
     action = values[0].lower()
     if action == "list":
         return await _listing(ctx, ("timer", "cron"))
@@ -203,7 +195,7 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
     if action != "add":
         raise CommandError(f"usage: {TIMER_USAGE}")
 
-    _need(values, 2, TIMER_USAGE)
+    need(values, 2, TIMER_USAGE)
     try:
         schedule: dict[str, Any] = {"every_s": parse_every(values[1])}
     except TriggerError as exc:

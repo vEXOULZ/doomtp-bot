@@ -10,7 +10,7 @@ import dataclasses
 import json
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.modules._common import rank, user_arg
+from doomtp_bot.modules._common import rank, reject_filtered, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.namespaces import CHATTER_KEY, VAR_NAMESPACES
@@ -60,14 +60,6 @@ def _key_for_user(ctx: CommandContext, ns: str, name: str, user_id: str) -> VarK
     if column is None:
         raise CommandError(f"{ns} has no per-user values")
     return dataclasses.replace(key_for(ctx.exec, ns, name), **{column: user_id})
-
-
-def _reject_filtered(ctx: CommandContext, text: str) -> None:
-    """Stored text goes through the channel's filter too (architecture §9)."""
-    filters = ctx.exec.services.get("filters")
-    hits = filters.rejects(ctx.channel.id, text) if filters is not None else []
-    if hits:
-        raise CommandError(f"the filter rejects that: {', '.join(hits)}")
 
 
 def _var_admin(ctx: CommandContext) -> bool:
@@ -164,7 +156,7 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
 
     if action in ("set", "incr"):
         if action == "set":
-            _reject_filtered(ctx, " ".join(v[2:]))
+            reject_filtered(ctx, " ".join(v[2:]))
         if not access.can_write(ctx.exec, ns, name):
             # Raised, not returned: a write denial is the runtime's 126, not a command's own failure code.
             raise CommandError(f"you can't change {ns}.{name}", Code.DENIED)

@@ -21,7 +21,7 @@ from doomtp_bot.customcmds.service import (
 from doomtp_bot.lang.ast import stores
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, parse
-from doomtp_bot.modules._common import rank, user_arg
+from doomtp_bot.modules._common import need, policy_of, rank, reject_filtered, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext, Publisher
 from doomtp_bot.runtime.executor import ScopeArgs, UsageError
@@ -30,7 +30,6 @@ from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
 
 if TYPE_CHECKING:
-    from doomtp_bot.policy.service import PolicyService
     from doomtp_bot.runtime.engine import Runtime
     from doomtp_bot.variables.access import VariableAccessPolicy
 
@@ -52,10 +51,6 @@ GRANTABLE = ("channel", "channel.chatter")
 
 def _service(ctx: CommandContext) -> CustomCommandService:
     return ctx.service("customcmds")  # type: ignore[no-any-return]
-
-
-def _policy(ctx: CommandContext) -> PolicyService:
-    return ctx.service("policy")  # type: ignore[no-any-return]
 
 
 def _access(ctx: CommandContext) -> VariableAccessPolicy:
@@ -87,12 +82,7 @@ def _invoker(ctx: CommandContext) -> tuple[str, str]:
 
 def _may(ctx: CommandContext, setting: str) -> bool:
     """Is the caller at or above the channel's threshold for this action?"""
-    return rank(ctx) >= BOT_ADMIN_RANK or _policy(ctx).reaches_setting_role(ctx.exec, setting)
-
-
-def _need(values: list[str], count: int) -> None:
-    if len(values) < count:
-        raise CommandError(f"usage: {USAGE}")
+    return rank(ctx) >= BOT_ADMIN_RANK or policy_of(ctx).reaches_setting_role(ctx.exec, setting)
 
 
 async def _own(ctx: CommandContext, name: str) -> CustomCommand:
@@ -103,18 +93,6 @@ async def _own(ctx: CommandContext, name: str) -> CustomCommand:
     return found
 
 
-def _reject_filtered(ctx: CommandContext, *texts: str) -> None:
-    """Everything stored here is read out later — as a name, a usage line or a reply — so it goes
-    through the channel's filter before it is saved (architecture §9, ADR-0009 item 4)."""
-    filters = ctx.exec.services.get("filters")
-    if filters is None:
-        return
-    for text in texts:
-        hits = filters.rejects(ctx.channel.id, text)
-        if hits:
-            raise CommandError(f"the filter rejects that: {', '.join(hits)}")
-
-
 async def _validate_body(ctx: CommandContext, body: str, *names: str) -> None:
     """Parse the body the way it will run, and filter what is about to be stored (ADR-0009, §9)."""
     try:
@@ -123,7 +101,7 @@ async def _validate_body(ctx: CommandContext, body: str, *names: str) -> None:
         raise CommandError(str(exc)) from exc
     except CustomCommandError as exc:
         raise CommandError(str(exc)) from exc
-    _reject_filtered(ctx, body, *names)
+    reject_filtered(ctx, body, *names)
 
 
 async def _publication_here(ctx: CommandContext, name: str) -> tuple[Publication, CustomCommand]:
@@ -151,7 +129,7 @@ async def _reachable_here(ctx: CommandContext, name: str) -> CustomCommand:
 
 # ── the subcommands ─────────────────────────────────────────────────────────
 async def _add(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     if not _may(ctx, "create_min_role"):
         raise CommandError("you can't create commands here", Code.DENIED)
     body = args.raw_tail or " ".join(v[2:])
@@ -171,7 +149,7 @@ async def _add(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _edit(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     command = await _own(ctx, v[1])
     body = args.raw_tail or " ".join(v[2:])
     if not body:
@@ -186,7 +164,7 @@ async def _edit(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _rm(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     command = await _own(ctx, v[1])
     links, publications = await _service(ctx).delete(command)
     return Result.success(
@@ -209,7 +187,7 @@ async def _list(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _info(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     service = _service(ctx)
     name = v[1]
     found = await service.publication(ctx.channel.id, name)
@@ -241,7 +219,7 @@ async def _info(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _versions(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     command = await _own(ctx, v[1])
     history = await _service(ctx).versions(command.id)
     listing = ", ".join(f"v{version}: {body}" for version, body, _ in history[:5])
@@ -249,7 +227,7 @@ async def _versions(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _revert(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 3)
+    need(v, 3, USAGE)
     command = await _own(ctx, v[1])
     if not v[2].isdigit():
         raise CommandError("version must be a number")
@@ -262,13 +240,13 @@ async def _revert(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 async def _param(ctx: CommandContext, v: list[str], args: Args) -> Result:
     """`cc param <name> <pos> name=<n> [type=…] [required=yes] "<description>"`, or `<pos> remove`."""
-    _need(v, 3)
+    need(v, 3, USAGE)
     command = await _own(ctx, v[1])
     position = v[2]
     if len(v) > 3 and v[3].lower() == "remove":
         rows = params.remove(command.params, position)
     else:
-        _reject_filtered(ctx, " ".join(v[3:]))
+        reject_filtered(ctx, " ".join(v[3:]))
         assignments, description = params.split_declaration(" ".join(v[3:]))
         try:
             rows = params.declare(command.params, position, assignments, description)
@@ -284,27 +262,27 @@ async def _param(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _describe(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 3)
+    need(v, 3, USAGE)
     command = await _own(ctx, v[1])
     summary = " ".join(v[2:])
-    _reject_filtered(ctx, summary)
+    reject_filtered(ctx, summary)
     await _service(ctx).set_summary(command, summary)
     return Result.success(f"{command.name}: {summary}")
 
 
 async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
     """`cc pack create|add|rm|list|info|delete <pack> [commands…]`."""
-    _need(v, 2)
+    need(v, 2, USAGE)
     action, packs, (user_id, _) = v[1].lower(), _packs(ctx), _invoker(ctx)
     if action == "list":
         owned = await packs.owned_by(user_id)
         sizes = [(p, len(await packs.members(p.id))) for p in owned]
         listing = ", ".join(f"{p.name} ({n})" for p, n in sizes) or "none"
         return Result.success(f"your packs: {listing}", [p.name for p in owned])
-    _need(v, 3)
+    need(v, 3, USAGE)
     name = v[2].lower()
     if action == "create":
-        _reject_filtered(ctx, name, " ".join(v[3:]))
+        reject_filtered(ctx, name, " ".join(v[3:]))
         try:
             created = await packs.create(owner_user_id=user_id, name=name, summary=" ".join(v[3:]))
         except CustomCommandError as exc:
@@ -332,7 +310,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         await packs.delete(pack)
         return Result.success(f"deleted pack {pack.name}; it is no longer published anywhere")
     if action == "share":
-        _need(v, 4)
+        need(v, 4, USAGE)
         if v[3].lower() not in ("on", "off"):
             raise CommandError(f"usage: {ctx.channel.prefix}cc pack share <pack> on|off")
         shareable = v[3].lower() == "on"
@@ -350,7 +328,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         )
     if action not in ("add", "rm"):
         raise CommandError(f"usage: {USAGE}")
-    _need(v, 4)
+    need(v, 4, USAGE)
     changed: list[str] = []
     for command_name in v[3:]:
         command = await _service(ctx).by_owner(user_id, command_name)
@@ -366,7 +344,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _share(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 3)
+    need(v, 3, USAGE)
     command = await _own(ctx, v[1])
     if v[2].lower() not in ("on", "off"):
         raise CommandError(f"usage: {ctx.channel.prefix}cc share <name> on|off")
@@ -380,10 +358,10 @@ async def _share(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 async def _link(ctx: CommandContext, v: list[str], args: Args) -> Result:
     """`cc link <name>` links what this channel publishes; `cc link @owner <name>` links theirs."""
-    _need(v, 2)
+    need(v, 2, USAGE)
     service, user_id = _service(ctx), _invoker(ctx)[0]
     if v[1].startswith("@"):
-        _need(v, 3)
+        need(v, 3, USAGE)
         owner = await user_arg(ctx, v[1])
         command = await service.by_owner(owner["id"], v[2])
         if command is None or not command.shareable:
@@ -394,7 +372,7 @@ async def _link(ctx: CommandContext, v: list[str], args: Args) -> Result:
         alias = v[2] if len(v) > 2 else v[1]
     if command.owner_user_id == user_id:
         raise CommandError("that's your own command")
-    _reject_filtered(ctx, alias)
+    reject_filtered(ctx, alias)
     try:
         await service.link(user_id=user_id, alias=alias, command=command)
     except CustomCommandError as exc:
@@ -407,7 +385,7 @@ async def _link(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _unlink(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     user_id, _ = _invoker(ctx)
     removed = await _service(ctx).unlink(user_id=user_id, alias=v[1])
     return Result.success(f"unlinked {v[1]}" if removed else f"you have no alias named {v[1]}")
@@ -448,7 +426,7 @@ def _grant_warning(ctx: CommandContext, commands: list[CustomCommand], scope: st
 
 async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     """`cc publish <own name|alias> [as <name>] [global]`, or `cc publish pack <name> [global]`."""
-    _need(v, 2)
+    need(v, 2, USAGE)
     scope = _scope(ctx, v)
     if scope != GLOBAL and not _may(ctx, "publish_min_role"):
         raise CommandError("you can't publish commands here", Code.DENIED)
@@ -459,7 +437,7 @@ async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if command is None:
         raise CommandError(f"you have no command or alias named {v[1]}")
     name = v[3] if len(v) > 3 and v[2].lower() == "as" else command.name
-    _reject_filtered(ctx, name)
+    reject_filtered(ctx, name)
     try:
         await service.publish(channel_id=scope, name=name, command=command, published_by=user_id)
     except CustomCommandError as exc:
@@ -479,7 +457,7 @@ async def _resolve_pack(ctx: CommandContext, v: list[str], at: int) -> Any:
     user_id, _ = _invoker(ctx)
     packs = _packs(ctx)
     if v[at].startswith("@"):
-        _need(v, at + 2)
+        need(v, at + 2, USAGE)
         owner = await user_arg(ctx, v[at])
         pack = await packs.by_owner(owner["id"], v[at + 1])
         if pack is None:
@@ -495,7 +473,7 @@ async def _resolve_pack(ctx: CommandContext, v: list[str], at: int) -> Any:
 
 
 async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result:
-    _need(v, 3)
+    need(v, 3, USAGE)
     user_id, _ = _invoker(ctx)
     packs = _packs(ctx)
     pack = await _resolve_pack(ctx, v, 2)
@@ -521,13 +499,13 @@ async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result
 
 
 async def _unpublish(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     scope = _scope(ctx, v)
     if scope != GLOBAL and not _may(ctx, "publish_min_role"):
         raise CommandError("you can't unpublish commands here", Code.DENIED)
     user_id, _ = _invoker(ctx)
     if v[1].lower() == "pack":
-        _need(v, 3)
+        need(v, 3, USAGE)
         pack = await _resolve_pack(ctx, v, 2)
         if not await _packs(ctx).unpublish(channel_id=scope, pack=pack, actor_user_id=user_id):
             raise CommandError(f"{pack.name} isn't published {_where(scope)}")
@@ -538,7 +516,7 @@ async def _unpublish(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _set_status(ctx: CommandContext, v: list[str], enabled: bool) -> Result:
-    _need(v, 2)
+    need(v, 2, USAGE)
     if not _may(ctx, "publish_min_role"):
         raise CommandError("only channel moderators can do that", Code.DENIED)
     user_id, _ = _invoker(ctx)
@@ -555,7 +533,7 @@ async def _set_status(ctx: CommandContext, v: list[str], enabled: bool) -> Resul
 
 async def _grant(ctx: CommandContext, v: list[str], granted: bool) -> Result:
     """Let a published command write one exact channel variable (variable-access-matrix.md §4)."""
-    _need(v, 3)
+    need(v, 3, USAGE)
     if not _may(ctx, "grant_min_role"):
         raise CommandError("only channel moderators can grant variable writes", Code.DENIED)
     command = await _reachable_here(ctx, v[1])
@@ -581,7 +559,7 @@ async def _run(ctx: CommandContext, v: list[str], args: Args) -> Result:
     Typed in chat only. A body that could reach `cc run` would recurse past the depth and cycle
     checks preflight does for names, and `{sign}cc run` inside a body is not a thing anyone needs.
     """
-    _need(v, 2)
+    need(v, 2, USAGE)
     if ctx.exec.context is not Context.LINE:
         raise CommandError("cc run only works typed in chat")
     user_id, _ = _invoker(ctx)
@@ -675,7 +653,7 @@ _SUBCOMMANDS = {
 )
 async def cc_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     values = list(args.values)
-    _need(values, 1)
+    need(values, 1, USAGE)
     action = values[0].lower()
     handler: Any = _SUBCOMMANDS.get(action)
     if handler is not None:

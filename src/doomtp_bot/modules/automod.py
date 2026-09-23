@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from doomtp_bot.core.capabilities import MODERATE
 from doomtp_bot.moderation.automod import ACTIONS, MAX_TIMEOUT_S
-from doomtp_bot.modules._common import actor
+from doomtp_bot.modules._common import actor, policy_of
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import CommandError, Result
@@ -18,15 +18,10 @@ from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 
 if TYPE_CHECKING:
     from doomtp_bot.filters.service import FilterService
-    from doomtp_bot.policy.service import PolicyService
 
 MODULE = "core_admin"
 USAGE = "automod [off | delete | timeout [seconds] | test <text>]"
 MIN_TIMEOUT_S = 1
-
-
-def _policy(ctx: CommandContext) -> PolicyService:
-    return ctx.service("policy")  # type: ignore[no-any-return]
 
 
 def _seconds(raw: str) -> int:
@@ -64,7 +59,7 @@ def _describe(action: str, seconds: int) -> str:
     )
 )
 async def automod_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    policy = _policy(ctx)
+    policy = policy_of(ctx)
     settings = policy.channel_settings(ctx.channel.id)
     action = settings.automod_action if settings else "off"
     seconds = settings.automod_timeout_s if settings else 0
@@ -97,7 +92,7 @@ async def automod_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
 
 
 async def _write(ctx: CommandContext, field: str, value: object) -> None:
-    policy = _policy(ctx)
+    policy = policy_of(ctx)
     if policy.channel_settings(ctx.channel.id) is None:
         raise CommandError("this channel isn't set up yet")
     await policy.mutate(lambda repo: repo.set_channel_field(ctx.channel.id, field, value, actor(ctx)))

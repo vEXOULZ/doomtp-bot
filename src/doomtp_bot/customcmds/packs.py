@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from doomtp_bot.clock import now_ms
 from doomtp_bot.customcmds.service import NAME_RE, CustomCommand, CustomCommandError, CustomCommandService
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import Connection, Row, transaction
+from doomtp_bot.storage.db import Connection, Row, fetch_one, transaction
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    pass
 
 RESERVED_PACK_NAMES = frozenset({"core", "core_admin", "custom", "customcmds", "help", "basic", "variables"})
 
@@ -55,10 +55,6 @@ class PackService:
         self.commands = commands
 
     # ── reads ───────────────────────────────────────────────────────────────
-    async def _row(self, sql: str, params: Sequence[Any]) -> Row | None:
-        async with await self.conn.execute(sql, tuple(params)) as cur:
-            return await cur.fetchone()
-
     @staticmethod
     def _pack(row: Row) -> Pack:
         return Pack(
@@ -70,14 +66,15 @@ class PackService:
         )
 
     async def by_owner(self, owner_user_id: str, name: str) -> Pack | None:
-        row = await self._row(
+        row = await fetch_one(
+            self.conn,
             "SELECT * FROM custom_command_packs WHERE owner_user_id = %s AND name = %s AND status = 'active'",
             (owner_user_id, name.lower()),
         )
         return self._pack(row) if row else None
 
     async def by_id(self, pack_id: str) -> Pack | None:
-        row = await self._row("SELECT * FROM custom_command_packs WHERE id = %s", (pack_id,))
+        row = await fetch_one(self.conn, "SELECT * FROM custom_command_packs WHERE id = %s", (pack_id,))
         return self._pack(row) if row else None
 
     async def owned_by(self, owner_user_id: str) -> list[Pack]:
@@ -126,7 +123,8 @@ class PackService:
         """A command named `name` offered by a pack published here, else by one published globally."""
         select = self.commands._SELECT.replace("SELECT c.*", self._WITH_PACK, 1)
         for scope in (channel_id, GLOBAL):
-            row = await self._row(
+            row = await fetch_one(
+                self.conn,
                 f"{select}"
                 " JOIN custom_command_pack_members m ON m.command_id = c.id"
                 " JOIN custom_command_packs k ON k.id = m.pack_id"
@@ -228,7 +226,7 @@ class PackService:
                 pack.id,
                 None,
                 {"channel": channel_id, "name": pack.name},
-                channel_id=None if channel_id == GLOBAL else channel_id,
+                channel_id=channel_id,
             )
         return PackPublication(channel_id, pack.id, published_by, "active")
 
@@ -251,7 +249,7 @@ class PackService:
                     pack.id,
                     pack.name,
                     None,
-                    channel_id=None if channel_id == GLOBAL else channel_id,
+                    channel_id=channel_id,
                 )
         if cur.rowcount:
             await self.commands._grants_changed()
