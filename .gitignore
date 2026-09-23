@@ -24,3 +24,6 @@ web-editor/dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# graphify knowledge graph (built in the main checkout, see CLAUDE.md)
+graphify-out/

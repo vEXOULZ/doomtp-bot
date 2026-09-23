@@ -1,0 +1,7 @@
+# Paths graphify leaves out of the knowledge graph (gitignore syntax; .gitignore is applied too).
+
+# Committed, minified web-editor bundle: its source in web-editor/src/ is already in the graph.
+src/doomtp_bot/webui/static/editor/editor.js
+
+# Claude Code worktrees are copies of this repo.
+.claude/worktrees/
