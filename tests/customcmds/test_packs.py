@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from doomtp_bot.customcmds.packs import PackService
+from doomtp_bot.customcmds.packs import RESERVED_PACK_NAMES, PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.modules import builtin_registry
@@ -159,9 +159,16 @@ async def test_publishing_a_pack_refuses_name_clashes_and_changes_nothing(h: Har
     assert await h.say("mod", "!hit") == "mod's hit"  # unchanged
 
 
-async def test_pack_names_cannot_shadow_a_builtin_module(h: Harness) -> None:
-    refused = await h.run("alice", "!cc pack create core_admin")
+@pytest.mark.parametrize("name", ["core_admin", "triggers"])
+async def test_pack_names_cannot_shadow_a_builtin_module(h: Harness, name: str) -> None:
+    refused = await h.run("alice", f"!cc pack create {name}")
     assert refused.result.code == Code.USAGE and "built-in module" in (refused.result.message or "")
+
+
+def test_every_builtin_module_name_is_reserved() -> None:
+    # A pack's name is its module name for `!module disable`, so one named after a built-in would switch both.
+    modules = {c.spec.module for c in builtin_registry().all()}
+    assert modules - RESERVED_PACK_NAMES == set()
 
 
 async def test_pack_info_lists_members_and_where_it_runs(h: Harness) -> None:
