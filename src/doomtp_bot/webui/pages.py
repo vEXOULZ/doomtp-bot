@@ -390,6 +390,7 @@ async def admin_toggle_trigger(
         trigger_id=trigger_id,
         enabled=enabled == "on",
         actor_user_id=None,
+        via="web",
     )
     return RedirectResponse(f"/admin/channels/{login}", status_code=303)
 
@@ -402,7 +403,11 @@ async def admin_toggle_filter(
     settings = _channel_or_404(request, login)
     filters = _state(request, "filters")
     await filters.set_enabled(
-        channel_id=settings.channel_id, entry_id=entry_id, enabled=enabled == "on", actor_user_id=None
+        channel_id=settings.channel_id,
+        entry_id=entry_id,
+        enabled=enabled == "on",
+        actor_user_id=None,
+        via="web",
     )
     return RedirectResponse(f"/admin/channels/{login}", status_code=303)
 

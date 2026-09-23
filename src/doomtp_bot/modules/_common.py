@@ -34,12 +34,9 @@ def reject_filtered(ctx: CommandContext, *texts: str) -> None:
     """Text that gets stored is read out later — as a name, a usage line or a reply — so it goes through
     the channel's filter before it is saved (architecture §9, ADR-0009 item 4)."""
     filters = ctx.exec.services.get("filters")
-    if filters is None:
-        return
-    for text in texts:
-        hits = filters.rejects(ctx.channel.id, text)
-        if hits:
-            raise CommandError(f"the filter rejects that: {', '.join(hits)}")
+    hits = filters.rejects_any(ctx.channel.id, *texts) if filters is not None else []
+    if hits:
+        raise CommandError(f"the filter rejects that: {', '.join(hits)}")
 
 
 def actor(ctx: CommandContext) -> Actor:

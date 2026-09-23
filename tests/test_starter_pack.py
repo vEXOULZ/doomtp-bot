@@ -51,7 +51,7 @@ async def test_installing_again_changes_nothing(h: Harness) -> None:  # noqa: F8
 
     changed = await h.service.by_owner(OWNER["id"], "lurk")
     assert changed is not None
-    await h.service.edit(changed, "echo drifted")
+    await h.service.edit(changed, "echo drifted", channel_id=GLOBAL, prefix="!")
 
     assert await _install(h, dry_run=True) == ["edit lurk"]
     assert await h.say("alice", "!lurk") == "drifted"  # the dry run really didn't touch it

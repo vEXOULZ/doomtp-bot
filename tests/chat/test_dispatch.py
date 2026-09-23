@@ -272,14 +272,19 @@ async def test_default_emoji_prefix_with_or_without_a_space(h: Harness) -> None:
 async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Harness) -> None:
     """ADR-0009: edits are live, so a channel can ask to hear about them as they land."""
     created = await h.commands.create(
-        owner_user_id=USERS["alice"], owner_login="alice", name="hi", body="echo one"
+        owner_user_id=USERS["alice"],
+        owner_login="alice",
+        name="hi",
+        body="echo one",
+        channel_id=CHANNEL_ID,
+        prefix="!",
     )
     await h.commands.publish(channel_id=CHANNEL_ID, name="hi", command=created, published_by="1")
     await h.say("bob", "!hi")
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent] == ["one"]
 
-    edited = await h.commands.edit(created, "echo two")
+    edited = await h.commands.edit(created, "echo two", channel_id=CHANNEL_ID, prefix="!")
     await h.say("bob", "!hi")
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent] == ["one", "two"]  # the notice is off by default
@@ -287,7 +292,7 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
     await h.policy.mutate(
         lambda repo: repo.set_channel_field(CHANNEL_ID, "cc_edit_notice", True, Actor(None, "system"))
     )
-    await h.commands.edit(edited, "echo three")
+    await h.commands.edit(edited, "echo three", channel_id=CHANNEL_ID, prefix="!")
     await h.say("bob", "!hi")
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent][-2:] == [

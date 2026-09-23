@@ -126,30 +126,39 @@ async def service(dbs: Databases) -> AsyncIterator[FilterService]:
 
 
 async def test_entries_are_stored_audited_and_applied(service: FilterService, dbs: Databases) -> None:
-    added = await service.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300")
+    added = await service.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300", via="chat")
     assert service.apply(CHANNEL, "you bad person") == ("you *** person", ["bad"])
 
     async with await dbs.bot.execute("SELECT action, target FROM audit_log") as cur:
         assert [tuple(r.values()) for r in await cur.fetchall()] == [("filter.add", "bad")]
 
     assert await service.set_enabled(
-        channel_id=CHANNEL, entry_id=added.id, enabled=False, actor_user_id="300"
+        channel_id=CHANNEL, entry_id=added.id, enabled=False, actor_user_id="300", via="chat"
     )
     assert service.apply(CHANNEL, "you bad person") == ("you bad person", [])
-    assert await service.remove(channel_id=CHANNEL, entry_id=added.id, actor_user_id="300")
+    assert await service.remove(channel_id=CHANNEL, entry_id=added.id, actor_user_id="300", via="chat")
     assert service.entries_for(CHANNEL) == []
 
 
 async def test_global_entries_apply_in_every_channel(service: FilterService) -> None:
-    await service.add(channel_id=GLOBAL, pattern="bad", actor_user_id="1")
+    await service.add(channel_id=GLOBAL, pattern="bad", actor_user_id="1", via="chat")
     assert service.apply("999", "so bad")[0] == "so ***"
     assert service.apply(CHANNEL, "so bad")[0] == "so ***"
 
 
 async def test_rejects_reports_what_would_be_censored(service: FilterService) -> None:
-    await service.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300")
+    await service.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300", via="chat")
     assert service.rejects(CHANNEL, "a bad name") == ["bad"]
     assert service.rejects(CHANNEL, "a fine name") == []
+
+
+async def test_unknown_kinds_and_actions_are_refused_whoever_asks(service: FilterService) -> None:
+    """The chat handler used to be the only thing that checked these; the service now does, for every caller."""
+    with pytest.raises(FilterError, match="kind must be one of"):
+        await service.add(channel_id=CHANNEL, pattern="bad", kind="nope", actor_user_id=None, via="api")  # type: ignore[arg-type]
+    with pytest.raises(FilterError, match="action must be one of"):
+        await service.add(channel_id=CHANNEL, pattern="bad", action="nope", actor_user_id=None, via="api")  # type: ignore[arg-type]
+    assert service.entries_for(CHANNEL) == []
 
 
 # ── end to end: the bot's own output and what users store ──────────────────
@@ -171,14 +180,14 @@ async def test_the_filter_censors_what_the_bot_says(dbs: Databases) -> None:
 
     filters = FilterService(dbs.bot)
     await filters.reload()
-    await filters.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300")
+    await filters.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300", via="chat")
     outbox = Outbox(Sender(), Log(), content_filter=filters.apply)
 
     await outbox.send(CHANNEL, "that was bad")
     assert sent == ["that was ***"]
     assert logged[0]["text_prefilter"] == "that was bad" and logged[0]["filter_hits"] == ["bad"]
 
-    await filters.add(channel_id=CHANNEL, pattern="worse", action="block", actor_user_id="300")
+    await filters.add(channel_id=CHANNEL, pattern="worse", action="block", actor_user_id="300", via="chat")
     results = await outbox.send(CHANNEL, "this is worse")
     assert results[0].dropped_reason == "filter_block" and sent == ["that was ***"]
     assert logged[-1]["dropped_reason"] == "filter_block"
@@ -204,11 +213,11 @@ async def test_the_filter_rejects_stored_content(dbs: Databases) -> None:
     store = PostgresVariableStore(dbs.bot)
     access = VariableAccessPolicy(policy, dbs.bot)
     await access.reload()
-    commands = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
-    packs = PackService(dbs.bot, commands)
     filters = FilterService(dbs.bot)
     await filters.reload()
-    await filters.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300")
+    commands = CustomCommandService(dbs.bot, on_grants_changed=access.reload, filters=filters)
+    packs = PackService(dbs.bot, commands)
+    await filters.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300", via="chat")
     runtime = Runtime(
         builtin_registry(),
         policy=policy,

@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import Context, parse
-from doomtp_bot.modules._common import need, rank, reject_filtered
+from doomtp_bot.modules._common import need, rank
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import CommandError, Result
@@ -20,7 +18,6 @@ from doomtp_bot.triggers.service import (
     REQUIRED_CAPABILITY,
     TRIGGER_TYPES,
     TriggerError,
-    compile_listener,
     parse_every,
 )
 
@@ -42,15 +39,6 @@ TIMER_USAGE = (
 
 def _service(ctx: CommandContext) -> TriggerService:
     return ctx.service("triggers")  # type: ignore[no-any-return]
-
-
-def _check_expression(ctx: CommandContext, expr: str, context: Context) -> None:
-    runtime = ctx.service("runtime")
-    try:
-        parse(expr, context, runtime.parser_params(ctx.channel.prefix))
-    except ParseError as exc:
-        raise CommandError(str(exc)) from exc
-    reject_filtered(ctx, expr)
 
 
 def _describe(trigger: Trigger) -> str:
@@ -80,13 +68,17 @@ async def _remove_or_toggle(ctx: CommandContext, action: str, values: list[str],
     entry_id = int(values[1])
     if action == "rm":
         removed = await _service(ctx).remove(
-            channel_id=ctx.channel.id, trigger_id=entry_id, actor_user_id=actor
+            channel_id=ctx.channel.id, trigger_id=entry_id, actor_user_id=actor, via="chat"
         )
         if not removed:
             raise CommandError(f"no entry {entry_id} here")
         return Result.success(f"removed {entry_id}")
     changed = await _service(ctx).set_enabled(
-        channel_id=ctx.channel.id, trigger_id=entry_id, enabled=action == "on", actor_user_id=actor
+        channel_id=ctx.channel.id,
+        trigger_id=entry_id,
+        enabled=action == "on",
+        actor_user_id=actor,
+        via="chat",
     )
     if not changed:
         raise CommandError(f"no entry {entry_id} here")
@@ -129,17 +121,11 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         if not separator or not body.strip():
             raise CommandError(f"usage: {TRIGGER_USAGE}")
         type_, match["regex"], expr = "listener", pattern.strip(), body.strip()
-        try:
-            compile_listener(match["regex"])
-        except TriggerError as exc:
-            raise CommandError(str(exc)) from exc
-        _check_expression(ctx, expr, Context.LISTENER)
     elif action == "add":
         need(values, 2, TRIGGER_USAGE)
         type_ = values[1].lower()
         if type_ not in TRIGGER_TYPES or type_ in ("listener", "timer"):
             raise CommandError(f"usage: {TRIGGER_USAGE}")
-        _check_expression(ctx, expr, Context.TRIGGER)
     else:
         raise CommandError(f"usage: {TRIGGER_USAGE}")
 
@@ -151,6 +137,8 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
             match=match,
             run_as_rank=rank(ctx),  # never above the moderator who created it
             created_by=ctx.invoker.id if ctx.invoker else None,
+            prefix=ctx.channel.prefix,
+            via="chat",
         )
     except TriggerError as exc:
         raise CommandError(str(exc)) from exc
@@ -218,7 +206,6 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
     expr = " ".join(expr_words)
     if not expr:
         raise CommandError(f"usage: {TIMER_USAGE}")
-    _check_expression(ctx, expr, Context.TRIGGER)
     try:
         created = await _service(ctx).add(
             channel_id=ctx.channel.id,
@@ -227,6 +214,8 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
             schedule=schedule,
             run_as_rank=rank(ctx),
             created_by=ctx.invoker.id if ctx.invoker else None,
+            prefix=ctx.channel.prefix,
+            via="chat",
         )
     except TriggerError as exc:
         raise CommandError(str(exc)) from exc
@@ -241,7 +230,6 @@ async def _add_cron(ctx: CommandContext, args: Args, values: list[str]) -> Resul
     if not separator or not expr.strip():
         raise CommandError(f"usage: {TIMER_USAGE}")
     expr = expr.strip()
-    _check_expression(ctx, expr, Context.TRIGGER)
     try:
         created = await _service(ctx).add(
             channel_id=ctx.channel.id,
@@ -250,6 +238,8 @@ async def _add_cron(ctx: CommandContext, args: Args, values: list[str]) -> Resul
             schedule={"cron": schedule_text.strip()},
             run_as_rank=rank(ctx),
             created_by=ctx.invoker.id if ctx.invoker else None,
+            prefix=ctx.channel.prefix,
+            via="chat",
         )
     except TriggerError as exc:
         raise CommandError(str(exc)) from exc
