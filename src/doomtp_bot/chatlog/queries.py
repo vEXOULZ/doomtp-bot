@@ -33,8 +33,12 @@ async def search_messages(
     *,
     limit: int = 50,
     visible_only: bool = False,
+    user_login: str | None = None,
 ) -> list[dict[str, Any]]:
-    """The newest messages in `channel_id` matching `query`, newest first."""
-    sql = _SEARCH + (_VISIBLE if visible_only else "") + " ORDER BY m.sent_at DESC LIMIT %s"
-    async with await conn.execute(sql, (query[:MAX_QUERY_CHARS], channel_id, limit)) as cur:
+    """The newest messages in `channel_id` matching `query`, newest first, optionally by one chatter."""
+    sql = _SEARCH + (_VISIBLE if visible_only else "") + (" AND m.user_login = %s" if user_login else "")
+    params: tuple[Any, ...] = (query[:MAX_QUERY_CHARS], channel_id)
+    if user_login:
+        params += (user_login.lower(),)
+    async with await conn.execute(sql + " ORDER BY m.sent_at DESC LIMIT %s", (*params, limit)) as cur:
         return [dict(row) for row in await cur.fetchall()]
