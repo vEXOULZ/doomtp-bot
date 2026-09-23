@@ -19,7 +19,7 @@ from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
 from doomtp_bot.runtime.values import MISSING, descend, render
-from doomtp_bot.runtime.variables import Space, VarKey, WriteOp, key_for
+from doomtp_bot.runtime.variables import ANY, Space, VarKey, WriteOp, key_for
 
 if TYPE_CHECKING:
     from doomtp_bot.variables.store import PostgresVariableStore
@@ -86,6 +86,9 @@ def _store(ctx: CommandContext) -> PostgresVariableStore:
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=3)},
         log_level=LogLevel.INVOCATIONS,
+        # The documented exception (variable-access-matrix.md §2): the variable is its argument.
+        reads=(ANY,),
+        writes=(ANY,),
     )
 )
 async def var_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:

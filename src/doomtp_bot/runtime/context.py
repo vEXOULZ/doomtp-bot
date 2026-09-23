@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context
 from doomtp_bot.runtime.values import UserResolver
+from doomtp_bot.runtime.variables import ANY, DeclaredVariables
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.result import Result
+    from doomtp_bot.runtime.spec import CommandSpec
     from doomtp_bot.runtime.variables import VariableSession
 
 
@@ -135,6 +137,7 @@ class CommandContext:
     exec: ExecContext
     name: str
     prev: Result | None = None  # the Result visible as {_} (spec §6.4)
+    spec: CommandSpec | None = None  # the built-in running; its reads/writes bound `variables`
 
     @property
     def channel(self) -> ChannelInfo:
@@ -149,8 +152,11 @@ class CommandContext:
         return self.exec.rng
 
     @property
-    def variables(self) -> VariableSession:
-        return self.exec.variables
+    def variables(self) -> DeclaredVariables:
+        """The run's variables, limited to what this command's spec declares (architecture §4.2)."""
+        if self.spec is None:
+            return DeclaredVariables(self.exec.variables, self.name, (ANY,), (ANY,))
+        return DeclaredVariables(self.exec.variables, self.spec.name, self.spec.reads, self.spec.writes)
 
     def ensure_not_cancelled(self) -> None:
         self.exec.ensure_not_cancelled()

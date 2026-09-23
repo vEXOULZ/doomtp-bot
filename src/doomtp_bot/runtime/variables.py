@@ -193,6 +193,45 @@ class VariableSession:
         return ops
 
 
+ANY = "*"  # declares every variable; only `!var`, the documented exception, may (architecture §4.2)
+
+
+class DeclaredVariables:
+    """A built-in's view of the run's variables: only what its spec declares in `reads` and `writes`.
+
+    Declarations are `namespace.name`, e.g. `chatter.location`. Anything else fails the command with 126,
+    so what the docs and `!explain` say a command touches is all it can touch (architecture §4.2).
+    Expression stores (`> channel.x`) and placeholders are not a command's own reads and writes: the
+    access policy governs those.
+    """
+
+    def __init__(
+        self, session: VariableSession, command: str, reads: tuple[str, ...], writes: tuple[str, ...]
+    ) -> None:
+        self.session = session
+        self.command = command
+        self.reads = frozenset(reads) | frozenset(writes)  # a command reads what it is about to change
+        self.writes = frozenset(writes)
+
+    @property
+    def access(self) -> VariableAccess:
+        return self.session.access
+
+    async def get(self, key: VarKey) -> Any:
+        self._check(key, self.reads, "read")
+        return await self.session.get(key)
+
+    async def buffer(self, op: WriteOp) -> Any:
+        self._check(op.key, self.writes, "write")
+        return await self.session.buffer(op)
+
+    def _check(self, key: VarKey, declared: frozenset[str], verb: str) -> None:
+        if ANY not in declared and key.label() not in declared:
+            raise VariableError(
+                Code.DENIED, f"{self.command} may not {verb} {key.label()}: its spec doesn't declare it"
+            )
+
+
 class InMemoryVariableStore:
     """Process-local store for tests and for running without a database."""
 

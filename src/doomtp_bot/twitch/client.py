@@ -28,6 +28,13 @@ log = structlog.get_logger(__name__)
 EventSink = Callable[[Event], Awaitable[None]]
 DEDUPE_SIZE = 2000
 USER_CACHE_SIZE = 5000
+# Why Helix Send a Shoutout said no, in words a moderator can act on.
+SHOUTOUT_REFUSALS = {
+    400: "Twitch only sends a shoutout while the channel is live",
+    401: "the bot's sign-in predates the shoutout permission: sign the bot in again at /auth/login",
+    403: "the bot isn't a moderator here",
+    429: "Twitch allows one shoutout every 2 minutes, and the same streamer once an hour",
+}
 
 CHAT_SUBSCRIPTIONS: tuple[type[Any], ...] = (
     eventsub.ChatMessageSubscription,
@@ -330,6 +337,30 @@ class TwitchService:
             log.warning("twitch.timeout_failed", channel=channel_id, user=user_id, error=repr(exc))
             return False
         return True
+
+    async def shoutout(self, channel_id: str, to_user_id: str) -> str | None:
+        """Twitch's own Shoutout card (Helix Send a Shoutout), as the bot. None if sent, else why not."""
+        if self.client is None or self.bot_id is None:
+            return "not connected to Twitch"
+        try:
+            await self.client.create_partialuser(channel_id).send_shoutout(
+                to_broadcaster=to_user_id, moderator=self.bot_id, token_for=self.bot_id
+            )
+        except twitchio.HTTPException as exc:
+            log.warning("twitch.shoutout_failed", channel=channel_id, status=exc.status)
+            return SHOUTOUT_REFUSALS.get(exc.status, f"Twitch answered {exc.status}")
+        return None
+
+    async def last_game(self, user_id: str) -> str | None:
+        """What a channel last streamed (Helix Get Channel Information), or None if unknown."""
+        if self.client is None:
+            return None
+        try:
+            found = await self.client.fetch_channels([user_id], token_for=self.bot_id)
+        except Exception as exc:
+            log.warning("twitch.channel_info_failed", user=user_id, error=repr(exc))
+            return None
+        return (found[0].game_name or None) if found else None
 
     async def fetch_live(self, channel_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
         """Helix `Get Streams` for up to 100 channels (ADR-0007). Raises if the request fails."""

@@ -235,6 +235,13 @@ is still working, the run is cancelled and nothing is sent. The check runs befor
 side effect, and again immediately before sending. A channel can add
 <code>reply_hold_ms</code> to delay replies slightly, giving moderators a moment to act first.</p>
 
+<h3>Acting as the bot</h3>
+<pre>{{ p }}timeout @spammer 1h links again   # the reason shows who asked
+{{ p }}shoutout @friend                  # where to find them, and Twitch's card while live</pre>
+<p>Both are for moderators and need the bot to be a moderator in the channel. They act when their stage
+runs, and the moderation check comes right before Twitch is asked. Nobody at or above your own rank can be
+timed out this way, and <code>{{ p }}explain --run</code> never runs either.</p>
+
 <h2 id="logging">Chat log and history</h2>
 <p>Every message is written to a searchable log (full-text). <strong>Nothing is ever deleted:</strong> a
 deleted message keeps its row and gains a deletion time, so the record of what happened stays honest.

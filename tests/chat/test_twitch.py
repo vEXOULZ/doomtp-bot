@@ -131,6 +131,34 @@ async def test_a_403_on_send_is_reported_as_a_ban_and_other_errors_still_raise()
         await service.send_chat("100", "hi", None)
 
 
+async def test_a_refused_shoutout_says_why_in_words_a_moderator_can_act_on() -> None:
+    import twitchio
+
+    calls: list[dict[str, Any]] = []
+
+    class Channel:
+        def __init__(self, status: int | None) -> None:
+            self.status = status
+
+        async def send_shoutout(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+            if self.status is not None:
+                raise twitchio.HTTPException("refused", status=self.status, extra="no")
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=None)  # type: ignore[arg-type]
+    assert await service.shoutout("100", "600") == "not connected to Twitch"
+    service.bot_id = "999"
+    service.client = NS(create_partialuser=lambda channel_id: Channel(None))  # type: ignore[assignment]
+    assert await service.shoutout("100", "600") is None
+    assert calls == [{"to_broadcaster": "600", "moderator": "999", "token_for": "999"}]
+    service.client = NS(create_partialuser=lambda channel_id: Channel(429))  # type: ignore[assignment]
+    assert "one shoutout every 2 minutes" in (await service.shoutout("100", "600") or "")
+    service.client = NS(create_partialuser=lambda channel_id: Channel(401))  # type: ignore[assignment]
+    assert "sign the bot in again" in (await service.shoutout("100", "600") or "")
+    service.client = NS(create_partialuser=lambda channel_id: Channel(418))  # type: ignore[assignment]
+    assert await service.shoutout("100", "600") == "Twitch answered 418"
+
+
 # ── OAuth ──────────────────────────────────────────────────────────────────
 class FakeOAuthHttp:
     def __init__(self, scopes: list[str] | None = None) -> None:
