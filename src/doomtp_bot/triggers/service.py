@@ -21,12 +21,14 @@ from doomtp_bot.core import capabilities
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
+from doomtp_bot.patterns import PatternError, compile_pattern, search
 from doomtp_bot.runtime.spec import LogLevel
 from doomtp_bot.storage.db import Connection, fetch_value, transaction
 from doomtp_bot.triggers.cron import Cron, CronError, parse_cron
 
 if TYPE_CHECKING:
     from doomtp_bot.filters.service import FilterService
+    from doomtp_bot.patterns import Pattern
 
 log = structlog.get_logger(__name__)
 
@@ -102,19 +104,20 @@ def parse_every(text: str) -> int:
     return seconds
 
 
-def compile_listener(pattern: str) -> re.Pattern[str]:
+def compile_listener(pattern: str) -> Pattern:
     """Compile a listener regex, refusing what is too long or invalid (architecture §7)."""
     if not pattern or len(pattern) > MAX_REGEX_CHARS:
         raise TriggerError(f"listener patterns must be 1–{MAX_REGEX_CHARS} characters")
     try:
-        return re.compile(pattern, re.IGNORECASE)
-    except re.error as exc:
+        return compile_pattern(pattern)
+    except PatternError as exc:
         raise TriggerError(f"invalid regex: {exc}") from exc
 
 
-def match_fields(pattern: re.Pattern[str], text: str) -> dict[str, Any] | None:
-    """`{match.1}`, `{match.name}` and `{match.0}` for a listener hit, or None if it doesn't match."""
-    found = pattern.search(text)
+def match_fields(pattern: Pattern, text: str) -> dict[str, Any] | None:
+    """`{match.1}`, `{match.name}` and `{match.0}` for a listener hit, or None if it doesn't match (or
+    gives up: see `doomtp_bot.patterns`)."""
+    found = search(pattern, text)
     if found is None:
         return None
     fields: dict[str, Any] = {"0": found.group(0)}
@@ -134,12 +137,12 @@ class TriggerService:
         # The runtime's parser settings, wired in once it exists; until then, the parser's own defaults.
         self.parser_params: Callable[[str], ParserParams] = lambda prefix: ParserParams(prefix=prefix)
         self._by_channel: dict[str, list[Trigger]] = {}
-        self._listeners: dict[int, re.Pattern[str]] = {}
+        self._listeners: dict[int, Pattern] = {}
         self._crons: dict[int, Cron] = {}
 
     async def reload(self) -> None:
         by_channel: dict[str, list[Trigger]] = {}
-        listeners: dict[int, re.Pattern[str]] = {}
+        listeners: dict[int, Pattern] = {}
         crons: dict[int, Cron] = {}
         async with await self.conn.execute("SELECT * FROM triggers ORDER BY id") as cur:
             for row in await cur.fetchall():

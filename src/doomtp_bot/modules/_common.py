@@ -17,7 +17,11 @@ if TYPE_CHECKING:
 
 
 def rank(ctx: CommandContext) -> int:
-    return ctx.invoker.rank if ctx.invoker else 0
+    """How far the person behind this run reaches. Inside a trigger (and any custom command it calls) that
+    is capped at the trigger's rank, so a trigger never hands out more than it was given (architecture §7)."""
+    own = ctx.invoker.rank if ctx.invoker else 0
+    capped = ctx.exec.run_as_rank
+    return own if capped is None else min(own, capped)
 
 
 def policy_of(ctx: CommandContext) -> PolicyService:

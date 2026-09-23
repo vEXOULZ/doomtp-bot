@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 
 import pytest
@@ -115,6 +116,19 @@ def test_disabled_entries_are_ignored() -> None:
 def test_several_hits_in_one_message() -> None:
     entries = [entry("bad"), entry("worse", id=2, action="replace", replacement="ok")]
     assert censor(entries, "bad and worse") == "*** and ok"
+
+
+# Under `re` each of these backtracks for seconds on these lines, and for hours a few characters later,
+# with the event loop, and so every channel, stalled until it's done.
+@pytest.mark.parametrize(
+    ("pattern", "kind", "line"),
+    [("(a|aa)+$", "regex", "a" * 34 + "!"), ("ab*ab*ab*z", "wildcard", "ab " * 80)],
+)
+def test_a_catastrophic_pattern_gives_up_instead_of_stalling(pattern: str, kind: str, line: str) -> None:
+    entries = [entry(pattern, kind=kind), entry("bad", id=2)]
+    started = time.perf_counter()
+    assert censor(entries, line + " bad") == line + " ***"  # the rest of the list still applies
+    assert time.perf_counter() - started < 1
 
 
 # ── the service, against the database ──────────────────────────────────────
