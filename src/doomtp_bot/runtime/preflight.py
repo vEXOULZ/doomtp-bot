@@ -25,7 +25,6 @@ from doomtp_bot.lang.ast import (
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.context import Publisher
 from doomtp_bot.runtime.namespaces import VarPath, classify, is_reserved_var_name, root_available
-from doomtp_bot.runtime.policy import Decision
 from doomtp_bot.runtime.result import Code, Result, error_result
 from doomtp_bot.runtime.spec import InputMode
 from doomtp_bot.runtime.variables import VAR_NAME_RE, VariableError, key_for
@@ -49,7 +48,6 @@ class Preflight:
     result: Result | None = None
     failed_index: int | None = None
     failed_name: str | None = None
-    decision: Decision | None = None
 
 
 def stdin_receivers(node: Node) -> set[int]:
@@ -133,10 +131,8 @@ def preflight(
     outcome = Preflight(ok=True)
     counted = 0
 
-    def fail(
-        index: int | None, name: str | None, result: Result, decision: Decision | None = None
-    ) -> Preflight:
-        return Preflight(False, outcome.resolved, outcome.bodies, result, index, name, decision)
+    def fail(index: int | None, name: str | None, result: Result) -> Preflight:
+        return Preflight(False, outcome.resolved, outcome.bodies, result, index, name)
 
     def check_invocation(
         inv: Invocation,
@@ -161,7 +157,7 @@ def preflight(
         decision = policy.check(here, spec)
         if not decision.allowed:
             message = "permission denied" if decision.code == Code.DENIED else f"unknown command: {inv.name}"
-            return fail(inv.index, inv.name, Result.failure(decision.code, message), decision)
+            return fail(inv.index, inv.name, Result.failure(decision.code, message, dict(decision.info)))
         if spec.input is InputMode.NONE and inv.index in receives_stdin:
             return fail(
                 inv.index,
@@ -223,16 +219,11 @@ def preflight(
         except VariableError as exc:
             return fail(None, None, exc.result())
         if not access.can_write(here, target.namespace, target.name):
+            variable = f"{target.namespace}.{target.name}"
             return fail(
                 None,
                 None,
-                Result.failure(Code.DENIED, f"not allowed to write {target.namespace}.{target.name}"),
-                Decision(
-                    False,
-                    Code.DENIED,
-                    "variable write denied",
-                    {"variable": f"{target.namespace}.{target.name}"},
-                ),
+                Result.failure(Code.DENIED, f"not allowed to write {variable}", {"variable": variable}),
             )
         return None
 

@@ -32,18 +32,20 @@ class Policy(Protocol):
         """Preflight: toggles, capabilities, permission — in that order.
 
         Not cooldowns: since spec 1.1 those are the individual invocation's runtime failure, so `||` can
-        handle them and a branch that never runs never trips one. See `claim_cooldown`.
+        handle them and a branch that never runs never trips one. See `check_cooldown`.
         """
 
     def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
         """Toggles + capabilities + permission only (used for parse-error visibility, !help)."""
 
-    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec, *, commit: bool = True) -> Decision:
-        """Runtime (spec §6.3): refuse with 128 if either bucket is still running, otherwise start both.
+    def check_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+        """Runtime (spec §5.2): refuse with 128 if either bucket is still running. Only looks."""
+
+    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+        """Runtime (spec §6.3): refuse like `check_cooldown`, otherwise start both buckets.
 
         Checking and starting are one synchronous step, so two runs racing for a shared bucket can't both
-        get through. With `commit=False` it only looks — a dry run (spec §9), or the early check the
-        executor makes before expanding arguments.
+        get through.
         """
 
 
@@ -54,5 +56,8 @@ class AllowAllPolicy:
     def is_permitted(self, ctx: ExecContext, spec: CommandSpec) -> bool:
         return True
 
-    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec, *, commit: bool = True) -> Decision:
+    def check_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
+        return Decision.allow()
+
+    def claim_cooldown(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
         return Decision.allow()
