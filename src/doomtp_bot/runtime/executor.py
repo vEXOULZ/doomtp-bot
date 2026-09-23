@@ -187,13 +187,20 @@ class Executor:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
             args = Args(values, params, inv.raw_tail)
-            cmd_ctx = CommandContext(ctx, inv.name, prev)
+            cmd_ctx = CommandContext(ctx, inv.name, prev, spec)
             try:
                 async with asyncio.timeout(self.stage_timeout):
                     if resolved.custom is not None:
                         result = await self._run_body(resolved, inv, ctx, scope, values, params, stdin)
+                    elif spec.side_effects and ctx.dry_run:
+                        # It would act on Twitch, and `!explain --run` changes nothing (spec §9).
+                        result = Result.success("", {"not_run": f"{inv.name} acts on Twitch"})
                     else:
                         assert resolved.handler is not None
+                        if spec.side_effects:
+                            # Its stage, not the end of the run, is when it acts, so the moderation index
+                            # gets a last say after the arguments were expanded (architecture §4.3).
+                            ctx.ensure_not_cancelled()
                         result = await resolved.handler(cmd_ctx, args, stdin)
                 # 100–255 are runtime-reserved (spec §6.2); commands must not *return* them. A handler can
                 # still raise CommandError(code=126/128) for a denial the runtime owns.

@@ -59,7 +59,7 @@ Notes:
 - **Foreign CC (link) and `publisher.channel.*`** *(decided)*: a personally linked command can use channel-game state **in any channel**, even where it isn't published. The data stays inside the owner's space for that channel.
 - **Trigger and `publisher.*`** *(decided)*: denied in the trigger's own expression. A trigger that calls a published custom command runs *that command* as a Foreign CC (pub), with that command's access.
 - **Trigger and `chatter.x` writes** *(decided)*: denied. A redemption can't change a viewer's global preferences. `channel.chatter.x` is the place for per-viewer state from events.
-- **Built-ins** only get what their spec lists in `reads` and `writes`. `!var` is the exception, because it's a built-in acting *as the typed expression* and follows the Typed column. *(`reads`/`writes` are declarations today; nothing enforces them yet — architecture §4.2.)*
+- **Built-ins** only get what their spec lists in `reads` and `writes`, as `namespace.name`; anything else fails the command with code 126 (architecture §4.2). `!var` is the exception, because it's a built-in acting *as the typed expression* and follows the Typed column: its spec declares `*`, and a test keeps it the only one that does.
 - A denied `!var` write or delete fails with **code 126**, so it is silent and runs the `on_denied` callback, like every other denial (spec §6.6).
 
 ## 4. Grants

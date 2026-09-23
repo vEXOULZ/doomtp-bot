@@ -43,6 +43,7 @@ BOT_SCOPES: tuple[str, ...] = (
     "moderator:read:followers",
     "moderator:manage:banned_users",
     "moderator:manage:chat_messages",
+    "moderator:manage:shoutouts",
 )
 STATE_TTL_S = 600
 

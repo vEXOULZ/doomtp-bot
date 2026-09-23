@@ -62,9 +62,9 @@ A type is either **declared once** in the command's parameter definition, or giv
 
 | Namespace | Keyed by | Read | Write |
 |-----------|----------|------|-------|
-| `{chatter.x}` | user (global, all channels) | any pipeline (invoker's row) | invoker's own pipelines (typed by them, or their own custom commands) and built-ins |
+| `{chatter.x}` | user (global, all channels) | any pipeline (invoker's row) | invoker's own pipelines (typed by them, or their own custom commands) and built-ins declaring the write |
 | `{channel.x}` | channel | anyone in the channel | invoker rank ≥ `channel_var_write_role` (default: moderator), built-ins declaring the write, or a publication with a **write grant** (ADR-0010) |
-| `{channel.chatter.x}` | channel + user | anyone in the channel (e.g. leaderboards) | invoker's own pipelines, built-ins, publications with a write grant |
+| `{channel.chatter.x}` | channel + user | anyone in the channel (e.g. leaderboards) | invoker's own pipelines, built-ins declaring the write, publications with a write grant |
 | `{publisher.x}` | owner of the running custom command | only inside that owner's custom commands | same as read |
 | `{publisher.chatter.x}` | owner of the running custom command + invoker | only inside that owner's custom commands | same as read |
 | `{publisher.channel.x}` | owner + current channel | only inside that owner's custom commands (channel games, per-channel state) | same as read |

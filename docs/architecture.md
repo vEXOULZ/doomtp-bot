@@ -315,7 +315,8 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 
 - **Usage strings, `!help`, the `/api/v1/commands` JSON and the public docs page are all generated** from these specs.
 - **No spec hard-codes a command sign.** Every channel picks its own, so summary, description, param and example text writes `{sign}` (`runtime.spec.SIGN`) and whoever shows it substitutes the sign that reader types — the channel's in chat, the default on the docs page. Chat messages built by a handler use `ctx.channel.prefix`, or `sign_of(ctx, channel_id)` when they name another channel. A test walks the registry and fails on a literal `!command` in spec text.
-- `reads`, `writes` and `side_effects` are **declarations used for documentation and `!explain`**. They are not enforced yet: today only `!var` writes variables, and it is the documented exception (variable-access-matrix.md §2). Enforcement arrives with the first other built-in that writes.
+- `reads` and `writes` are **enforced**. A handler reaches variables only through `ctx.variables`, which lets it read and write the `namespace.name` keys its spec declares (a declared write is also a read) and fails anything else with code 126. `!var` declares `*`, because the variable is its argument: it is the documented exception (variable-access-matrix.md §2), and a test fails if any other built-in declares `*` or reaches round `ctx.variables`. Expression stores (`> channel.x`) and placeholders are the expression's, not the command's, and the access policy governs those. *(Changed in revision 5: these used to be declarations only.)*
+- `side_effects=True` marks a command that acts on Twitch (§4.3). The runtime checks the moderation index once more right before running it, after its arguments were expanded, and `!explain --run` never runs it.
 - Custom commands carry the same metadata (summary, params, examples), written by their owner.
 - `!help` filters by the **effective policy** for the caller in that channel. `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
 
@@ -330,7 +331,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 | Arguments | Declared param types and inline `{arg.N:type}` are validated before the body runs. Failure returns code 2 with generated usage text. |
 | Re-entrancy | Output is never parsed as a command. The bot ignores its own messages. |
 | Variable writes | Buffered per run. They commit atomically at the end if the run was not cancelled, **including when the final code is non-zero** (e.g. `!counter +1 && !fail`). |
-| Side-effect commands | Commands such as `!timeout`, `!shoutout` and Helix writes run at the time of their stage. Right before running, they check the moderation index. |
+| Side-effect commands | `!timeout` and `!shoutout` (`modules/moderation.py`, `side_effects=True`) act on Twitch at the time of their stage, not at the end of the run. The runtime checks the moderation index right before running them, and each handler checks again right before its Helix call, since looking the target up takes a moment. They need the `moderate` capability. `!explain --run` reports them as not run. |
 
 ### 4.4 `!explain <expr>`
 
@@ -549,7 +550,7 @@ A **race window** remains: a mod can act after the message has already been sent
 | Tier | How the channel gets it | What works |
 |------|-------------------------|------------|
 | **basic** | A bot owner or admin runs `!join <channel>`, or the broadcaster types `!join` in the bot's own channel. **No broadcaster OAuth.** | Chat, deletes, clears and chat notifications (subs, resubs, gifts, raids, announcements), reading and sending chat, commands, the log, variables and custom commands. Stream online/offline comes from Helix polling (see ADR-0007). |
-| **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why) and the `automod` module |
+| **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why), the `automod` module and the `moderation` module (`!timeout`, `!shoutout`) |
 | **full** | The broadcaster completes OAuth at `/auth/connect` | Everything in moderator, plus channel point redemptions, subscription and cheer event details, the chat bot badge (`channel:bot`) and other broadcaster-scoped features |
 
 - The **CapabilityProbe** runs at join and hourly, and updates `channels.capabilities` and `channels.tier`. It measures mod status by *asking for* the moderator-only `channel.follow` subscription: no endpoint tells the bot's own token whether it is a mod without a scope the broadcaster would have to grant anyway, and that subscription is what a follow trigger needs in any case. What the broadcaster granted (redemptions, subs, bits) is never taken away by a probe — only the broadcaster flow (ADR-0007 item 5) sets it.
@@ -636,6 +637,7 @@ src/doomtp_bot/
 ├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔  ·  repos/
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
+│               moderation.py                                              ✔ timeout, shoutout (§4.3)
 │                                                                          ·  weather, quotes, logsearch…
 ├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
 └─ api/         app.py keys.py routes/ (health auth language data)         ✔
