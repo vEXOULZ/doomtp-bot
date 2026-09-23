@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -107,6 +108,14 @@ def test_listener_patterns_are_limited() -> None:
         compile_listener("x" * 201)
     with pytest.raises(TriggerError, match="invalid regex"):
         compile_listener("(unclosed")
+
+
+def test_a_catastrophic_listener_gives_up_instead_of_stalling() -> None:
+    # Under `re` this takes seconds, and hours a few characters later, with the whole bot stalled meanwhile.
+    pattern = compile_listener("(a|aa)+$")
+    started = time.perf_counter()
+    assert match_fields(pattern, "a" * 34 + "!") is None
+    assert time.perf_counter() - started < 1
 
 
 # ── managing them from chat ────────────────────────────────────────────────
