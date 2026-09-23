@@ -310,6 +310,7 @@ async def run(settings: Settings) -> None:
             "channels": channels,
             "twitch": twitch,
             "variable_store": store,
+            "bot_db": dbs.bot,
             "chatlog_db": dbs.chatlog,
             "api_keys": ApiKeyService(dbs.bot),
             "streams": streams,  # {channel.live} and friends in /explain runs

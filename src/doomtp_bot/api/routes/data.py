@@ -14,8 +14,6 @@ Three ways in:
 
 from __future__ import annotations
 
-import contextlib
-import json
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -23,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.audit.log import read_audit
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
@@ -568,24 +567,6 @@ async def audit(
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
     _: str = READ,
 ) -> dict[str, Any]:
-    policy = _policy(request)
-    where: str = ""
-    params: list[object] = []
-    if channel is not None:
-        where = " WHERE channel_id = %s"
-        params.append(_channel(request, channel).channel_id)
-    params.append(limit)
-    async with await policy.repo.conn.execute(
-        "SELECT id, channel_id, actor_user_id, via, action, target, before, after, at"
-        f" FROM audit_log{where} ORDER BY id DESC LIMIT %s",
-        tuple(params),
-    ) as cur:
-        rows = []
-        for row in await cur.fetchall():
-            entry = dict(row)
-            for field in ("before", "after"):
-                if entry[field]:
-                    with contextlib.suppress(ValueError):  # older rows aren't always JSON
-                        entry[field] = json.loads(entry[field])
-            rows.append(entry)
-    return {"entries": rows}
+    conn = _state(request, "bot_db")
+    channel_id = _channel(request, channel).channel_id if channel is not None else None
+    return {"entries": await read_audit(conn, channel_id=channel_id, limit=limit)}

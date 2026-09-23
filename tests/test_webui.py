@@ -54,6 +54,7 @@ async def services(dbs: Databases) -> AsyncIterator[dict[str, object]]:
         "triggers": triggers,
         "filters": filters,
         "health": health,
+        "bot_db": dbs.bot,
     }
 
 

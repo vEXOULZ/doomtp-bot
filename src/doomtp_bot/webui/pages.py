@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from doomtp_bot import __version__
 from doomtp_bot.api.keys import ApiKeyError
+from doomtp_bot.audit.log import read_audit
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.parser import (
     DEFAULT_PREFIX,
@@ -436,21 +437,17 @@ def _require_csrf(request: Request, csrf: str) -> None:
 
 
 async def _audit_rows(request: Request, limit: int = 25) -> list[dict[str, Any]]:
-    policy = _state(request, "policy")
-    if policy is None:
+    conn = _state(request, "bot_db")
+    if conn is None:
         return []
-    async with await policy.repo.conn.execute(
-        "SELECT action, channel_id, actor_user_id, target, via, at FROM audit_log ORDER BY id DESC LIMIT %s",
-        (limit,),
-    ) as cur:
-        return [
-            {
-                "action": r["action"],
-                "channel": r["channel_id"] or GLOBAL,
-                "actor": r["actor_user_id"] or "system",
-                "target": r["target"],
-                "via": r["via"],
-                "at": r["at"],
-            }
-            for r in await cur.fetchall()
-        ]
+    return [
+        {
+            "action": r["action"],
+            "channel": r["channel_id"] or GLOBAL,
+            "actor": r["actor_user_id"] or "system",
+            "target": r["target"],
+            "via": r["via"],
+            "at": r["at"],
+        }
+        for r in await read_audit(conn, limit=limit)
+    ]

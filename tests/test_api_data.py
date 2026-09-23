@@ -89,6 +89,7 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
             "channels": ChannelManager(policy, twitch, FakeSessions()),
             "twitch": twitch,
             "variable_store": PostgresVariableStore(dbs.bot),
+            "bot_db": dbs.bot,
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,
         },

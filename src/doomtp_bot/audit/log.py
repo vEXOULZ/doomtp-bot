@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 from typing import Any
 
 from doomtp_bot.clock import now_ms
@@ -45,3 +47,25 @@ async def write_audit(
             now_ms(),
         ),
     )
+
+
+async def read_audit(
+    conn: Connection, *, channel_id: str | None = None, limit: int = 50
+) -> list[dict[str, Any]]:
+    """The newest audit rows first, optionally only one channel's, with `before` and `after` decoded.
+
+    Older rows whose values aren't JSON keep the stored string rather than failing the read.
+    """
+    where, params = ("", ()) if channel_id is None else (" WHERE channel_id = %s", (channel_id,))
+    async with await conn.execute(
+        "SELECT id, channel_id, actor_user_id, via, action, target, before, after, at"
+        f" FROM audit_log{where} ORDER BY id DESC LIMIT %s",
+        (*params, limit),
+    ) as cur:
+        rows = [dict(row) for row in await cur.fetchall()]
+    for entry in rows:
+        for field in ("before", "after"):
+            if entry[field]:
+                with contextlib.suppress(ValueError):  # older rows aren't always JSON
+                    entry[field] = json.loads(entry[field])
+    return rows
