@@ -83,18 +83,15 @@ class CustomCommandLoader:
         self,
         service: CustomCommandService,
         packs: PackService | None = None,
-        *,
-        max_depth: int = MAX_CC_DEPTH,
     ) -> None:
         self.service = service
         self.packs = packs
-        self.max_depth = max_depth
 
     async def resolver_for(self, ctx: ExecContext, node: Node, base: Resolver) -> Resolver:
         entries: dict[_Key, Resolved] = {}
         pending = self._names(node)
         seen: set[_Key] = set()
-        for _ in range(self.max_depth + 1):
+        for _ in range(MAX_CC_DEPTH + 1):
             wanted = [key for key in pending if key not in seen]
             if not wanted:
                 break

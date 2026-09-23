@@ -39,12 +39,11 @@ class RecentMessagesProvider:
     """recent-messages.robotty.de, or any compatible deployment (`HISTORY_PROVIDER_URL`)."""
 
     base_url: str
-    session_factory: type[aiohttp.ClientSession] = aiohttp.ClientSession
     _session: aiohttp.ClientSession | None = field(default=None, repr=False)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = self.session_factory(
+            self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
                 headers={"User-Agent": "doomtp-bot (+https://github.com/vEXOULZ/doomtp-bot)"},
             )

@@ -120,8 +120,6 @@ def preflight(
     resolver: Resolver,
     policy: Policy,
     access: VariableAccess,
-    max_invocations: int = MAX_INVOCATIONS,
-    max_depth: int = MAX_CC_DEPTH,
 ) -> Preflight:
     """Check the whole AST, including custom command bodies, before anything runs (spec §5.2).
 
@@ -143,11 +141,11 @@ def preflight(
     ) -> Preflight | None:
         nonlocal counted
         counted += 1
-        if counted > max_invocations:
+        if counted > MAX_INVOCATIONS:
             return fail(
                 None,
                 None,
-                error_result("E_TOO_MANY", f"too many commands (max {max_invocations})", max=max_invocations),
+                error_result("E_TOO_MANY", f"too many commands (max {MAX_INVOCATIONS})", max=MAX_INVOCATIONS),
             )
         resolved = resolver.resolve(here, inv)
         if resolved is None:
@@ -186,11 +184,13 @@ def preflight(
             return fail(
                 inv.index, inv.name, error_result("E_CC_CYCLE", f"{inv.name} calls itself", command=inv.name)
             )
-        if len(stack) + 1 > max_depth:
+        if len(stack) + 1 > MAX_CC_DEPTH:
             return fail(
                 inv.index,
                 inv.name,
-                error_result("E_CC_DEPTH", f"custom commands nested deeper than {max_depth}", max=max_depth),
+                error_result(
+                    "E_CC_DEPTH", f"custom commands nested deeper than {MAX_CC_DEPTH}", max=MAX_CC_DEPTH
+                ),
             )
         body_ctx = dataclasses.replace(
             here,

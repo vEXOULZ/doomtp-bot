@@ -184,7 +184,7 @@ class Executor:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
             args = Args(values, params, inv.raw_tail)
-            cmd_ctx = CommandContext(ctx, inv.index, inv.name, prev)
+            cmd_ctx = CommandContext(ctx, inv.name, prev)
             try:
                 async with asyncio.timeout(self.stage_timeout):
                     if resolved.custom is not None:

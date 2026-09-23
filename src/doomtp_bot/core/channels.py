@@ -43,13 +43,14 @@ class ChannelManager:
         sessions: SessionLog,
         *,
         default_prefix: str = DEFAULT_PREFIX,
-        on_joined: Callable[[str], Awaitable[object]] | None = None,
     ) -> None:
         self.policy = policy
         self.subscriber = subscriber
         self.sessions = sessions
         self.default_prefix = default_prefix
-        self.on_joined = on_joined  # the capability probe, once the channel is subscribed (ADR-0007)
+        # The capability probe, once the channel is subscribed (ADR-0007). Set after construction: the
+        # probe needs this manager first.
+        self.on_joined: Callable[[str], Awaitable[object]] | None = None
 
     def active_channels(self) -> list[ChannelSettings]:
         return [c for c in self.policy.snapshot.channels.values() if _is_joined(c)]

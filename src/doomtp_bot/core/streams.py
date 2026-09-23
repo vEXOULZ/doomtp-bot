@@ -50,10 +50,6 @@ class StreamStatus:
     def info(self, channel_id: str) -> dict[str, Any]:
         return dict(self.streams.get(channel_id, {}))
 
-    @property
-    def live_ids(self) -> frozenset[str]:
-        return frozenset(self.streams)
-
 
 class StreamPoller:
     """One task that asks Helix who is live and reports the changes."""

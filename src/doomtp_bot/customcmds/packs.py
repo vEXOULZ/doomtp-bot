@@ -232,26 +232,6 @@ class PackService:
             )
         return PackPublication(channel_id, pack.id, published_by, "active")
 
-    async def set_status(
-        self, *, channel_id: str, pack: Pack, status: Literal["active", "disabled"], actor_user_id: str | None
-    ) -> bool:
-        async with transaction(self.conn):
-            cur = await self.conn.execute(
-                "UPDATE custom_command_pack_publications SET status = %s WHERE channel_id = %s AND pack_id = %s",
-                (status, channel_id, pack.id),
-            )
-            if cur.rowcount:
-                await self.commands._audit(
-                    "chat",
-                    actor_user_id,
-                    f"pack.{status}",
-                    pack.id,
-                    None,
-                    None,
-                    channel_id=None if channel_id == GLOBAL else channel_id,
-                )
-            return bool(cur.rowcount)
-
     async def unpublish(self, *, channel_id: str, pack: Pack, actor_user_id: str | None) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(

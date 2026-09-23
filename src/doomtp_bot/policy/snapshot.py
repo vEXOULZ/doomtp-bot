@@ -71,8 +71,8 @@ class PolicySnapshot:
             name
         )
 
-    def custom_roles_for(self, channel_id: str, user_id: str, now_ms: int | None = None) -> list[Role]:
-        now_ms = clock.now_ms() if now_ms is None else now_ms
+    def custom_roles_for(self, channel_id: str, user_id: str) -> list[Role]:
+        now_ms = clock.now_ms()
         found: list[Role] = []
         for m in self.memberships.get(user_id, ()):
             if m.expires_at is not None and m.expires_at <= now_ms:

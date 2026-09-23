@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -22,7 +22,6 @@ from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node
-from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import to_json
@@ -31,7 +30,6 @@ from doomtp_bot.storage.db import Connection, Row, transaction
 log = structlog.get_logger(__name__)
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-ID_RE = re.compile(r"^cc_[a-z0-9]{6}$")
 MAX_BODY_CHARS = 2000
 QUOTA_PER_USER = 50
 Status = Literal["active", "deleted", "banned"]
@@ -81,11 +79,10 @@ class CustomCommandService:
         self,
         conn: Connection,
         *,
-        quota: int = QUOTA_PER_USER,
         on_grants_changed: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.conn = conn
-        self.quota = quota
+        self.quota = QUOTA_PER_USER
         # Grants live in the access policy's in-memory snapshot; deleting rows here has to invalidate it.
         self.on_grants_changed = on_grants_changed
         self._asts: dict[tuple[str, int, str], Node] = {}  # (command id, version, channel prefix)
@@ -492,11 +489,3 @@ class CustomCommandService:
             before=before,
             after=after,
         )
-
-
-def parse_errors_to_usage(exc: ParseError | CustomCommandError) -> str:
-    return str(exc)
-
-
-def command_ids(commands: Iterable[CustomCommand]) -> set[str]:
-    return {c.id for c in commands}
