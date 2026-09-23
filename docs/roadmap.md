@@ -1,6 +1,6 @@
 # Roadmap and progress
 
-**As of 2026-09-23** (the architecture's own promises are now tracked beside the ADRs'). Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-23** (the architecture's own promises are tracked beside the ADRs', and being closed). Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
 
@@ -27,12 +27,11 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications | 6/6 | Complete |
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
-
-| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 0/9 | Open, all code or docs |
+| — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 1/9 | Eight open, all code or decisions |
 
 **75 of 79 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
-code — they are waiting on a person or a server. **None of the 9 architecture promises is closed**, and
-all of them are waiting on code or on a decision to drop them.
+code — they are waiting on a person or a server. **1 of the 9 architecture promises is closed**, and
+the other eight are waiting on code or on a decision to drop them.
 
 ## What is left, and why
 
@@ -75,17 +74,17 @@ it or rewriting the architecture so it stops promising it — either is fine, si
 choose a dependency or a new outside service (`ARCH-1`, and the weather source in `ARCH-6`) need an ADR
 first.
 
-| Item | Promise | Where it stands |
-|------|---------|-----------------|
-| `ARCH-1` | **Metrics** (§13): nine named counters — `messages_logged_total{source}`, `runs_total{code}`, `outbox_dropped_total{reason}`, `eventsub_reconnects_total` and the rest | None is exported. The outbox keeps a `dropped` count in memory and `/readyz` reports queue depth, but nothing can be scraped or graphed. Needs an ADR for the format and where it is served (the API is LAN-only). |
-| `ARCH-2` | **Leave when banned** (§10 etiquette): auto-leave and flag a channel when Twitch answers a send with 403 | Not built. `core/outbox.py` logs `outbox.send_failed` and drops the message; the bot stays joined and keeps trying. The only 401/403 handling is for a revoked broadcaster token (`twitch/client.py`). |
-| `ARCH-3` | **`!explain` report page** (§4.4): the chat summary links to a full report in the web UI | Chat and `POST /api/v1/explain` exist; there is no page, and no link. |
-| `ARCH-4` | **Side-effect built-ins** (§4.3): `!timeout`, `!shoutout` and Helix writes run at their stage and check the moderation index right before acting | None exists, so the checkpoint has nothing to guard. `side_effects=True` is declared in `runtime/spec.py` and read by nobody. The starter pack's `so` is a custom command that only talks. |
-| `ARCH-5` | **Enforced `reads`/`writes`** (§4.2) | Declarations only, as the architecture says — until the first built-in other than `!var` writes. Closes with `ARCH-4` or `ARCH-6`, whichever writes first. |
-| `ARCH-6` | **Modules `weather`, `quotes`, `logsearch`** (§12, marked `·`) | Not built. `weather` is the spec's running example (§4.2) and needs an outside API, so an ADR; `quotes` and `logsearch` need only the database. |
-| `ARCH-7` | **`chatlog/queries.py` and `storage/repos/`** (§12, marked `·`) | Not on disk. Message search is written inside `api/routes/data.py`. Build them when `logsearch` needs the same query, or take them off the layout. |
-| `ARCH-8` | **A pluggable `Authenticator`** (§11), so Twitch login for a per-user dashboard can come later without rework | Not there: `webui/auth.py` is the admin password and `api/keys.py` the keys, each checked where it is used. |
-| `ARCH-9` | **Docs that match the code** | §7 says listeners use `re` with an RE2 check through `google-re2`; the code uses the `regex` module with a match timeout (`patterns.py`) and no RE2. The architecture's header still reads *Status: Proposed*. Both are edits to the doc, not the code. |
+| Item | Promise | Where it stood | State |
+|------|---------|----------------|-------|
+| `ARCH-1` | **Metrics** (§13): nine named counters — `messages_logged_total{source}`, `runs_total{code}`, `outbox_dropped_total{reason}`, `eventsub_reconnects_total` and the rest | None is exported. The outbox keeps a `dropped` count in memory and `/readyz` reports queue depth, but nothing can be scraped or graphed. Needs an ADR for the format and where it is served (the API is LAN-only). | Open |
+| `ARCH-2` | **Leave when banned** (§10 etiquette): auto-leave and flag a channel when Twitch answers a send with 403 | Not built. `core/outbox.py` logs `outbox.send_failed` and drops the message; the bot stays joined and keeps trying. The only 401/403 handling is for a revoked broadcaster token (`twitch/client.py`). | Open |
+| `ARCH-3` | **`!explain` report page** (§4.4): the chat summary links to a full report in the web UI | Chat and `POST /api/v1/explain` exist; there is no page, and no link. | Open |
+| `ARCH-4` | **Side-effect built-ins** (§4.3): `!timeout`, `!shoutout` and Helix writes run at their stage and check the moderation index right before acting | None exists, so the checkpoint has nothing to guard. `side_effects=True` is declared in `runtime/spec.py` and read by nobody. The starter pack's `so` is a custom command that only talks. | Open |
+| `ARCH-5` | **Enforced `reads`/`writes`** (§4.2) | Declarations only, as the architecture says — until the first built-in other than `!var` writes. Closes with `ARCH-4` or `ARCH-6`, whichever writes first. | Open |
+| `ARCH-6` | **Modules `weather`, `quotes`, `logsearch`** (§12, marked `·`) | Not built. `weather` is the spec's running example (§4.2) and needs an outside API, so an ADR; `quotes` and `logsearch` need only the database. | Open |
+| `ARCH-7` | **`chatlog/queries.py` and `storage/repos/`** (§12, marked `·`) | Not on disk. Message search is written inside `api/routes/data.py`. Build them when `logsearch` needs the same query, or take them off the layout. | Open |
+| `ARCH-8` | **A pluggable `Authenticator`** (§11), so Twitch login for a per-user dashboard can come later without rework | Not there: `webui/auth.py` is the admin password and `api/keys.py` the keys, each checked where it is used. | Open |
+| `ARCH-9` | **Docs that match the code** | §7 says listeners use `re` with an RE2 check through `google-re2`; the code uses the `regex` module with a match timeout (`patterns.py`) and no RE2. The architecture's header still reads *Status: Proposed*. Both are edits to the doc, not the code. | **Closed** 2026-09-23 — §7 now describes `regex` with a 50 ms match timeout, and why not RE2; header reads *Accepted, built*, revision 5. |
 
 ## Deferred by design
 

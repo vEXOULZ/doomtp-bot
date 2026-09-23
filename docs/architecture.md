@@ -1,7 +1,10 @@
 # doomtp-bot — Architecture
 
-**Status:** Proposed · **Date:** 2026-09-16 · **Revision:** 4 (2026-09-21: diagrams redrawn from the
-built system; deployment section follows ADR-0013)
+**Status:** Accepted, built · **Date:** 2026-09-16 · **Revision:** 5 (2026-09-23: checked against
+`src/` section by section; what was promised and not built is tracked as `ARCH-1`…`ARCH-9` on the
+[roadmap](roadmap.md) until it is either built or taken out of this document)
+
+*Revision 4 (2026-09-21): diagrams redrawn from the built system; deployment section follows ADR-0013.*
 
 A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a container. The main features are a composable command language, user-published custom commands, a complete chat log, and a REST API with a web UI.
 
@@ -455,23 +458,26 @@ Resolution runs in this order, and the first rule that matches decides:
 
 ## 7. Triggers, timers and listeners
 
+Sketch only — `storage/migrations/bot/0001_init.sql` is the truth.
+
 ```sql
-triggers(id INTEGER PRIMARY KEY, channel_id TEXT, type TEXT,
+triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
          -- redemption | raid | sub | resub | gift_sub | cheer | follow | stream_online |
          -- stream_offline | timer | cron | listener
-         match TEXT,        -- JSON: {reward_id}, {min_viewers}, {regex}, {min_bits}, …
-         schedule TEXT,     -- timers: {"every_s": 900, "jitter_s": 120, "only_live": true,
+         match text,        -- JSON: {reward_id}, {min_viewers}, {regex}, {min_bits}, …
+         schedule text,     -- timers: {"every_s": 900, "jitter_s": 120, "only_live": true,
                             --          "min_chat_lines": 5}
                             -- crons:  {"cron": "0 18 * * fri"} in the channel's timezone
-         expr TEXT,         -- pipeline expression
-         run_as_rank INTEGER,   -- capped at the rank of the mod who created it
-         enabled INTEGER, log_level TEXT, created_by TEXT)
+         expr text, syntax_version text,   -- pipeline expression, and the grammar it was parsed with
+         run_as_rank integer,   -- capped at the rank of the mod who created it
+         enabled boolean, log_level text, created_by text, created_at bigint, updated_at bigint)
 ```
 
 - Inside the pipeline, `{event.*}` exposes the payload: `{event.user.name}`, `{event.viewers}`, `{event.input}` (redemption text), `{event.reward.title}`, `{event.bits}`, `{event.months}` and so on.
 - **`chatter` for a trigger is the event's user:** the redeemer, the raider or the subscriber. Timers have no chatter.
 - **Listeners** run on every non-ignored, non-command message that matches the regex:
-  - They use Python `re` with a timeout guard and patterns limited in length. Catastrophic backtracking is prevented with an RE2-compatible check through the `google-re2` package when it is available.
+  - They use the [`regex`](https://pypi.org/project/regex/) module (`patterns.py`), not `re`: it takes the same syntax, avoids most catastrophic backtracking, and accepts a match timeout for the rest. Every search runs with a 50 ms timeout, and a pattern that runs out of time counts as no match and logs `pattern.timed_out`. Patterns are limited to 200 characters. The badword filter's regex and wildcard entries go through the same module (§9).
+  - *Changed in revision 5:* earlier revisions said `re` plus an RE2-compatible check through `google-re2`. `re` can't be interrupted, so a timeout guard around it would have needed a thread per match; `regex` gives the timeout directly, and an RE2 check would only have refused patterns (backreferences, lookarounds) that moderators do write and that the timeout already makes safe.
   - Listener captures are available as `{match.1}` and `{match.name}`.
 - Every trigger passes through the same runtime, including preflight, cooldowns (keyed by trigger), the moderation index (for listeners and redemptions) and the Outbox.
 - Some trigger types need capabilities. Redemptions need the full tier, and follows need moderator status (ADR-0007).
