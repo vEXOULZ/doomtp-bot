@@ -50,8 +50,9 @@ jobs:
       - name: Type check
         run: uv run mypy
       - name: Twitch CLI
-        # Twitch's event simulator. Without it the EventSub handshake and fixture tests skip themselves
-        # (ADR-0001 item 5, ADR-0002 item 4); bumping the version re-checks us against a newer simulator.
+        # Twitch's event simulator, for the EventSub handshake tests (ADR-0001 item 5). Without it they
+        # would skip, and --require-tools below makes that a failure; bumping the version re-checks us
+        # against a newer simulator.
         run: |
           version=1.1.24
           url=https://github.com/twitchdev/twitch-cli/releases/download/v$version/twitch-cli_${version}_Linux_x86_64.tar.gz
@@ -72,10 +73,12 @@ jobs:
           # so installing 17 is not enough to be the one that runs. Name the version explicitly.
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - name: Test
+        # --require-tools: a test whose tool (pg_dump, the Twitch CLI) is missing fails here instead of
+        # skipping, so a broken install step above can't leave the run green with those tests unrun.
         run: |
           pg_dump --version  # name a mismatch here, not as a test failure fifty lines later
           pg_restore --version
-          uv run pytest -q
+          uv run pytest -q --require-tools
       - name: Grammar copy in sync with spec
         run: uv run python scripts/check_railroad.py
       - name: Railroad diagrams in sync with the grammar

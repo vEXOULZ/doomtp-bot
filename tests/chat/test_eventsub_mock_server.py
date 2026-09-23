@@ -7,7 +7,8 @@ for real, over a socket, with TwitchIO's own client and the bot's own handlers:
 
     twitch event websocket start-server        # each test starts its own, on a free port
 
-It is skipped without the Twitch CLI (`TWITCH_CLI=/path/to/twitch` if it isn't on PATH).
+It is skipped without the Twitch CLI (`TWITCH_CLI=/path/to/twitch` if it isn't on PATH), or fails under
+`--require-tools`, as in CI.
 """
 
 from __future__ import annotations
@@ -38,9 +39,14 @@ BROADCASTER, BOT = "40174384", "80730642"
 #: at a time, whatever port its WebSocket itself listens on.
 RPC_PORT = 44747
 
-pytestmark = pytest.mark.skipif(
-    CLI is None, reason="needs the Twitch CLI (twitch event websocket start-server)"
-)
+
+@pytest.fixture(scope="module", autouse=True)
+def twitch_cli(require_tool: Callable[[bool, str], None]) -> None:
+    require_tool(
+        CLI is not None,
+        "needs the Twitch CLI (twitch event websocket start-server): install it from"
+        " https://dev.twitch.tv/docs/cli/, or set TWITCH_CLI to its path if it isn't on PATH",
+    )
 
 
 def _free_port() -> int:

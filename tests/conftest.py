@@ -5,6 +5,9 @@ engine, and ADR-0014 kept that. Point `TEST_DATABASE_URL` at any server you like
 compose file defines:
 
     docker compose --profile test up -d postgres-test
+
+Some tests also need an external tool — pg_dump, the Twitch CLI. Without it they skip, saying what to
+install; with `--require-tools`, which CI passes, they fail instead (see `require_tool`).
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 import psycopg
 import pytest
@@ -31,6 +34,36 @@ START_HINT = (
 
 
 _CASE_IDS = itertools.count()
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--require-tools",
+        action="store_true",
+        help="fail, rather than skip, a test whose external tool (pg_dump, the Twitch CLI) is missing",
+    )
+
+
+@pytest.fixture(scope="session")
+def require_tool(pytestconfig: pytest.Config) -> Callable[[bool, str], None]:
+    """`require_tool(ok, advice)`: carry on if the tool is usable, else skip — or fail under --require-tools.
+
+    A missing tool is a skip on a dev box, where the client tools are optional. In CI it has to be a
+    failure: a skip there means the suite has quietly stopped testing whatever needed the tool and still
+    gone green — which CI's first runs did, with a pg_dump one major too old (ADR-0014). CI asks for
+    that with the flag rather than being detected, so a run anywhere can opt in and nothing hangs on one
+    CI provider's environment variables.
+    """
+    required = bool(pytestconfig.getoption("--require-tools"))
+
+    def check(ok: bool, advice: str) -> None:
+        if ok:
+            return
+        if required:
+            pytest.fail(f"{advice} (--require-tools makes this a failure rather than a skip)", pytrace=False)
+        pytest.skip(advice)
+
+    return check
 
 
 def _with_database(url: str, name: str) -> str:
