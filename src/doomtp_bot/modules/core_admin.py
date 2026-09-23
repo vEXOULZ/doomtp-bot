@@ -96,8 +96,8 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
     action, channel_id = v[0].lower(), ctx.channel.id
     if action == "list":
         roles = {
-            **policy.snapshot.roles_by_scope.get(GLOBAL, {}),
-            **policy.snapshot.roles_by_scope.get(channel_id, {}),
+            **policy.roles_in(GLOBAL),
+            **policy.roles_in(channel_id),
         }
         listing = ", ".join(f"{r.name} ({r.rank})" for r in sorted(roles.values(), key=lambda r: -r.rank))
         return Result.success(listing, [{"name": r.name, "rank": r.rank} for r in roles.values()])
@@ -109,7 +109,7 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
         new_rank = _int(v[2], "rank", CUSTOM_RANK_MIN, CUSTOM_RANK_MAX)
         if not ROLE_NAME_RE.match(name) or name in BUILTIN_RANKS:
             raise CommandError("role names: lowercase letters, digits, _ (not a built-in role)")
-        if policy.snapshot.roles_by_scope.get(channel_id, {}).get(name):
+        if name in policy.roles_in(channel_id):
             raise CommandError(f"role {name} already exists")
         if not can_manage_role(
             rank(ctx), new_rank, actor_is_broadcaster=_is_broadcaster(ctx), role_is_channel=True
@@ -129,7 +129,7 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
     )
 
     if action == "who":
-        members = await policy.repo.members(role.id)
+        members = await policy.members_of(role)
         if not members:
             return Result.success(f"nobody has {name}", [])
         return Result.success(
@@ -349,7 +349,7 @@ async def _ignore(ctx: CommandContext, v: list[str], args: Args) -> Result:
     need(v, 1, IGNORE_USAGE)
     action = v[0].lower()
     if action == "list":
-        ids = sorted(policy.snapshot.ignored.get(ctx.channel.id, frozenset()))
+        ids = sorted(policy.ignored_in(ctx.channel.id))
         return Result.success(f"{len(ids)} ignored here", ids)
     need(v, 2, IGNORE_USAGE)
     if action not in ("add", "remove"):

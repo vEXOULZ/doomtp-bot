@@ -9,6 +9,7 @@ import pytest
 from httpx import ASGITransport
 
 from doomtp_bot.api.app import create_app
+from doomtp_bot.audit.log import read_audit
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandService
@@ -277,7 +278,6 @@ async def test_the_channel_page_shows_modules_triggers_and_filters(
 async def test_toggling_a_module_from_the_admin_page(
     client: httpx.AsyncClient, services: dict[str, object]
 ) -> None:
-    policy: PolicyService = services["policy"]  # type: ignore[assignment]
     await client.post("/admin/login", data={"password": PASSWORD})
     page = (await client.get(f"/admin/channels/{CHANNEL_LOGIN}")).text
     csrf = page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -287,18 +287,15 @@ async def test_toggling_a_module_from_the_admin_page(
         data={"module": "basic", "enabled": "off", "csrf": csrf},
     )
     assert response.status_code == 303
-    assert policy.snapshot.module_toggles[(CHANNEL_ID, "basic")] is False
+    assert not _basic_enabled(services)
 
-    async with await policy.repo.conn.execute(
-        "SELECT via FROM audit_log WHERE action = 'module.toggle'"
-    ) as cur:
-        assert [r["via"] for r in await cur.fetchall()] == ["web"]  # the change is audited as a web action
+    audit = await read_audit(services["bot_db"])  # type: ignore[arg-type]
+    assert [r["via"] for r in audit if r["action"] == "module.toggle"] == ["web"]  # audited as a web action
 
 
 async def test_toggling_triggers_and_filters_from_the_admin_page_is_audited_as_web(
     client: httpx.AsyncClient, services: dict[str, object]
 ) -> None:
-    policy: PolicyService = services["policy"]  # type: ignore[assignment]
     await client.post("/admin/login", data={"password": PASSWORD})
     page = (await client.get(f"/admin/channels/{CHANNEL_LOGIN}")).text
     csrf = page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -313,24 +310,29 @@ async def test_toggling_triggers_and_filters_from_the_admin_page_is_audited_as_w
         )
         assert response.status_code == 303
 
-    async with await policy.repo.conn.execute(
-        "SELECT action, via FROM audit_log WHERE action LIKE '%%.disable' ORDER BY id"
-    ) as cur:
-        rows = [(r["action"], r["via"]) for r in await cur.fetchall()]
+    audit = await read_audit(services["bot_db"])  # type: ignore[arg-type]
+    rows = [(r["action"], r["via"]) for r in reversed(audit) if r["action"].endswith(".disable")]
     assert rows == [("trigger.disable", "web"), ("filter.disable", "web")]
 
 
 async def test_a_write_without_a_valid_csrf_token_is_refused(
     client: httpx.AsyncClient, services: dict[str, object]
 ) -> None:
-    policy: PolicyService = services["policy"]  # type: ignore[assignment]
     await client.post("/admin/login", data={"password": PASSWORD})
     response = await client.post(
         f"/admin/channels/{CHANNEL_LOGIN}/module",
         data={"module": "basic", "enabled": "off", "csrf": "forged"},
     )
     assert response.status_code == 403
-    assert (CHANNEL_ID, "basic") not in policy.snapshot.module_toggles
+    assert _basic_enabled(services)
+
+
+def _basic_enabled(services: dict[str, object]) -> bool:
+    """Whether the `basic` module is on in the test channel, as the admin page works it out."""
+    policy: PolicyService = services["policy"]  # type: ignore[assignment]
+    runtime: Runtime = services["runtime"]  # type: ignore[assignment]
+    spec = next(c.spec for c in runtime.registry.all() if c.spec.module == "basic" and c.spec.toggleable)
+    return policy.is_enabled(CHANNEL_ID, spec)
 
 
 async def test_sessions_expire() -> None:

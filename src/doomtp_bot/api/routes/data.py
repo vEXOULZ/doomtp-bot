@@ -58,7 +58,7 @@ def _policy(request: Request) -> PolicyService:
 
 
 def _channel(request: Request, login: str) -> ChannelSettings:
-    settings = _policy(request).snapshot.channel_by_login(login)
+    settings = _policy(request).channel_by_login(login)
     if settings is not None:
         return settings
     raise HTTPException(status_code=404, detail=f"no channel named {login}")
@@ -155,7 +155,7 @@ class Enabled(BaseModel):
 
 @router.get("/channels")
 async def list_channels(request: Request, _: str = READ) -> dict[str, Any]:
-    channels = _policy(request).snapshot.channels.values()
+    channels = _policy(request).channels()
     return {"channels": [_channel_json(c) for c in sorted(channels, key=lambda c: c.login)]}
 
 

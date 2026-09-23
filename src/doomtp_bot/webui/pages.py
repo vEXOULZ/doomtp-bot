@@ -105,12 +105,12 @@ def _channels(request: Request) -> list[Any]:
     policy = _state(request, "policy")
     if policy is None:
         return []
-    return sorted(policy.snapshot.channels.values(), key=lambda c: c.login)
+    return sorted(policy.channels(), key=lambda c: c.login)
 
 
 def _channel_or_404(request: Request, login: str) -> Any:
     policy = _state(request, "policy")
-    settings = policy.snapshot.channel_by_login(login) if policy is not None else None
+    settings = policy.channel_by_login(login) if policy is not None else None
     if settings is not None:
         return settings
     raise HTTPException(status_code=404, detail=f"unknown channel {login}")
@@ -359,7 +359,7 @@ async def admin_channel(request: Request, login: str) -> HTMLResponse:
         triggers=triggers.in_channel(settings.channel_id) if triggers else [],
         filters=filters.entries_for(settings.channel_id) if filters else [],
         publications=publications,
-        ignored=sorted(policy.snapshot.ignored.get(settings.channel_id, frozenset())) if policy else [],
+        ignored=sorted(policy.ignored_in(settings.channel_id)) if policy else [],
     )
 
 

@@ -138,7 +138,7 @@ async def test_run_evaluates_without_committing_or_sending(h: Harness) -> None:
     assert report.ran and report.run_result is not None and report.run_result.ok
     assert report.would_send == "42"  # what it *would* send; the caller sends nothing
     assert await h.store.get(VarKey("channel", CHANNEL_ID, name="note")) is not 42  # noqa: F632
-    async with await h.policy.repo.conn.execute("SELECT COUNT(*) AS n FROM variables") as cur:
+    async with await h.store.conn.execute("SELECT COUNT(*) AS n FROM variables") as cur:
         assert (await cur.fetchone())["n"] == 0  # the write buffer was discarded (spec §9)
 
 
