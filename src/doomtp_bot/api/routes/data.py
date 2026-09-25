@@ -207,6 +207,29 @@ async def patch_channel(request: Request, login: str, body: ChannelPatch, _: str
     return _channel_json(_channel(request, settings.login))
 
 
+@router.get("/channels/{login}/modules")
+async def list_modules(request: Request, login: str, _: str = READ) -> dict[str, Any]:
+    """Each module, whether it is on here, and whether it can be turned off at all."""
+    settings, policy = _channel(request, login), _policy(request)
+    specs = {c.spec.module: c.spec for c in _state(request, "runtime").registry.all()}
+    return {
+        "modules": [
+            {"module": m, "enabled": policy.is_enabled(settings.channel_id, s), "toggleable": s.toggleable}
+            for m, s in sorted(specs.items())
+        ]
+    }
+
+
+@router.get("/channels/{login}/ignored")
+async def ignored_users(request: Request, login: str, _: str = READ) -> dict[str, Any]:
+    """User ids the bot ignores here, and those it ignores in every channel. Changed from chat (`ignore`)."""
+    settings, policy = _channel(request, login), _policy(request)
+    return {
+        "ignored": sorted(policy.ignored_in(settings.channel_id)),
+        "ignored_everywhere": sorted(policy.ignored_in(GLOBAL)),
+    }
+
+
 @router.put("/channels/{login}/modules/{module}")
 async def set_module(
     request: Request, login: str, module: str, body: Enabled, _: str = WRITE

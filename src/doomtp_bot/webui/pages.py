@@ -275,10 +275,17 @@ async def login_form(request: Request, error: str = "") -> HTMLResponse:
 
 @router.post("/admin/login")
 async def login(request: Request, password: str = Form("")) -> RedirectResponse:
-    auth = _auth(request)
+    auth, limiter = _auth(request), _state(request, "login_limiter")
+    address = request.client.host if request.client else "unknown"
+    if limiter is not None and limiter.retry_after(address) is not None:
+        return RedirectResponse("/admin/login?error=too+many+attempts%2C+try+again+later", status_code=303)
     # scrypt takes tens of milliseconds by design; off the event loop, so chat keeps flowing meanwhile.
     if not auth.enabled or not await asyncio.to_thread(auth.check_password, password):
+        if limiter is not None and auth.enabled:
+            limiter.failed(address)
         return RedirectResponse("/admin/login?error=wrong+password", status_code=303)
+    if limiter is not None:
+        limiter.reset(address)
     session = auth.login()
     response = RedirectResponse("/admin", status_code=303)
     response.set_cookie(SESSION_COOKIE, session.token, httponly=True, samesite="lax", max_age=int(auth.ttl_s))

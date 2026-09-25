@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import secrets
 import time
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 SESSION_COOKIE = "doomtp_admin"
@@ -81,3 +83,45 @@ class AdminAuth:
     def valid_csrf(self, token: str | None, csrf: str | None) -> bool:
         session = self.session(token)
         return session is not None and bool(csrf) and hmac.compare_digest(session.csrf, csrf or "")
+
+    def expires_in(self, session: Session) -> float:
+        """Seconds until `session` expires. The clock is monotonic, so callers add this to wall time."""
+        return max(0.0, self.ttl_s - (self._now() - session.created_at))
+
+
+@dataclass
+class LoginLimiter:
+    """Failed logins per client address: after `attempts` inside `window_s`, wait until the oldest ages out.
+
+    The password is the only thing between the internet and `/admin` once the pages are published, and
+    scrypt alone only slows a guesser down. A success clears the address's record.
+    """
+
+    attempts: int = 5
+    window_s: float = 300.0
+    clock: object = time.monotonic
+    _failures: dict[str, deque[float]] = field(default_factory=lambda: defaultdict(deque), repr=False)
+
+    def _now(self) -> float:
+        return float(self.clock())  # type: ignore[operator]
+
+    def _recent(self, address: str) -> deque[float]:
+        failures = self._failures[address]
+        while failures and self._now() - failures[0] >= self.window_s:
+            failures.popleft()
+        return failures
+
+    def retry_after(self, address: str) -> int | None:
+        """Whole seconds to wait before `address` may try again, or None when it may try now."""
+        failures = self._recent(address)
+        if len(failures) < self.attempts:
+            if not failures:
+                self._failures.pop(address, None)
+            return None
+        return max(1, math.ceil(self.window_s - (self._now() - failures[0])))
+
+    def failed(self, address: str) -> None:
+        self._recent(address).append(self._now())
+
+    def reset(self, address: str) -> None:
+        self._failures.pop(address, None)

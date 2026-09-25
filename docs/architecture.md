@@ -600,6 +600,9 @@ A **race window** remains: a mod can act after the message has already been sent
 | `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables, message search, command runs, `/api/v1/audit` | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked on the admin page, and the key is shown once, on the page that creates it, never through a redirect where it would land in logs and history. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
+| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). Same password and sessions as `/admin`; the CSRF token comes from `GET /session`. Keys are managed with a session only, never with a key. Failed logins are limited per client address, together with the `/admin` form; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
+| `GET /api/v1/site`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
+| `GET /api/v1/channels/{login}/modules`, `/ignored` | **Now** | API key or admin session: which modules are on and which users are ignored, as the admin channel page shows them |
 | `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. `/admin/explain` explains as a chatter you name (§4.4). |
 | `GET /explain/<token>` | **Now** | The full `!explain` report chat links to (§4.4). Public, short-lived, and it shows only what its caller saw. |
 | `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. The command reference and the channel pages share one compact table: a line per command, a `<details>` pane for arguments, cooldowns and examples, and a search box that filters client-side over a precomputed `data-search` string (so it needs no request per keystroke, and the page still lists everything without JavaScript). |
@@ -611,7 +614,7 @@ A **race window** remains: a mod can act after the message has already been sent
   - It is a web component, `<dtb-editor>`, that upgrades the `<textarea>` it wraps — so a page works without JavaScript and an ordinary form post still carries the same field. Only this component needs Node tooling.
   - It's on the language page as a playground today; the pages that edit bodies and triggers can use the same element.
 - **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
-- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes.
+- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `dtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
 
 *Future (not designed): Twitch OAuth login for a per-user dashboard.* Two ways in exist today, and they
 meet in one place: `_authenticate` in `api/routes/data.py` takes an API key (`api/keys.py`) or an admin
@@ -653,7 +656,7 @@ src/doomtp_bot/
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
 │               moderation.py quotes.py logsearch.py                       ✔ timeout, shoutout (§4.3); quotes; log search
 ├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
-└─ api/         app.py keys.py routes/ (health auth language data)         ✔
+└─ api/         app.py keys.py routes/ (health auth language data session site) ✔
                 webui/static/editor/editor.js                              ✔ the built editor bundle, committed
 
 web-editor/                  # the only Node-tooled part: CodeMirror 6 → one static bundle (ADR-0011)
