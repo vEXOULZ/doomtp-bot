@@ -77,7 +77,7 @@ login becomes an API that the internet can reach, which is why logins are now ra
   which defeats the limit, or lumps every login behind the proxy into one address, so one person's typos
   lock everyone out. Set it to the proxy's address, nothing wider.
 - **Revisit:** the Twitch login in the plan for the sites (a per-user dashboard) adds a new kind of caller
-  beside the session and the key (architecture §11). It is designed when it is built, not here.
+  beside the session and the key (architecture §11). ADR-0017 proposes it.
 
 ## Action Items
 

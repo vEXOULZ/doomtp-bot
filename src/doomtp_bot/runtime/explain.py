@@ -79,6 +79,7 @@ class InvocationReport:
     index: int
     name: str
     source: str = "unknown"  # builtin | publication | personal | unknown
+    module: str = ""  # a pack's name for a command it brings, `custom` for one published on its own
     owner: str = ""
     version: int = 0
     required_role: str = ""
@@ -189,6 +190,13 @@ async def explain(
     report.stores = _stores(node, ctx)
     if not pre.ok:
         report.failure, report.failed_index = pre.result, pre.failed_index
+        switched_off = next(
+            (i for i in report.invocations if i.index == pre.failed_index and i.reason.endswith(" off")), None
+        )
+        if switched_off is not None and report.failure is not None:  # chat says "unknown"; explain says why
+            report.failure = dataclasses.replace(
+                report.failure, message=f"{switched_off.name}: {switched_off.reason}"
+            )
         return report
     if run:
         await _dry_run(runtime, text, ctx, report, context)
@@ -208,17 +216,23 @@ def _describe(inv: Any, ctx: ExecContext, runtime: Runtime, resolver: Any, resol
         else (spec.required_role, None)
     )
     waiting = runtime.policy.check_cooldown(ctx, spec).info  # reported, not failed on (spec §5.2)
+    reason = "" if decision.allowed else (decision.reason or str(decision.code))
+    switched_off = getattr(runtime.policy, "switched_off_by", None)
+    off = switched_off(ctx.channel.id, spec) if switched_off is not None and not decision.allowed else None
+    if off is not None:
+        reason = f"{off} off"  # "module off" or "command off"; `module` says which module
     custom = resolved.custom
     return InvocationReport(
         index=inv.index,
         name=inv.name,
         source=resolved.source,
+        module=spec.module,
         owner=custom.owner_login if custom else "",
         version=custom.version if custom else 0,
         required_role=required,
         rank=ctx.invoker.rank if ctx.invoker else 0,
         allowed=decision.allowed,
-        reason="" if decision.allowed else (decision.reason or str(decision.code)),
+        reason=reason,
         cooldown_tier_s=waiting.get("tier_remaining", 0.0),
         cooldown_user_s=waiting.get("user_remaining", 0.0),
         input_mode=str(spec.input),

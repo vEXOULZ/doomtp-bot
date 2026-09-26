@@ -346,5 +346,5 @@ class PolicyRepository:
                 channel_id,
                 user_id,
                 None,
-                {"login": user_login},
+                {"login": user_login, "reason": reason} if reason else {"login": user_login},
             )

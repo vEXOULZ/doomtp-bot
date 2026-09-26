@@ -49,6 +49,17 @@ class CommandRule:
     allowed_roles: tuple[str, ...] | None
 
 
+@dataclass(frozen=True, slots=True)
+class IgnoreEntry:
+    """One `ignore_list` row. `added_by` is whoever set it: the user themselves after `ignore me`."""
+
+    user_id: str
+    user_login: str | None
+    reason: str | None
+    added_by: str | None
+    added_at: int  # ms epoch
+
+
 @dataclass(frozen=True)
 class PolicySnapshot:
     channels: dict[str, ChannelSettings] = field(default_factory=dict)
@@ -65,6 +76,7 @@ class PolicySnapshot:
     cooldown_rules: dict[tuple[str, str], dict[str, Cooldown]] = field(default_factory=dict)
     callbacks: dict[tuple[str, str, str], str] = field(default_factory=dict)  # (channel, scope, kind) → expr
     ignored: dict[str, frozenset[str]] = field(default_factory=dict)  # channel_id|GLOBAL → user_ids
+    ignore_entries: dict[str, dict[str, IgnoreEntry]] = field(default_factory=dict)  # scope → user_id → row
 
     def role_named(self, channel_id: str, name: str) -> Role | None:
         return self.roles_by_scope.get(channel_id, {}).get(name) or self.roles_by_scope.get(GLOBAL, {}).get(
@@ -163,10 +175,13 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
         for r in await cur.fetchall():
             snap.callbacks[(r["channel_id"], r["scope"], r["kind"])] = r["expr"]
 
-    ignored: dict[str, set[str]] = {}
-    async with await conn.execute("SELECT channel_id, user_id FROM ignore_list") as cur:
+    async with await conn.execute(
+        "SELECT channel_id, user_id, user_login, reason, added_by, added_at FROM ignore_list"
+    ) as cur:
         for r in await cur.fetchall():
-            ignored.setdefault(r["channel_id"], set()).add(r["user_id"])
-    snap.ignored.update({k: frozenset(v) for k, v in ignored.items()})
+            snap.ignore_entries.setdefault(r["channel_id"], {})[r["user_id"]] = IgnoreEntry(
+                r["user_id"], r["user_login"], r["reason"], r["added_by"], r["added_at"]
+            )
+    snap.ignored.update({k: frozenset(v) for k, v in snap.ignore_entries.items()})
 
     return dataclasses.replace(snap, global_admins=admins)

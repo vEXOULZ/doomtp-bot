@@ -24,6 +24,7 @@ from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
+from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import Context
@@ -88,7 +89,12 @@ async def seed(
     await policy.mutate(channels)
     vex = USERS["vexoulz"]
     await policy.mutate(lambda repo: repo.set_channel_field(vex, "prefix", "!", SETUP))
-    await policy.mutate(lambda repo: repo.set_ignored(vex, USERS["pest"], "pest", True, SETUP))
+    await policy.mutate(
+        lambda repo: repo.set_ignored(vex, USERS["pest"], "pest", True, Actor(vex, "chat"), reason="spam")
+    )
+    await policy.mutate(  # `ignore me` in chat: alice may take this one back herself
+        lambda repo: repo.set_ignored(vex, USERS["alice"], "alice", True, Actor(USERS["alice"], "chat"))
+    )
 
     alice = USERS["alice"]
     made = {}
@@ -131,7 +137,12 @@ async def main(args: argparse.Namespace) -> None:
     triggers = TriggerService(dbs.bot, filters=filters)
     await triggers.reload()
     twitch = StandInTwitch()
-    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy, "packs": packs})
+    runtime = Runtime(
+        builtin_registry(),
+        policy=policy,
+        custom=CustomCommandLoader(customcmds, packs),  # without it, explain knows no custom command
+        services={"policy": policy, "packs": packs, "customcmds": customcmds},
+    )
     triggers.parser_params = runtime.parser_params
     await seed(policy, customcmds, packs, triggers=triggers, filters=filters)
     await triggers.reload()

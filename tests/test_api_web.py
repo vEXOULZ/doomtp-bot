@@ -76,6 +76,9 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
         "csrf": None,
         "expires_at": None,
         "admin_enabled": True,
+        "role": None,
+        "user": None,
+        "channels": None,
     }
     assert (await client.post("/api/v1/session", json={"password": "nope"})).status_code == 401
 
@@ -85,6 +88,8 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
     assert "httponly" in cookie and "samesite=lax" in cookie and "secure" not in cookie  # plain http here
     session = (await client.get("/api/v1/session")).json()
     assert session["authenticated"] and session["csrf"] == response.json()["csrf"] and session["expires_at"]
+    # The password is an admin with no Twitch user behind it, over every channel (ADR-0017).
+    assert (session["role"], session["user"], session["channels"]) == ("admin", None, None)
 
     # The same session works on the data API, and it is the one the admin pages use.
     assert (await client.get("/api/v1/channels")).status_code == 200
@@ -181,15 +186,15 @@ async def test_a_channels_modules_and_ignored_users(client: httpx.AsyncClient, a
     names = [m["module"] for m in modules]
     assert names == sorted(names) and all(m["enabled"] for m in modules)
     assert any(not m["toggleable"] for m in modules)  # core can't be turned off
+    assert {m["kind"] for m in modules} == {"builtin"}  # nothing published here yet
 
     policy = app.state.policy
     actor = Actor(None, "test")
     await policy.mutate(lambda repo: repo.set_ignored(CHANNEL_ID, "555", "pest", True, actor))
     await policy.mutate(lambda repo: repo.set_ignored(GLOBAL, "666", "spammer", True, actor))
-    assert (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/ignored")).json() == {
-        "ignored": ["555"],
-        "ignored_everywhere": ["666"],
-    }
+    found = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/ignored")).json()
+    assert [(e["user_id"], e["login"]) for e in found["ignored"]] == [("555", "pest")]
+    assert [(e["user_id"], e["login"]) for e in found["ignored_everywhere"]] == [("666", "spammer")]
 
 
 # ── public reads ───────────────────────────────────────────────────────────

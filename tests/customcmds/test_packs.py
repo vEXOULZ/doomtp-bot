@@ -286,3 +286,31 @@ async def test_pack_writes_are_audited_with_the_source_they_came_from(h: Harness
         ("pack.delete", "api"),
         ("pack.create", "chat"),  # chat still says chat
     ]
+
+
+async def test_custom_is_a_module_for_commands_published_one_by_one(h: Harness) -> None:
+    await h.say("mod", "!cc add hype echo hyped")
+    listed = (await h.run("mod", "!module list")).result.data
+    assert isinstance(listed, dict) and "custom" not in listed  # nothing published one by one yet
+
+    await h.say("alice", "!cc add lurk echo lurking")
+    await h.say("alice", "!cc pack create chill")
+    await h.say("alice", "!cc pack add chill lurk")
+    await h.say("alice", "!cc pack share chill on")
+    await h.say("mod", "!cc publish pack @alice chill")
+    await h.say("mod", "!cc publish hype")
+    assert (await h.run("mod", "!module list")).result.data["custom"] is True  # type: ignore[index]
+
+    assert await h.say("mod", "!module disable custom") == "custom disabled here"
+    assert await h.say("bob", "!hype") is None  # off, and it answers like an unknown command
+    assert await h.say("bob", "!lurk") == "lurking"  # a pack is its own module
+    assert await h.say("mod", "!module reset custom") == "custom reset here"
+    assert await h.say("bob", "!hype") == "hyped"
+
+
+async def test_a_custom_command_cannot_ignore_whoever_runs_it(h: Harness) -> None:
+    await h.say("mod", "!cc add trap ignore me")
+    await h.say("mod", "!cc publish trap")
+    refused = await h.run("bob", "!trap")
+    assert refused.result.message == "ignore me only works typed in chat"
+    assert not h.policy.is_ignored(CHANNEL_ID, USERS["bob"]["id"])

@@ -38,21 +38,32 @@ def client_address(request: Request) -> str:
 
 
 def _session_json(auth: AdminAuth, session: Session | None) -> dict[str, Any]:
+    """`role`, `user` and `channels` say who is behind the session (ADR-0017): the password is an admin
+    with no user; a Twitch sign-in names the user, and a moderator's `channels` are the logins they may
+    manage (null means every channel)."""
+    user = {"id": session.user_id, "login": session.user_login} if session and session.user_id else None
+    channels = sorted(session.channels) if session and session.channels is not None else None
     return {
         "authenticated": session is not None,
         "csrf": session.csrf if session else None,
         "expires_at": int((time.time() + auth.expires_in(session)) * 1000) if session else None,
         "admin_enabled": auth.enabled,
+        "role": session.role if session else None,
+        "user": user,
+        "channels": channels,
     }
 
 
-def require_session(request: Request, *, write: bool) -> Session:
-    """The caller's admin session, or 401. A write also needs the session's CSRF token."""
+def require_session(request: Request, *, write: bool, admin: bool = True) -> Session:
+    """The caller's session, or 401; 403 unless it is an admin's when `admin`. A write also needs the
+    session's CSRF token."""
     auth = _auth(request)
     token = request.cookies.get(SESSION_COOKIE)
     session = auth.session(token)
     if session is None:
         raise HTTPException(status_code=401, detail="an admin session is required")
+    if admin and not session.is_admin:  # keys reach every channel, so only an admin manages them (ADR-0017)
+        raise HTTPException(status_code=403, detail="only an admin can do this")
     if write and not auth.valid_csrf(token, request.headers.get("x-csrf-token")):
         raise HTTPException(status_code=403, detail="a session write needs the X-CSRF-Token header")
     return session
@@ -104,7 +115,7 @@ async def logout(request: Request) -> Response:
     auth = _auth(request)
     token = request.cookies.get(SESSION_COOKIE)
     if auth.session(token) is not None:
-        require_session(request, write=True)  # a cross-site page must not be able to log you out
+        require_session(request, write=True, admin=False)  # a cross-site page must not be able to log you out
         auth.logout(token)
     response = Response(status_code=204)
     response.delete_cookie(SESSION_COOKIE)

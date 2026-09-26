@@ -9,6 +9,7 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse
@@ -22,7 +23,7 @@ from doomtp_bot.policy.roles import (
     GLOBAL,
     can_manage_role,
 )
-from doomtp_bot.runtime.context import Args, CommandContext
+from doomtp_bot.runtime.context import Args, Chatter, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
@@ -255,15 +256,11 @@ CMD_USAGE = "cmd enable|disable|reset <command> [global] | log <command> <off|er
 
 
 async def _pack_modules(ctx: CommandContext) -> dict[str, CommandSpec]:
-    """Pack names usable with !module here: what this channel published, plus global packs."""
-    packs = ctx.exec.services.get("packs")
-    if packs is None:
-        return {}
-    found: dict[str, CommandSpec] = {}
-    for publication, pack in await packs.publications_in(ctx.channel.id, include_global=True):
-        if publication.status == "active":
-            found[pack.name] = CommandSpec(name="", module=pack.name, summary=pack.summary)
-    return found
+    """Pack names usable with !module here (this channel's packs and global ones), and `custom` when
+    anything is published one by one."""
+    services = ctx.exec.services
+    found = await custom_modules(ctx.channel.id, services.get("packs"), services.get("customcmds"))
+    return {name: CommandSpec(name="", module=name, summary="") for name in found}
 
 
 def _scope(ctx: CommandContext, v: list[str], position: int) -> str:
@@ -340,7 +337,17 @@ async def _cmd(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 # ── !ignore / !prefix / !admin ──────────────────────────────────────────────
-IGNORE_USAGE = "ignore list | add|remove <user> [global]"
+IGNORE_USAGE = "ignore me | list | add|remove <user> [global]"
+UNIGNORE_USAGE = "unignore me"
+MODERATOR_RANK = BUILTIN_RANKS["moderator"]
+
+
+def _typed_by_chatter(ctx: CommandContext, what: str) -> Chatter:
+    """The chatter, when they typed this themselves. Not from a trigger, and not from inside a custom
+    command, where someone else's body would decide to ignore whoever ran it."""
+    if ctx.invoker is None or ctx.exec.publisher is not None or ctx.exec.trigger_type != "chat":
+        raise CommandError(f"{what} only works typed in chat")
+    return ctx.invoker
 
 
 @_handler
@@ -348,6 +355,14 @@ async def _ignore(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
     need(v, 1, IGNORE_USAGE)
     action = v[0].lower()
+    if action == "me" and len(v) == 1:  # anyone may opt out of the bot here; `unignore me` undoes it
+        me = _typed_by_chatter(ctx, "ignore me")
+        await _write(ctx, lambda repo: repo.set_ignored(ctx.channel.id, me.id, me.login, True, actor(ctx)))
+        return Result.success(
+            f"ignoring you here, {me.display}; say {ctx.channel.prefix}unignore me to come back"
+        )
+    if rank(ctx) < MODERATOR_RANK:  # everything but `me` is for moderators, as the whole command was
+        raise CommandError("only moderators can manage the ignore list", Code.DENIED)
     if action == "list":
         ids = sorted(policy.ignored_in(ctx.channel.id))
         return Result.success(f"{len(ids)} ignored here", ids)
@@ -361,6 +376,22 @@ async def _ignore(ctx: CommandContext, v: list[str], args: Args) -> Result:
         scope,
     )
     return Result.success(f"{'ignoring' if action == 'add' else 'no longer ignoring'} {user['display']}")
+
+
+@_handler
+async def _unignore(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """Lift an ignore the chatter set on themselves. The dispatcher lets this one line through from a
+    self-ignored chatter (`PolicyService.ignored_only_by_self`); an ignore someone else set stays."""
+    if [w.lower() for w in v] != ["me"]:
+        raise CommandError(f"usage: {UNIGNORE_USAGE}")
+    policy, me = policy_of(ctx), _typed_by_chatter(ctx, "unignore me")
+    entry = policy.ignore_entry(ctx.channel.id, me.id)
+    if entry is None:
+        return Result.failure(Code.FAIL, "you aren't ignored here")
+    if entry.added_by != me.id:
+        return Result.failure(Code.FAIL, "a moderator set that ignore; only a moderator can lift it")
+    await _write(ctx, lambda repo: repo.set_ignored(ctx.channel.id, me.id, me.login, False, actor(ctx)))
+    return Result.success(f"welcome back, {me.display}")
 
 
 def validate_prefix(prefix: str) -> str | None:
@@ -446,7 +477,9 @@ COMMANDS: tuple[Command, ...] = (
     _make("cooldown", "Change command cooldowns per role", COOLDOWN_USAGE, _cooldown),
     _make("module", "Turn command groups on or off", MODULE_USAGE, _module),
     _make("cmd", "Turn a command on or off, or set its log level", CMD_USAGE, _cmd),
-    _make("ignore", "Ignore a user's commands", IGNORE_USAGE, _ignore),
+    # `ignore me` is for everyone, so the command is; the handler keeps the rest for moderators.
+    _make("ignore", "Ignore a user's commands, or yourself", IGNORE_USAGE, _ignore, required_role="everyone"),
+    _make("unignore", "Stop ignoring yourself", UNIGNORE_USAGE, _unignore, required_role="everyone"),
     _make("prefix", "Show or change the command prefix", "prefix [new prefix]", _prefix),
     _make("admin", "Manage global bot admins", ADMIN_USAGE, _admin, required_role="bot_owner"),
     command(

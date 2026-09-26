@@ -276,3 +276,25 @@ class PackService:
         if cur.rowcount:
             await self.commands._grants_changed()
         return bool(cur.rowcount)
+
+
+async def custom_modules(
+    channel_id: str, packs: PackService | None, commands: CustomCommandService | None
+) -> dict[str, Literal["pack", "custom"]]:
+    """The module names custom commands bring to a channel, for `!module` and the API's module list.
+
+    Every pack active here or globally, under its own name, and `custom` when any command is published
+    here or globally one by one: those run under `custom` (`resolution.spec_for`), and so do personal
+    aliases, which a channel can't list but does switch off with it.
+    """
+    found: dict[str, Literal["pack", "custom"]] = {}
+    if packs is not None:
+        for publication, pack in await packs.publications_in(channel_id, include_global=True):
+            if publication.status == "active":
+                found[pack.name] = "pack"
+    if commands is not None:
+        for scope in (channel_id, GLOBAL):
+            if await commands.publications_in(scope):
+                found["custom"] = "custom"
+                break
+    return found

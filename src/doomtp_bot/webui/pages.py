@@ -87,6 +87,8 @@ def _require_admin(request: Request) -> Any:
     session = auth.session(request.cookies.get(SESSION_COOKIE))
     if session is None:
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
+    if not session.is_admin:  # these pages show every channel; a moderator uses the new site (ADR-0017)
+        raise HTTPException(status_code=403, detail="the admin pages are for admins")
     return session
 
 

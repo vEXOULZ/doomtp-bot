@@ -30,6 +30,16 @@ class Session:
     token: str
     created_at: float
     csrf: str
+    # Who is behind it (ADR-0017). The password gives an admin session with no user; a Twitch sign-in
+    # gives the signed-in user, as an admin (bot owner or bot admin) or a moderator of `channels`.
+    role: str = "admin"  # "admin" | "moderator"
+    user_id: str | None = None
+    user_login: str | None = None
+    channels: frozenset[str] | None = None  # logins a moderator manages; None means every channel
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
 
 
 @dataclass
@@ -60,8 +70,28 @@ class AdminAuth:
         _, digest = hash_password(attempt, self._salt)
         return hmac.compare_digest(digest, self._digest)
 
-    def login(self) -> Session:
-        session = Session(secrets.token_urlsafe(32), self._now(), secrets.token_urlsafe(16))
+    def login(
+        self,
+        *,
+        role: str = "admin",
+        user_id: str | None = None,
+        user_login: str | None = None,
+        channels: frozenset[str] | None = None,
+    ) -> Session:
+        """A new session. Without arguments, the password's admin session."""
+        if role not in ("admin", "moderator"):
+            raise ValueError(f"unknown session role {role}")
+        if role == "moderator" and (user_id is None or channels is None):
+            raise ValueError("a moderator session needs the user and the channels they moderate")
+        session = Session(
+            secrets.token_urlsafe(32),
+            self._now(),
+            secrets.token_urlsafe(16),
+            role=role,
+            user_id=user_id,
+            user_login=user_login,
+            channels=frozenset(c.lower() for c in channels) if channels is not None else None,
+        )
         self._sessions[session.token] = session
         return session
 

@@ -22,6 +22,7 @@ from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.engine import Runtime
@@ -404,3 +405,26 @@ async def test_backfill_explains_itself_and_waits_for_the_broadcaster(h: Harness
     await h.say("doomtp", "!backfill off")
     await h.settle()
     assert not h.policy.channel_settings(CHANNEL_ID).history_backfill
+
+
+async def test_ignore_me_can_be_taken_back_but_an_ignore_someone_else_set_stays(h: Harness) -> None:
+    await h.say("alice", "!ignore me")
+    await h.dispatcher.drain()
+    await h.say("alice", "!ping")  # ignored now
+    await h.say("alice", "!UNIGNORE  me")  # the one line that still reaches the bot
+    await h.dispatcher.drain()
+    await h.say("alice", "!ping")
+
+    await h.policy.mutate(lambda r: r.set_ignored(CHANNEL_ID, "401", "bob", True, Actor("1")))
+    await h.say("bob", "!unignore me")  # a moderator's ignore: the bot doesn't hear it
+
+    await h.say("alice", "!ignore me")
+    await h.dispatcher.drain()
+    await h.policy.mutate(lambda r: r.set_ignored(GLOBAL, "400", "alice", True, Actor("1")))
+    await h.say("alice", "!unignore me")  # ignored everywhere by an admin as well: still out
+    await h.settle()
+
+    replies = [text for _, text, _ in h.twitch.sent]
+    assert replies[0].startswith("ignoring you here, Alice; say !unignore me")
+    assert replies[1:] == ["welcome back, Alice", "pong", replies[0]]
+    assert h.policy.is_ignored(CHANNEL_ID, "401") and h.policy.is_ignored(CHANNEL_ID, "400")

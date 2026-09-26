@@ -394,3 +394,25 @@ async def test_sentinels_cannot_be_restricted_or_cooled_down(h: Harness) -> None
     )
     for _ in range(2):
         assert await h.reply("viewer", "!false || true") is None  # allowed, silent, never on cooldown
+
+
+async def test_anyone_may_ignore_themselves_but_only_moderators_manage_the_list(h: Harness) -> None:
+    denied = await h.say("viewer", "!ignore add @viewer2")
+    assert denied is not None and denied.result.code == Code.DENIED
+    assert (await h.say("viewer", "!ignore list")).result.code == Code.DENIED  # type: ignore[union-attr]
+    assert not h.policy.is_ignored(CHANNEL_ID, "401")
+
+    reply = await h.reply("viewer", "!ignore me")
+    assert reply is not None and reply.startswith("ignoring you here, Viewer")
+    entry = h.policy.ignore_entry(CHANNEL_ID, "400")
+    assert entry is not None and entry.added_by == "400"  # their own id: they may lift it themselves
+    assert h.policy.ignored_only_by_self(CHANNEL_ID, "400")
+
+    await h.reply("mod", "!ignore add @viewer2")
+    assert (
+        await h.reply("viewer2", "!unignore me")
+        == "a moderator set that ignore; only a moderator can lift it"
+    )
+    assert await h.reply("viewer", "!unignore me") == "welcome back, Viewer"
+    assert await h.reply("viewer", "!unignore me") == "you aren't ignored here"
+    assert (await h.audit_actions())[-2:] == ["ignore.add", "ignore.remove"]

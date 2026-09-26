@@ -15,9 +15,12 @@ from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
+from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
+from doomtp_bot.policy.repository import Actor
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
@@ -27,7 +30,7 @@ from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
-USERS = {"doomtp": CHANNEL_ID, "friend": "200"}
+USERS = {"doomtp": CHANNEL_ID, "friend": "200", "alice": "400", "mod": "300"}
 
 
 class FakeTwitch:
@@ -46,6 +49,9 @@ class FakeTwitch:
     async def resolve_user(self, login: str) -> dict[str, str] | None:
         uid = USERS.get(login.lower().lstrip("@"))
         return {"id": uid, "name": login.lower(), "display": login.title()} if uid else None
+
+    async def login_for(self, user_id: str) -> str | None:
+        return next((login for login, uid in USERS.items() if uid == user_id), None)
 
 
 class FakeSessions:
@@ -66,7 +72,13 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
     customcmds = CustomCommandService(dbs.bot, filters=filters)
     triggers = TriggerService(dbs.bot, filters=filters)
     await triggers.reload()
-    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
+    packs = PackService(dbs.bot, customcmds)
+    runtime = Runtime(
+        builtin_registry(),
+        policy=policy,
+        custom=CustomCommandLoader(customcmds, packs),
+        services={"policy": policy, "customcmds": customcmds, "packs": packs},
+    )
     triggers.parser_params = runtime.parser_params
     health = HealthRegistry()
     health.register("databases", _ok_check)
@@ -79,7 +91,7 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
         policy=policy,
         services={
             "customcmds": customcmds,
-            "packs": PackService(dbs.bot, customcmds),
+            "packs": packs,
             "triggers": triggers,
             "filters": filters,
             "health": health,
@@ -472,3 +484,124 @@ async def test_channel_variables_are_readable(
     assert body["variables"] == [
         {"name": "deaths", "value": 7, "updated_at": body["variables"][0]["updated_at"], "updated_by": "300"}
     ]
+
+
+# ── packs as modules, explain, and the ignore list ─────────────────────────
+async def _publish_pack_and_command(app: Any) -> None:
+    """A global `games` pack holding `coin`, and `hype` published here on its own (under `custom`)."""
+    service: CustomCommandService = app.state.customcmds
+    packs: PackService = app.state.packs
+    made = {}
+    for name, body in (("coin", "echo heads"), ("hype", "echo hyped")):
+        made[name] = await service.create(
+            owner_user_id="400", owner_login="alice", name=name, body=body, channel_id=CHANNEL_ID, prefix="!"
+        )
+    await service.publish(channel_id=CHANNEL_ID, name="hype", command=made["hype"], published_by="300")
+    games = await packs.create(owner_user_id="400", name="games")
+    await packs.add_member(games, made["coin"])
+    await packs.publish(channel_id=GLOBAL, pack=games, published_by="999")
+
+
+async def test_the_module_list_has_packs_and_custom_with_chats_toggle_rules(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    await _publish_pack_and_command(app_and_keys[0])
+
+    async def modules() -> dict[str, dict[str, Any]]:
+        found = await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/modules", headers=auth(write_key))
+        return {m["module"]: m for m in found.json()["modules"]}
+
+    listed = await modules()
+    assert listed["games"] == {"module": "games", "enabled": True, "toggleable": True, "kind": "pack"}
+    assert listed["custom"] == {"module": "custom", "enabled": True, "toggleable": True, "kind": "custom"}
+    assert listed["basic"]["kind"] == "builtin"
+
+    policy = app_and_keys[0].state.policy
+    actor = Actor(None, "test")
+    await policy.mutate(lambda repo: repo.set_module_toggle(GLOBAL, "games", False, actor))
+    assert (await modules())["games"]["enabled"] is False  # off everywhere
+    put = await client.put(
+        f"/api/v1/channels/{CHANNEL_LOGIN}/modules/games", json={"enabled": True}, headers=auth(write_key)
+    )
+    assert put.status_code == 200
+    assert (await modules())["games"]["enabled"] is False  # a global off wins over this channel, as in chat
+    await policy.mutate(lambda repo: repo.set_module_toggle(GLOBAL, "games", None, actor))
+    assert (await modules())["games"]["enabled"] is True  # now the channel's own toggle counts
+    await client.put(
+        f"/api/v1/channels/{CHANNEL_LOGIN}/modules/custom", json={"enabled": False}, headers=auth(write_key)
+    )
+    assert (await modules())["custom"]["enabled"] is False
+
+
+async def test_explain_knows_pack_commands_and_says_when_their_module_is_off(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    await _publish_pack_and_command(app_and_keys[0])
+    await client.patch(f"/api/v1/channels/{CHANNEL_LOGIN}", json={"prefix": "!"}, headers=auth(write_key))
+
+    async def explain(text: str) -> dict[str, Any]:
+        body = {"text": text, "context": "line", "channel": CHANNEL_LOGIN}
+        return (await client.post("/api/v1/explain", json=body)).json()  # type: ignore[no-any-return]
+
+    on = await explain("!coin")
+    assert on["failure"] is None
+    step = on["invocations"][0]
+    assert (step["source"], step["module"], step["owner"], step["allowed"]) == (
+        "publication", "games", "alice", True,
+    )  # fmt: skip
+
+    await client.put(
+        f"/api/v1/channels/{CHANNEL_LOGIN}/modules/games", json={"enabled": False}, headers=auth(write_key)
+    )
+    off = await explain("!coin")
+    assert off["invocations"][0]["reason"] == "module off"
+    assert off["failure"]["message"] == "coin: module off"  # not "unknown command"
+
+    await client.put(
+        f"/api/v1/channels/{CHANNEL_LOGIN}/modules/custom", json={"enabled": False}, headers=auth(write_key)
+    )
+    assert (await explain("!hype"))["invocations"][0]["reason"] == "module off"
+    assert (await explain("!nothing"))["invocations"][0]["reason"] == "unknown command"
+
+
+async def test_ignored_users_say_who_ignored_them_and_can_be_changed(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    policy = app_and_keys[0].state.policy
+    await policy.mutate(  # `ignore add` by a moderator, and `ignore me` by alice
+        lambda repo: repo.set_ignored(CHANNEL_ID, "200", "friend", True, Actor("300", "chat"), reason="spam")
+    )
+    await policy.mutate(lambda repo: repo.set_ignored(CHANNEL_ID, "400", "alice", True, Actor("400", "chat")))
+    url = f"/api/v1/channels/{CHANNEL_LOGIN}/ignored"
+
+    listed = (await client.get(url, headers=auth(write_key))).json()
+    assert listed["ignored_everywhere"] == []
+    alice, friend = listed["ignored"]
+    assert (alice["user_id"], alice["added_by"], alice["added_by_login"]) == ("400", "400", "alice")
+    assert {k: friend[k] for k in ("login", "reason", "added_by", "added_by_login")} == {
+        "login": "friend", "reason": "spam", "added_by": "300", "added_by_login": "mod",
+    }  # fmt: skip
+    assert isinstance(friend["added_at"], int) and friend["added_at"] > 1_600_000_000_000  # epoch ms
+
+    body = {"login": "doomtp", "everywhere": True, "reason": "testing"}
+    assert (await client.post(url, json=body, headers=auth(write_key))).status_code == 201
+    everywhere = (await client.get(url, headers=auth(write_key))).json()["ignored_everywhere"]
+    assert [(e["user_id"], e["reason"], e["added_by"]) for e in everywhere] == [(CHANNEL_ID, "testing", None)]
+    assert (await client.post(url, json={"login": "nobody"}, headers=auth(write_key))).status_code == 404
+
+    assert (await client.delete(f"{url}/200", headers=auth(write_key))).status_code == 200
+    assert (await client.delete(f"{url}/200", headers=auth(write_key))).status_code == 404
+    assert (await client.delete(f"{url}/{CHANNEL_ID}", headers=auth(write_key))).status_code == 404
+    lifted = await client.delete(f"{url}/{CHANNEL_ID}", params={"everywhere": True}, headers=auth(write_key))
+    assert lifted.status_code == 200
+    remaining = (await client.get(url, headers=auth(write_key))).json()["ignored"]
+    assert [e["user_id"] for e in remaining] == ["400"]
+
+    _, reader = await app_and_keys[1].create(name="reader")
+    assert (await client.delete(f"{url}/400", headers=auth(reader))).status_code == 403
+
+    audit = (await client.get("/api/v1/audit", headers=auth(write_key))).json()["entries"]
+    by_api = [
+        (e["action"], e["target"]) for e in audit if e["via"] == "api" and e["action"].startswith("ignore.")
+    ]
+    assert by_api == [("ignore.remove", CHANNEL_ID), ("ignore.remove", "200"), ("ignore.add", CHANNEL_ID)]
