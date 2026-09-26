@@ -35,8 +35,10 @@ form post that only works for a page the bot rendered itself.
   - `GET/POST/DELETE /api/v1/keys`: API keys, **with a session only.** A key that could mint keys would
     turn one leaked `write` key into a permanent one. The secret is in the response that creates it and
     nowhere else, as on the admin page.
-  - Public: `GET /api/v1/site` (version, prefix, the channels the home page lists), `/roles`, `/grammar`,
-    `/explain/{token}`, `/packs` and `/channels/{login}/packs`.
+  - Public: `GET /api/v1/site` (version, prefix, the channels the home page lists),
+    `/site/channels/{login}` (a channel page's header), `/roles`, `/grammar`, `/explain/{token}`, `/packs`
+    and `/channels/{login}/packs`. Custom commands carry their declared parameters, and `/commands`
+    says which built-ins are always on or have a fixed policy, as the command table shows.
   - Admin reads: `/channels/{login}/modules` and `/channels/{login}/ignored`.
   - Health needs nothing new: `/readyz` already reports each component.
 - **Failed logins are rate-limited per client address** (five in five minutes), for the JSON login and the

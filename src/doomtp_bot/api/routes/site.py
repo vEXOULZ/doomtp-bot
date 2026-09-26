@@ -38,6 +38,20 @@ async def site(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/site/channels/{login}")
+async def site_channel(request: Request, login: str) -> dict[str, Any]:
+    """What a channel's public page prints about it: its sign, its tier and whether the bot is there.
+    Any channel the bot knows, so a link to one it left still says so instead of a bare 404."""
+    settings = _channel(request, login)
+    return {
+        "login": settings.login,
+        "prefix": settings.prefix,
+        "tier": settings.tier,
+        "status": settings.status,
+        "active": settings.active,
+    }
+
+
 @router.get("/roles")
 async def roles() -> dict[str, Any]:
     """The built-in roles by rank, and the range channels may give roles of their own."""

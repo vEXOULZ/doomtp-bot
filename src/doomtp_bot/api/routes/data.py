@@ -24,6 +24,7 @@ from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.audit.log import read_audit
 from doomtp_bot.chatlog import queries
 from doomtp_bot.core.channels import ChannelBanned
+from doomtp_bot.customcmds.params import to_params
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
@@ -480,6 +481,17 @@ def _custom_json(command: Any) -> dict[str, Any]:
         "body": command.body,
         "version": command.version,
         "shareable": command.shareable,
+        "params": [
+            {
+                "position": p.position,
+                "name": p.name,
+                "type": p.type,
+                "required": p.required,
+                "description": p.description,
+                "choices": list(p.choices),
+            }
+            for p in to_params(command.params)
+        ],
     }
 
 

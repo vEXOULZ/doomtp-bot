@@ -246,3 +246,34 @@ async def test_published_packs_are_public(client: httpx.AsyncClient, app: Any) -
     here = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/packs")).json()["packs"]
     assert sorted((p["name"], p["scope"]) for p in here) == [("games", "global"), ("local", "channel")]
     assert (await client.get("/api/v1/channels/nobody/packs")).status_code == 404
+
+
+async def test_a_channel_page_summary_is_public(client: httpx.AsyncClient) -> None:
+    channel = (await client.get(f"/api/v1/site/channels/{CHANNEL_LOGIN}")).json()
+    assert channel == {"login": CHANNEL_LOGIN, "prefix": channel["prefix"], "tier": channel["tier"],
+                       "status": "joined", "active": True}  # fmt: skip
+    assert (await client.get("/api/v1/site/channels/nobody")).status_code == 404
+
+
+async def test_command_listings_carry_what_the_command_table_shows(
+    client: httpx.AsyncClient, app: Any
+) -> None:
+    builtins = {c["name"]: c for c in (await client.get("/api/v1/commands")).json()["commands"]}
+    assert all({"toggleable", "fixed_policy"} <= set(c) for c in builtins.values())
+    assert all("choices" in p for c in builtins.values() for p in c["params"])
+
+    customcmds, packs = app.state.customcmds, app.state.packs
+    hug = await customcmds.create(
+        owner_user_id="400",
+        owner_login="alice",
+        name="hug",
+        body="echo hugs {arg.1}",
+        channel_id=GLOBAL,
+        prefix="!",
+    )
+    await customcmds.set_params(hug, [{"position": "1", "name": "target", "type": "str"}])
+    games = await packs.create(owner_user_id="400", name="games")
+    await packs.add_member(games, hug)
+    await packs.publish(channel_id=GLOBAL, pack=games, published_by="1")
+    (listed,) = (await client.get("/api/v1/packs")).json()["packs"][0]["commands"]
+    assert [(p["position"], p["name"]) for p in listed["params"]] == [("1", "target")]
