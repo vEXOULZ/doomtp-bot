@@ -1,6 +1,6 @@
 # Roadmap and progress
 
-**As of 2026-09-23** (the architecture's own promises are tracked beside the ADRs', and all closed). Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-25** (the architecture's own promises are tracked beside the ADRs', and all closed). Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
 
@@ -28,10 +28,11 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 | [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
+| [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 2/5 | In progress |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**79 of 83 ADR action items are closed.** The four that aren't are below, and none of them is waiting on
-code — they are waiting on a person or a server. **All 9 architecture promises are closed**: six built,
+**81 of 88 ADR action items are closed.** Four of the seven open ones are waiting on a person or a server,
+not on code; the other three are ADR-0016's, and they are the new web site's work. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
@@ -59,6 +60,13 @@ never run is the real thing:
   from a password-protected server, and dropping the `bot` schema and running `pg_restore` brings it
   back whole. What has not happened is the same thing on the guest's own volume, on its own cron, with a
   copy then leaving the machine — and a backup nobody has carried off the box is half a backup.
+
+### The new web site — ADR-0016 items 3 to 5
+
+The JSON the pages need is in the API: session login, API keys, and the reads the Jinja pages used to
+take straight from the app. The pages themselves are being rebuilt in `dtp-web`, a separate repository
+on the design the other vexoulz sites share. When it covers every page, the bot stops serving its own
+(item 4) and §11 is rewritten to match (item 5). Until then both work, with one login.
 
 ### Waiting on a reply — ADR-0008 item 4
 

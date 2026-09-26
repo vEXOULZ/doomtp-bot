@@ -328,7 +328,17 @@ async def run(settings: Settings) -> None:
         admin_password=settings.admin_password_value(),
     )
     server = uvicorn.Server(
-        uvicorn.Config(app, host=settings.web_host, port=settings.web_port, log_config=None, lifespan="on")
+        uvicorn.Config(
+            app,
+            host=settings.web_host,
+            port=settings.web_port,
+            log_config=None,
+            lifespan="on",
+            # Client addresses (the login limiter's key) and https come from X-Forwarded-* only when the
+            # request arrives from one of these proxies.
+            proxy_headers=True,
+            forwarded_allow_ips=settings.web_forwarded_allow_ips,
+        )
     )
     log.info("bot.start", version=__version__, api=f"http://{settings.web_host}:{settings.web_port}")
     timers.start()

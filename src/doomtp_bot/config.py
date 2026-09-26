@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # The public pages can be opened by chat at PUBLIC_BASE_URL (a reverse proxy, a tunnel). Off by
     # default, because the web UI is LAN-only until then; on, `!explain` links to its full report.
     public_web_ui: bool = False
+    # Comma-separated addresses (or "*") of reverse proxies whose X-Forwarded-For/-Proto uvicorn believes.
+    # The default trusts only a proxy on the same host; anything else would let a client pick its address.
+    web_forwarded_allow_ips: str = "127.0.0.1"
 
     default_prefix: str = DEFAULT_PREFIX
 
