@@ -13,7 +13,9 @@ so is the deploy path. What is left is running it against real chat — see
 ## Connecting to Twitch
 
 1. Create an application at https://dev.twitch.tv/console/apps.
-   - **OAuth Redirect URL:** `http://localhost:8080/auth/callback`. It must match `PUBLIC_BASE_URL` + `/auth/callback`.
+   - **OAuth Redirect URLs:** `http://localhost:8080/auth/callback`. It must match `PUBLIC_BASE_URL` + `/auth/callback`.
+     To let moderators sign in to the web admin with Twitch (ADR-0017), add a second one,
+     `PUBLIC_BASE_URL` + `/auth/admin/callback` — for example `https://bot.example.com/auth/admin/callback`.
    - **Category:** Chat Bot. **Client type:** Confidential.
 2. Put the Client ID in `.env` as `TWITCH_CLIENT_ID`, and the client secret in `secrets/twitch_client_secret`. For local development you can use `TWITCH_CLIENT_SECRET` instead.
 3. Start the bot, then open `http://localhost:8080/auth/login` in a browser on the same machine. Sign in as the **bot account**, not your personal account.

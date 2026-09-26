@@ -1,6 +1,6 @@
 # ADR-0017: Moderator sessions through Twitch sign-in
 
-**Status:** Accepted (in progress; see Action Items) — 2026-09-26
+**Status:** Accepted — 2026-09-26
 **Date:** 2026-09-26
 **Deciders:** Project owner
 
@@ -112,7 +112,14 @@ last refresh.
 1. [x] Agree the `/session` shape and the table above with `doomtp-web`. *(2026-09-26)*
 2. [x] `Caller` from `api/access.py`, the `Actor` taken from it, an area on every private route, and a
    test that fails when a route has none. *(2026-09-26)*
-3. [ ] Twitch sign-in under `/auth/`: the OAuth flow, `channels` from Helix, the refresh, and a
+3. [x] Twitch sign-in under `/auth/`: the OAuth flow, `channels` from Helix, the refresh, and a
    `Session` made with `AdminAuth.login(role=…, user_id=…, user_login=…, channels=…)`. The session
    fields, the checks and the audit actor are already in place, so this item is only the sign-in.
+   *(2026-09-26: `/auth/admin/login` → `/auth/admin/callback`, `twitch/signin.py`; `twitch_login` on
+   `/session` tells the site whether to offer it.)*
 4. [x] Signed-in users may delete their own self-ignore. *(2026-09-26)*
+5. [x] Bot-wide changes stay with admins: `everywhere` on `POST`/`DELETE /channels/{login}/ignored`
+   answers 403 for a moderator. It is the only channel route that writes the `GLOBAL` scope; filters,
+   toggles, rules and triggers are written to the channel in the path. *(2026-09-26)*
+6. [x] A moderator session in `scripts/dev_api.py` (`--moderator login:channel`, `/dev/login-as`), so
+   the moderator view can be tried without Twitch. *(2026-09-26)*

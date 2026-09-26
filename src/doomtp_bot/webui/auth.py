@@ -36,6 +36,9 @@ class Session:
     user_id: str | None = None
     user_login: str | None = None
     channels: frozenset[str] | None = None  # logins a moderator manages; None means every channel
+    # A Twitch sign-in's token (`twitch.signin.Grant`), and when its role and channels were last checked.
+    grant: object | None = field(default=None, repr=False)
+    checked_at: float = 0.0
 
     @property
     def is_admin(self) -> bool:
@@ -77,6 +80,8 @@ class AdminAuth:
         user_id: str | None = None,
         user_login: str | None = None,
         channels: frozenset[str] | None = None,
+        grant: object | None = None,
+        checked_at: float = 0.0,
     ) -> Session:
         """A new session. Without arguments, the password's admin session."""
         if role not in ("admin", "moderator"):
@@ -91,6 +96,8 @@ class AdminAuth:
             user_id=user_id,
             user_login=user_login,
             channels=frozenset(c.lower() for c in channels) if channels is not None else None,
+            grant=grant,
+            checked_at=checked_at,
         )
         self._sessions[session.token] = session
         return session

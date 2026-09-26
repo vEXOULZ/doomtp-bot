@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from doomtp_bot import __version__
+from doomtp_bot.api.access import current_session
 from doomtp_bot.api.keys import ApiKeyError
 from doomtp_bot.api.routes.language import chatter_for
 from doomtp_bot.audit.log import read_audit
@@ -80,11 +81,11 @@ def _auth(request: Request) -> AdminAuth:
     return auth if isinstance(auth, AdminAuth) else AdminAuth()
 
 
-def _require_admin(request: Request) -> Any:
+async def _require_admin(request: Request) -> Any:
     auth = _auth(request)
     if not auth.enabled:
         raise HTTPException(status_code=404, detail="the admin UI is disabled (no ADMIN_PASSWORD set)")
-    session = auth.session(request.cookies.get(SESSION_COOKIE))
+    session = await current_session(request)  # a Twitch admin who stopped being one is caught here too
     if session is None:
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
     if not session.is_admin:  # these pages show every channel; a moderator uses the new site (ADR-0017)
@@ -304,7 +305,7 @@ async def logout(request: Request) -> RedirectResponse:
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_home(request: Request, new_key: str = "") -> HTMLResponse:
-    _require_admin(request)
+    await _require_admin(request)
     health = _state(request, "health")
     _, components = await health.snapshot() if health else (None, {})
     return _page(
@@ -343,7 +344,7 @@ async def admin_create_key(
     request: Request, name: str = Form(...), scopes: str = Form("read"), csrf: str = Form("")
 ) -> HTMLResponse:
     """Create an API key and show it once. It is never redirected through a URL, where it would be logged."""
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     keys = _state(request, "api_keys")
     if keys is None:
         raise HTTPException(status_code=503, detail="API keys aren't available")
@@ -358,7 +359,7 @@ async def admin_create_key(
 async def admin_revoke_key(
     request: Request, key_id: int = Form(...), csrf: str = Form("")
 ) -> RedirectResponse:
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     keys = _state(request, "api_keys")
     if keys is not None:
         await keys.revoke(key_id)
@@ -367,7 +368,7 @@ async def admin_revoke_key(
 
 @router.get("/admin/channels/{login}", response_class=HTMLResponse)
 async def admin_channel(request: Request, login: str) -> HTMLResponse:
-    _require_admin(request)
+    await _require_admin(request)
     settings = _channel_or_404(request, login)
     policy, runtime = _state(request, "policy"), _state(request, "runtime")
     triggers, filters = _state(request, "triggers"), _state(request, "filters")
@@ -395,7 +396,7 @@ async def admin_channel(request: Request, login: str) -> HTMLResponse:
 
 @router.get("/admin/explain", response_class=HTMLResponse)
 async def admin_explain_form(request: Request) -> HTMLResponse:
-    _require_admin(request)
+    await _require_admin(request)
     return _explain_page(request, {"channel": "", "text": "", "as_user": "", "badges": [], "run": False})
 
 
@@ -410,7 +411,7 @@ async def admin_explain(
     run: str = Form(""),
 ) -> HTMLResponse:
     """Explain as a chatter you name (architecture §11 `as_user`): admin only, never on a public link."""
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     login, dry_run = as_user.strip(), run == "on"
     form = {"channel": channel, "text": text, "as_user": login, "badges": badges or [], "run": dry_run}
     runtime, policy = _state(request, "runtime"), _state(request, "policy")
@@ -448,7 +449,7 @@ async def admin_toggle_module(
     request: Request, login: str, module: str = Form(...), enabled: str = Form(""), csrf: str = Form("")
 ) -> RedirectResponse:
     """Turn a module on or off for one channel, through the same service the chat command uses."""
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     settings = _channel_or_404(request, login)
     policy = _state(request, "policy")
     from doomtp_bot.policy.repository import Actor
@@ -462,7 +463,7 @@ async def admin_toggle_module(
 @router.post("/admin/channels/{login}/rejoin")
 async def admin_rejoin(request: Request, login: str, csrf: str = Form("")) -> RedirectResponse:
     """Bring the bot back to a channel it left because it was banned there — only ever by hand (§10)."""
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     settings = _channel_or_404(request, login)
     channels = _state(request, "channels")
     if channels is None:
@@ -477,7 +478,7 @@ async def admin_rejoin(request: Request, login: str, csrf: str = Form("")) -> Re
 async def admin_toggle_trigger(
     request: Request, login: str, trigger_id: int = Form(...), enabled: str = Form(""), csrf: str = Form("")
 ) -> RedirectResponse:
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     settings = _channel_or_404(request, login)
     triggers = _state(request, "triggers")
     await triggers.set_enabled(
@@ -494,7 +495,7 @@ async def admin_toggle_trigger(
 async def admin_toggle_filter(
     request: Request, login: str, entry_id: int = Form(...), enabled: str = Form(""), csrf: str = Form("")
 ) -> RedirectResponse:
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     settings = _channel_or_404(request, login)
     filters = _state(request, "filters")
     await filters.set_enabled(
@@ -511,7 +512,7 @@ async def admin_toggle_filter(
 async def admin_toggle_publication(
     request: Request, login: str, name: str = Form(...), enabled: str = Form(""), csrf: str = Form("")
 ) -> RedirectResponse:
-    _require_csrf(request, csrf)
+    await _require_csrf(request, csrf)
     settings = _channel_or_404(request, login)
     customcmds = _state(request, "customcmds")
     await customcmds.set_publication_status(
@@ -524,8 +525,8 @@ async def admin_toggle_publication(
     return RedirectResponse(f"/admin/channels/{login}", status_code=303)
 
 
-def _require_csrf(request: Request, csrf: str) -> None:
-    _require_admin(request)
+async def _require_csrf(request: Request, csrf: str) -> None:
+    await _require_admin(request)
     if not _auth(request).valid_csrf(request.cookies.get(SESSION_COOKIE), csrf):
         raise HTTPException(status_code=403, detail="stale form, please try again")
 

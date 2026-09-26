@@ -79,6 +79,7 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
         "role": None,
         "user": None,
         "channels": None,
+        "twitch_login": False,
     }
     assert (await client.post("/api/v1/session", json={"password": "nope"})).status_code == 401
 
