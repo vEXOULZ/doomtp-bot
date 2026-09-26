@@ -2,12 +2,17 @@
 
     docker compose --profile test up -d postgres-test
     python scripts/dev_api.py            # http://127.0.0.1:8080, admin password "admin"
+    python scripts/dev_api.py --moderator alice:vexoulz --moderator pest:vexoulz,doomtp
 
 It serves the same FastAPI app the bot does: the same routes, the same JSON, the same session login.
 What it leaves out is everything that talks to Twitch: no chat, no EventSub, and channel joins reach a
 stand-in that knows a few made-up users. The data lives in a database of its own (`doomtp_dev`, on the
 test server unless `--database-url` says otherwise), dropped and seeded again at every start, so
 whatever the site does to it is gone on the next run. Never point it at a real database.
+
+There is no Twitch sign-in either, so the moderator view (ADR-0017) comes from `/dev/login-as?user=alice`
+instead: a moderator session for a user named with `--moderator` (alice, of vexoulz, by default), made
+exactly as the sign-in makes one. That route is added here, to this script's app, and exists nowhere else.
 """
 
 from __future__ import annotations
@@ -18,9 +23,12 @@ from typing import Any
 
 import psycopg
 import uvicorn
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
 
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.api.routes.session import set_session_cookie
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
@@ -36,12 +44,16 @@ from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore, explain
 from doomtp_bot.storage.db import Databases, configure_event_loop
 from doomtp_bot.triggers.service import TriggerService
+from doomtp_bot.twitch.signin import safe_next
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.webui.auth import SESSION_COOKIE
 
 SERVER = "postgresql://postgres:postgres@127.0.0.1:55432"
 SETUP = Actor(None, "system")
 # Made-up Twitch users: the channels below, and a few people to ignore, join or explain as.
 USERS = {"vexoulz": "1001", "doomtp": "1002", "friendlychannel": "1003", "alice": "2001", "pest": "2002"}
+JOINED = ("vexoulz", "doomtp")
+DEFAULT_MODERATORS = ("alice:vexoulz",)
 
 
 class StandInTwitch:
@@ -125,7 +137,50 @@ async def seed(
     await svc["filters"].add(channel_id=vex, pattern="badword", actor_user_id=vex, via="chat")
 
 
+def parse_moderators(specs: list[str]) -> dict[str, frozenset[str]]:
+    """`alice:vexoulz,doomtp` → {"alice": {"vexoulz", "doomtp"}}, checked against the made-up data."""
+    found: dict[str, frozenset[str]] = {}
+    for spec in specs:
+        login, _, channels = spec.partition(":")
+        names = frozenset(c.strip().lower() for c in channels.split(",") if c.strip())
+        if login.lower() not in USERS or not names or not names <= set(JOINED):
+            raise SystemExit(
+                f"--moderator {spec!r}: want user:channel[,channel] with a user from {sorted(USERS)}"
+                f" and channels from {list(JOINED)}"
+            )
+        found[login.lower()] = names
+    return found
+
+
+def add_dev_login(app: FastAPI, moderators: dict[str, frozenset[str]]) -> None:
+    """`GET /dev/login-as?user=<login>[&next=<path>]`: sign in as one of `moderators`, as the Twitch
+    sign-in would. Only this script's app has it; the bot's own never does."""
+
+    @app.get("/dev/login-as", include_in_schema=False)
+    async def login_as(
+        request: Request, user: str, next_path: str | None = Query(default=None, alias="next")
+    ) -> Response:
+        login = user.lower()
+        channels = moderators.get(login)
+        if channels is None:
+            raise HTTPException(
+                status_code=404, detail=f"not a --moderator: {user}; try {sorted(moderators)}"
+            )
+        auth = request.app.state.admin_auth
+        auth.logout(request.cookies.get(SESSION_COOKIE))
+        session = auth.login(role="moderator", user_id=USERS[login], user_login=login, channels=channels)
+        response: Response
+        if next_path is not None:
+            response = RedirectResponse(safe_next(next_path), status_code=302)
+        else:
+            text = f"signed in as {login}, moderator of {', '.join(sorted(channels))}\n"
+            response = Response(text, media_type="text/plain")
+        set_session_cookie(request, response, session)
+        return response
+
+
 async def main(args: argparse.Namespace) -> None:
+    moderators = parse_moderators(args.moderator or list(DEFAULT_MODERATORS))
     dsn = await fresh_database(args.server, args.database)
     dbs = await Databases.open(dsn)
     policy = PolicyService(dbs.bot)
@@ -185,7 +240,13 @@ async def main(args: argparse.Namespace) -> None:
         },
         admin_password=args.password,
     )
-    print(f"dev API on http://{args.host}:{args.port}, admin password {args.password!r}")
+    add_dev_login(app, moderators)
+    base = f"http://{args.host}:{args.port}"
+    print(f"dev API on {base}, admin password {args.password!r}")
+    for login, channels in sorted(moderators.items()):
+        print(
+            f"moderator {login} ({', '.join(sorted(channels))}): {base}/dev/login-as?user={login}&next=/admin"
+        )
     print(f"an explain report: http://{args.host}:{args.port}/explain/{token}")
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="info"))
     try:
@@ -203,5 +264,12 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--password", default="admin", help="the admin password (dev only)")
+    parser.add_argument(
+        "--moderator",
+        action="append",
+        metavar="USER:CHANNEL[,CHANNEL]",
+        help="a user /dev/login-as can sign in as a moderator of those channels; repeatable"
+        f" (default: {' '.join(DEFAULT_MODERATORS)})",
+    )
     configure_event_loop()
     asyncio.run(main(parser.parse_args()))

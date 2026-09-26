@@ -14,6 +14,7 @@ from doomtp_bot.api.routes.data import router
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.webui.auth import SESSION_COOKIE
+from scripts.dev_api import add_dev_login, parse_moderators
 from tests.test_api_data import (  # noqa: F401  (fixtures)
     CHANNEL_ID,
     CHANNEL_LOGIN,
@@ -205,3 +206,23 @@ async def test_a_moderator_cannot_reach_a_global_filter_through_their_channel(
     assert (await client.patch(url, json={"enabled": False}, headers=mod)).status_code == 404
     assert (await client.delete(url, headers=mod)).status_code == 404
     assert [e.enabled for e in filters.entries_for(CHANNEL_ID) if e.id == entry.id] == [True]
+
+
+async def test_the_dev_api_signs_in_a_moderator_and_the_bot_has_no_such_route(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]
+) -> None:
+    """`scripts/dev_api.py --moderator` gives the moderator view without Twitch, on its own app only."""
+    assert (await client.get("/dev/login-as", params={"user": "alice"})).status_code == 404
+    with pytest.raises(SystemExit):
+        parse_moderators(["alice:somewhere-else"])
+
+    add_dev_login(app_and_keys[0], parse_moderators(["alice:doomtp"]))
+    signed_in = await client.get("/dev/login-as", params={"user": "alice", "next": "//evil.example/"})
+    assert signed_in.status_code == 302 and signed_in.headers["location"] == "/admin"
+    session = (await client.get("/api/v1/session")).json()
+    assert (session["role"], session["user"]["login"], session["channels"]) == (
+        "moderator",
+        "alice",
+        ["doomtp"],
+    )
+    assert (await client.get("/dev/login-as", params={"user": "pest"})).status_code == 404
