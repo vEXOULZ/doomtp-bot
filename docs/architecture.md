@@ -610,7 +610,8 @@ A **race window** remains: a mod can act after the message has already been sent
 **UI technology:**
 - **Pages** are server-rendered **Jinja2** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages. *(Built with plain forms so far: HTMX would be a CDN dependency or a vendored file, and nothing yet needs partial updates. Add it when a page does.)*
 - **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component whose own lexer (`web-editor/src/tokens.js`) only colours text; diagnostics come from `/api/v1/parse`, autocomplete from `/api/v1/language` and `/api/v1/commands`, and the preview from `/api/v1/explain`.
-  - It ships as a single static bundle (esbuild), **committed** at `webui/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
+  - It ships as a static bundle (esbuild), **committed** at `webui/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
+  - The lexer alone is also built to `webui/static/editor/tokens.js`, an ES module, so doomtp-web colours command text exactly as the editor does (ADR-0016).
   - It is a web component, `<dtb-editor>`, that upgrades the `<textarea>` it wraps — so a page works without JavaScript and an ordinary form post still carries the same field. Only this component needs Node tooling.
   - It's on the language page as a playground today; the pages that edit bodies and triggers can use the same element.
 - **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
@@ -658,8 +659,9 @@ src/doomtp_bot/
 ├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
 └─ api/         app.py keys.py routes/ (health auth language data session site) ✔
                 webui/static/editor/editor.js                              ✔ the built editor bundle, committed
+                webui/static/editor/tokens.js                              ✔ its lexer alone, as an ES module, committed
 
-web-editor/                  # the only Node-tooled part: CodeMirror 6 → one static bundle (ADR-0011)
+web-editor/                  # the only Node-tooled part: CodeMirror 6 → the static editor bundle and its lexer (ADR-0011)
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)
 docs/grammar/railroad.ebnf   # spec Appendix D, CI-checked copy for railroad diagrams
 ```
