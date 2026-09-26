@@ -61,6 +61,11 @@ def should_log_run(report: RunReport, level: LogLevel) -> bool:
     return True
 
 
+def is_unignore_me(text: str, prefix: str) -> bool:
+    """Is this line `<prefix>unignore me`? The one command a chatter who ignored themselves still reaches."""
+    return text.startswith(prefix) and [w.lower() for w in text[len(prefix) :].split()] == ["unignore", "me"]
+
+
 class Dispatcher:
     def __init__(
         self,
@@ -124,9 +129,14 @@ class Dispatcher:
             self.activity.saw_message(msg.channel_id)
         if msg.is_self:
             return
-        if self.policy.is_ignored(msg.channel_id, msg.user_id) or BOT_BADGE_SET_IDS & {
-            b.set_id for b in msg.badges
-        }:
+        if BOT_BADGE_SET_IDS & {b.set_id for b in msg.badges}:
+            return
+        if self.policy.is_ignored(msg.channel_id, msg.user_id):
+            # Someone who ignored themselves can still take it back; nobody else gets past (§5.4).
+            if is_unignore_me(msg.text, prefix) and self.policy.ignored_only_by_self(
+                msg.channel_id, msg.user_id
+            ):
+                self._spawn(self._run(msg), f"run-{msg.message_id}")
             return
         if self.automod is not None:  # architecture §9.3: incoming chat the filter would block
             verdict = self.automod.verdict(msg)

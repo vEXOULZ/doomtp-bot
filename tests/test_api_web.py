@@ -181,15 +181,15 @@ async def test_a_channels_modules_and_ignored_users(client: httpx.AsyncClient, a
     names = [m["module"] for m in modules]
     assert names == sorted(names) and all(m["enabled"] for m in modules)
     assert any(not m["toggleable"] for m in modules)  # core can't be turned off
+    assert {m["kind"] for m in modules} == {"builtin"}  # nothing published here yet
 
     policy = app.state.policy
     actor = Actor(None, "test")
     await policy.mutate(lambda repo: repo.set_ignored(CHANNEL_ID, "555", "pest", True, actor))
     await policy.mutate(lambda repo: repo.set_ignored(GLOBAL, "666", "spammer", True, actor))
-    assert (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/ignored")).json() == {
-        "ignored": ["555"],
-        "ignored_everywhere": ["666"],
-    }
+    found = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/ignored")).json()
+    assert [(e["user_id"], e["login"]) for e in found["ignored"]] == [("555", "pest")]
+    assert [(e["user_id"], e["login"]) for e in found["ignored_everywhere"]] == [("666", "spammer")]
 
 
 # ── public reads ───────────────────────────────────────────────────────────

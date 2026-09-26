@@ -22,7 +22,7 @@ from doomtp_bot.policy.roles import (
     Role,
     roles_from_badges,
 )
-from doomtp_bot.policy.snapshot import ChannelSettings, PolicySnapshot, load_snapshot
+from doomtp_bot.policy.snapshot import ChannelSettings, IgnoreEntry, PolicySnapshot, load_snapshot
 from doomtp_bot.runtime.context import ChannelInfo, Chatter
 from doomtp_bot.runtime.policy import Decision
 from doomtp_bot.runtime.result import Code
@@ -155,6 +155,19 @@ class PolicyService:
     def is_ignored(self, channel_id: str, user_id: str) -> bool:
         return user_id in self.ignored_in(channel_id) or user_id in self.ignored_in(GLOBAL)
 
+    def ignore_entries(self, channel_id: str) -> list[IgnoreEntry]:
+        """Who is ignored in one scope (a channel, or `GLOBAL`), with who did it and why."""
+        return list(self._snapshot.ignore_entries.get(channel_id, {}).values())
+
+    def ignore_entry(self, channel_id: str, user_id: str) -> IgnoreEntry | None:
+        return self._snapshot.ignore_entries.get(channel_id, {}).get(user_id)
+
+    def ignored_only_by_self(self, channel_id: str, user_id: str) -> bool:
+        """Is this user ignored here, and only because they asked (`ignore me`)? Then the bot still hears
+        their `unignore me`. An ignore anyone else set, here or everywhere, keeps them out."""
+        entries = [e for scope in (channel_id, GLOBAL) if (e := self.ignore_entry(scope, user_id))]
+        return bool(entries) and all(e.added_by == user_id for e in entries)
+
     # ── toggles (ADR-0006 §4) ───────────────────────────────────────────────
     def is_enabled(self, channel_id: str, spec: CommandSpec) -> bool:
         module, command = spec.module, spec.key
@@ -172,6 +185,16 @@ class PolicyService:
         if (GLOBAL, module) in toggles:
             return toggles[(GLOBAL, module)]
         return True
+
+    def switched_off_by(self, channel_id: str, spec: CommandSpec) -> str | None:
+        """`"module"` or `"command"`: which toggle keeps this command off here, or None when it is on.
+        For explain, which may say what chat won't (spec §6.6: off answers like unknown)."""
+        if self.is_enabled(channel_id, spec):
+            return None
+        commands, key = self._snapshot.command_toggles, spec.key
+        if commands.get((GLOBAL, key)) is False or commands.get((channel_id, key)) is False:
+            return "command"
+        return "module"
 
     def log_level(self, channel_id: str, spec: CommandSpec) -> LogLevel:
         levels = self._snapshot.command_log_levels

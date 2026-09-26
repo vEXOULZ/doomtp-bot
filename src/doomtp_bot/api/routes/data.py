@@ -24,6 +24,7 @@ from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.audit.log import read_audit
 from doomtp_bot.chatlog import queries
 from doomtp_bot.core.channels import ChannelBanned
+from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.customcmds.params import to_params
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
@@ -32,7 +33,7 @@ from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
-from doomtp_bot.runtime.spec import LogLevel
+from doomtp_bot.runtime.spec import CommandSpec, LogLevel
 from doomtp_bot.runtime.variables import Space
 from doomtp_bot.triggers.service import TRIGGER_TYPES, TriggerError, TriggerService
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
@@ -210,25 +211,121 @@ async def patch_channel(request: Request, login: str, body: ChannelPatch, _: str
 
 @router.get("/channels/{login}/modules")
 async def list_modules(request: Request, login: str, _: str = READ) -> dict[str, Any]:
-    """Each module, whether it is on here, and whether it can be turned off at all."""
+    """Each module, whether it is on here, and whether it can be turned off at all.
+
+    `kind` says where it comes from: `builtin`, a `pack` published here or globally (its name is its
+    module name, ADR-0012), or `custom`, which holds the commands published one by one and appears when
+    there are any. `enabled` follows the rules chat applies: this channel's toggle, then the global one,
+    then on. Turn any of them off with `PUT …/modules/{module}`, as `!module disable` does in chat.
+    """
     settings, policy = _channel(request, login), _policy(request)
-    specs = {c.spec.module: c.spec for c in _state(request, "runtime").registry.all()}
+    specs: dict[str, tuple[CommandSpec, str]] = {
+        c.spec.module: (c.spec, "builtin") for c in _state(request, "runtime").registry.all()
+    }
+    services = request.app.state
+    found = await custom_modules(
+        settings.channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None)
+    )
+    for name, kind in found.items():
+        specs.setdefault(name, (CommandSpec(name="", module=name, summary=""), kind))
     return {
         "modules": [
-            {"module": m, "enabled": policy.is_enabled(settings.channel_id, s), "toggleable": s.toggleable}
-            for m, s in sorted(specs.items())
+            {
+                "module": m,
+                "enabled": policy.is_enabled(settings.channel_id, s),
+                "toggleable": s.toggleable,
+                "kind": kind,
+            }
+            for m, (s, kind) in sorted(specs.items())
         ]
     }
 
 
+class IgnoreBody(BaseModel):
+    login: str = Field(min_length=1, max_length=40)
+    everywhere: bool = False  # every channel, as `ignore add <user> global` does in chat
+    reason: str | None = Field(default=None, max_length=200)
+
+
+async def _login_of(request: Request, user_id: str | None, known: dict[str, str]) -> str | None:
+    """A user id's login: from what the bot already stores, else from Twitch. None when neither knows."""
+    if user_id is None:
+        return None
+    if user_id not in known:
+        twitch = getattr(request.app.state, "twitch", None)
+        lookup = getattr(twitch, "login_for", None)
+        try:
+            found = await lookup(user_id) if lookup is not None else None
+        except Exception:  # Twitch being down must not take the list with it
+            found = None
+        if found is not None:
+            known[user_id] = found
+    return known.get(user_id)
+
+
+async def _ignored_json(request: Request, scope: str) -> list[dict[str, Any]]:
+    policy = _policy(request)
+    known = {c.channel_id: c.login for c in policy.channels()}
+    for s in (scope, GLOBAL):
+        known.update({e.user_id: e.user_login for e in policy.ignore_entries(s) if e.user_login})
+    return [
+        {
+            "user_id": e.user_id,
+            "login": e.user_login,
+            "reason": e.reason,
+            "added_by": e.added_by,
+            "added_by_login": await _login_of(request, e.added_by, known),
+            "added_at": e.added_at,
+        }
+        for e in sorted(policy.ignore_entries(scope), key=lambda e: (e.user_login or "", e.user_id))
+    ]
+
+
 @router.get("/channels/{login}/ignored")
 async def ignored_users(request: Request, login: str, _: str = READ) -> dict[str, Any]:
-    """User ids the bot ignores here, and those it ignores in every channel. Changed from chat (`ignore`)."""
-    settings, policy = _channel(request, login), _policy(request)
+    """Who the bot ignores here, and who it ignores in every channel: each as `{user_id, login, reason,
+    added_by, added_by_login, added_at}`, `added_at` in epoch ms. `added_by` is the user id of whoever
+    set it (their own, after `ignore me` in chat), or null when it came from the API or the admin UI.
+    Changed from chat (`ignore`, `ignore me`, `unignore me`) or with the two endpoints below."""
+    settings = _channel(request, login)
     return {
-        "ignored": sorted(policy.ignored_in(settings.channel_id)),
-        "ignored_everywhere": sorted(policy.ignored_in(GLOBAL)),
+        "ignored": await _ignored_json(request, settings.channel_id),
+        "ignored_everywhere": await _ignored_json(request, GLOBAL),
     }
+
+
+@router.post("/channels/{login}/ignored", status_code=201)
+async def add_ignored(request: Request, login: str, body: IgnoreBody, _: str = WRITE) -> dict[str, Any]:
+    """Ignore a user here, or everywhere with `everywhere: true`. Audited as `ignore.add`, like chat."""
+    settings, policy = _channel(request, login), _policy(request)
+    user = await _state(request, "twitch").resolve_user(body.login)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"no Twitch user named {body.login}")
+    scope = GLOBAL if body.everywhere else settings.channel_id
+    await policy.mutate(
+        lambda repo: repo.set_ignored(scope, user["id"], user["name"], True, ACTOR, reason=body.reason)
+    )
+    return {"user_id": user["id"], "login": user["name"], "everywhere": body.everywhere}
+
+
+@router.delete("/channels/{login}/ignored/{user_id}")
+async def remove_ignored(
+    request: Request,
+    login: str,
+    user_id: str,
+    everywhere: bool = Query(default=False, description="lift an ignore set for every channel instead"),
+    _: str = WRITE,
+) -> dict[str, Any]:
+    """Stop ignoring a user here (or everywhere). Audited as `ignore.remove`, like chat."""
+    settings, policy = _channel(request, login), _policy(request)
+    scope = GLOBAL if everywhere else settings.channel_id
+    entry = policy.ignore_entry(scope, user_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=404, detail=f"{user_id} isn't ignored {'everywhere' if everywhere else 'here'}"
+        )
+    await policy.mutate(lambda repo: repo.set_ignored(scope, user_id, entry.user_login or "", False, ACTOR))
+    return {"user_id": user_id, "removed": True, "everywhere": everywhere}
 
 
 @router.put("/channels/{login}/modules/{module}")
