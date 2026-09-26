@@ -614,7 +614,7 @@ A **race window** remains: a mod can act after the message has already been sent
   - It is a web component, `<dtb-editor>`, that upgrades the `<textarea>` it wraps — so a page works without JavaScript and an ordinary form post still carries the same field. Only this component needs Node tooling.
   - It's on the language page as a playground today; the pages that edit bodies and triggers can use the same element.
 - **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
-- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `dtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
+- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `doomtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
 
 *Future (not designed): Twitch OAuth login for a per-user dashboard.* Two ways in exist today, and they
 meet in one place: `_authenticate` in `api/routes/data.py` takes an API key (`api/keys.py`) or an admin
