@@ -12,8 +12,16 @@ from fastapi.routing import APIRoute
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.api.routes.data import router
 from doomtp_bot.policy.repository import Actor
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.webui.auth import SESSION_COOKIE
-from tests.test_api_data import CHANNEL_ID, CHANNEL_LOGIN, app_and_keys, client  # noqa: F401  (fixtures)
+from scripts.dev_api import add_dev_login, parse_moderators
+from tests.test_api_data import (  # noqa: F401  (fixtures)
+    CHANNEL_ID,
+    CHANNEL_LOGIN,
+    PASSWORD,
+    app_and_keys,
+    client,
+)
 
 MOD_ID, OTHER_ID, OTHER_LOGIN = "300", "700", "elsewhere"
 
@@ -139,3 +147,82 @@ async def test_a_signed_in_user_lifts_their_own_self_ignore_anywhere(
     await policy.mutate(lambda repo: repo.set_ignored(OTHER_ID, MOD_ID, "mod", True, Actor(OTHER_ID, "chat")))
     refused = await client.delete(f"{url}/{MOD_ID}", headers=mod)  # the broadcaster's ignore stays
     assert refused.status_code == 403 and policy.is_ignored(OTHER_ID, MOD_ID)
+
+
+async def test_only_an_admin_changes_a_bot_wide_ignore(
+    client: httpx.AsyncClient,
+    app_and_keys: tuple[Any, ApiKeyService],
+    mod: dict[str, str],
+) -> None:
+    """`everywhere` writes the GLOBAL scope, which reaches channels the moderator doesn't manage."""
+    policy = app_and_keys[0].state.policy
+    url = f"/api/v1/channels/{CHANNEL_LOGIN}/ignored"
+
+    refused = await client.post(url, json={"login": "friend", "everywhere": True}, headers=mod)
+    assert (
+        refused.status_code == 403
+        and refused.json()["detail"] == "only an admin can change a bot-wide ignore"
+    )
+    assert not policy.is_ignored(OTHER_ID, "200")
+    await policy.mutate(lambda repo: repo.set_ignored(GLOBAL, "200", "friend", True, Actor(None, "api")))
+    lifted = await client.delete(f"{url}/200", params={"everywhere": True}, headers=mod)
+    assert lifted.status_code == 403 and policy.is_ignored(OTHER_ID, "200")
+
+    # Their own channel, as before; and not someone else's.
+    assert (await client.post(url, json={"login": "alice"}, headers=mod)).status_code == 201
+    assert policy.is_ignored(CHANNEL_ID, "400") and not policy.is_ignored(OTHER_ID, "400")
+    assert (await client.delete(f"{url}/400", headers=mod)).status_code == 200
+    other = f"/api/v1/channels/{OTHER_LOGIN}/ignored"
+    assert (await client.post(other, json={"login": "alice"}, headers=mod)).status_code == 403
+    await policy.mutate(lambda repo: repo.set_ignored(OTHER_ID, "400", "alice", True, Actor(None, "api")))
+    assert (await client.delete(f"{other}/400", headers=mod)).status_code == 403
+
+
+async def test_a_password_session_changes_a_bot_wide_ignore(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]
+) -> None:
+    policy = app_and_keys[0].state.policy
+    csrf = {
+        "X-CSRF-Token": (await client.post("/api/v1/session", json={"password": PASSWORD})).json()["csrf"]
+    }
+    url = f"/api/v1/channels/{CHANNEL_LOGIN}/ignored"
+    assert (
+        await client.post(url, json={"login": "friend", "everywhere": True}, headers=csrf)
+    ).status_code == 201
+    assert policy.is_ignored(OTHER_ID, "200")
+    lifted = await client.delete(f"{url}/200", params={"everywhere": True}, headers=csrf)
+    assert lifted.status_code == 200 and not policy.is_ignored(OTHER_ID, "200")
+
+
+async def test_a_moderator_cannot_reach_a_global_filter_through_their_channel(
+    client: httpx.AsyncClient,
+    app_and_keys: tuple[Any, ApiKeyService],
+    mod: dict[str, str],
+) -> None:
+    """Filters, toggles and rules are written to the channel in the path, never to GLOBAL."""
+    filters = app_and_keys[0].state.filters
+    entry = await filters.add(channel_id=GLOBAL, pattern="everywhere", actor_user_id=None, via="api")
+    url = f"/api/v1/channels/{CHANNEL_LOGIN}/filters/{entry.id}"
+    assert (await client.patch(url, json={"enabled": False}, headers=mod)).status_code == 404
+    assert (await client.delete(url, headers=mod)).status_code == 404
+    assert [e.enabled for e in filters.entries_for(CHANNEL_ID) if e.id == entry.id] == [True]
+
+
+async def test_the_dev_api_signs_in_a_moderator_and_the_bot_has_no_such_route(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]
+) -> None:
+    """`scripts/dev_api.py --moderator` gives the moderator view without Twitch, on its own app only."""
+    assert (await client.get("/dev/login-as", params={"user": "alice"})).status_code == 404
+    with pytest.raises(SystemExit):
+        parse_moderators(["alice:somewhere-else"])
+
+    add_dev_login(app_and_keys[0], parse_moderators(["alice:doomtp"]))
+    signed_in = await client.get("/dev/login-as", params={"user": "alice", "next": "//evil.example/"})
+    assert signed_in.status_code == 302 and signed_in.headers["location"] == "/admin"
+    session = (await client.get("/api/v1/session")).json()
+    assert (session["role"], session["user"]["login"], session["channels"]) == (
+        "moderator",
+        "alice",
+        ["doomtp"],
+    )
+    assert (await client.get("/dev/login-as", params={"user": "pest"})).status_code == 404

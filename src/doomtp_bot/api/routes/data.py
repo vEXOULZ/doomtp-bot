@@ -226,6 +226,14 @@ class IgnoreBody(BaseModel):
     reason: str | None = Field(default=None, max_length=200)
 
 
+def _check_bot_wide(caller: Caller) -> None:
+    """A change to the `GLOBAL` scope reaches every channel, so it is for admins (ADR-0017). This is the
+    only write here that can reach `GLOBAL`: filters, toggles, rules and triggers are always written to
+    the channel in the path, and a moderator can't reach a global entry through it."""
+    if not caller.is_admin:
+        raise HTTPException(status_code=403, detail="only an admin can change a bot-wide ignore")
+
+
 async def _login_of(request: Request, user_id: str | None, known: dict[str, str]) -> str | None:
     """A user id's login: from what the bot already stores, else from Twitch. None when neither knows."""
     if user_id is None:
@@ -277,7 +285,10 @@ async def ignored_users(request: Request, login: str, caller: Caller = READ) -> 
 async def add_ignored(
     request: Request, login: str, body: IgnoreBody, caller: Caller = WRITE
 ) -> dict[str, Any]:
-    """Ignore a user here, or everywhere with `everywhere: true`. Audited as `ignore.add`, like chat."""
+    """Ignore a user here, or everywhere with `everywhere: true` (admins only). Audited as `ignore.add`,
+    like chat."""
+    if body.everywhere:
+        _check_bot_wide(caller)
     settings, policy = _channel(request, login), _policy(request)
     user = await _state(request, "twitch").resolve_user(body.login)
     if user is None:
@@ -299,7 +310,10 @@ async def remove_ignored(
 ) -> dict[str, Any]:
     """Stop ignoring a user here (or everywhere). Audited as `ignore.remove`, like chat.
 
-    A signed-in user may also lift an ignore they set on themselves (`ignore me`), in any channel."""
+    `everywhere` is for admins. A signed-in user may also lift an ignore they set on themselves (`ignore
+    me`), in any channel; that one is always per channel, so `everywhere` never applies to it."""
+    if everywhere:
+        _check_bot_wide(caller)
     own = caller.user_id == user_id and not everywhere
     if not own:
         check_area(caller, "channel", login)

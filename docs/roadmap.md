@@ -68,13 +68,6 @@ take straight from the app. The pages themselves are being rebuilt in `doomtp-we
 on the design the other vexoulz sites share. When it covers every page, the bot stops serving its own
 (item 4) and §11 is rewritten to match (item 5). Until then both work, with one login.
 
-### Moderators signing in with Twitch — ADR-0017 item 3
-
-The API already knows a moderator session: `GET /api/v1/session` reports its role, user and channels,
-every private route says whether moderators may use it in their channels, and their changes are audited
-under their own Twitch id. What is missing is the sign-in itself: the OAuth flow, and reading the
-channels a user moderates from Helix.
-
 ### Waiting on a reply — ADR-0008 item 4
 
 Backfill reads from `recent-messages.robotty.de`, a service someone else runs and pays for. The bot

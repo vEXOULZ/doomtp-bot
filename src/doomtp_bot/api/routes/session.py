@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from doomtp_bot.api.access import current_session
 from doomtp_bot.api.keys import SCOPES, ApiKey, ApiKeyError, ApiKeyService
 from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth, LoginLimiter, Session
 
@@ -37,10 +38,12 @@ def client_address(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _session_json(auth: AdminAuth, session: Session | None) -> dict[str, Any]:
+def _session_json(request: Request, session: Session | None) -> dict[str, Any]:
     """`role`, `user` and `channels` say who is behind the session (ADR-0017): the password is an admin
     with no user; a Twitch sign-in names the user, and a moderator's `channels` are the logins they may
-    manage (null means every channel)."""
+    manage (null means every channel). `twitch_login` says whether `/auth/admin/login` is set up, so the
+    site offers the button only then."""
+    auth = _auth(request)
     user = {"id": session.user_id, "login": session.user_login} if session and session.user_id else None
     channels = sorted(session.channels) if session and session.channels is not None else None
     return {
@@ -51,15 +54,16 @@ def _session_json(auth: AdminAuth, session: Session | None) -> dict[str, Any]:
         "role": session.role if session else None,
         "user": user,
         "channels": channels,
+        "twitch_login": getattr(request.app.state, "twitch_signin", None) is not None,
     }
 
 
-def require_session(request: Request, *, write: bool, admin: bool = True) -> Session:
+async def require_session(request: Request, *, write: bool, admin: bool = True) -> Session:
     """The caller's session, or 401; 403 unless it is an admin's when `admin`. A write also needs the
     session's CSRF token."""
     auth = _auth(request)
     token = request.cookies.get(SESSION_COOKIE)
-    session = auth.session(token)
+    session = await current_session(request)
     if session is None:
         raise HTTPException(status_code=401, detail="an admin session is required")
     if admin and not session.is_admin:  # keys reach every channel, so only an admin manages them (ADR-0017)
@@ -69,6 +73,18 @@ def require_session(request: Request, *, write: bool, admin: bool = True) -> Ses
     return session
 
 
+def set_session_cookie(request: Request, response: Response, session: Session) -> None:
+    """The cookie for a new session, from the password here or a Twitch sign-in (`/auth/admin/callback`)."""
+    response.set_cookie(
+        SESSION_COOKIE,
+        session.token,
+        max_age=int(_auth(request).ttl_s),
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+
+
 # ── session ─────────────────────────────────────────────────────────────────
 class Login(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
@@ -76,8 +92,7 @@ class Login(BaseModel):
 
 @router.get("/session")
 async def get_session(request: Request) -> dict[str, Any]:
-    auth = _auth(request)
-    return _session_json(auth, auth.session(request.cookies.get(SESSION_COOKIE)))
+    return _session_json(request, await current_session(request))
 
 
 @router.post("/session")
@@ -99,15 +114,8 @@ async def login(request: Request, body: Login, response: Response) -> dict[str, 
     limiter.reset(address)
     auth.logout(request.cookies.get(SESSION_COOKIE))
     session = auth.login()
-    response.set_cookie(
-        SESSION_COOKIE,
-        session.token,
-        max_age=int(auth.ttl_s),
-        httponly=True,
-        samesite="lax",
-        secure=request.url.scheme == "https",
-    )
-    return _session_json(auth, session)
+    set_session_cookie(request, response, session)
+    return _session_json(request, session)
 
 
 @router.delete("/session", status_code=204)
@@ -115,7 +123,9 @@ async def logout(request: Request) -> Response:
     auth = _auth(request)
     token = request.cookies.get(SESSION_COOKIE)
     if auth.session(token) is not None:
-        require_session(request, write=True, admin=False)  # a cross-site page must not be able to log you out
+        # A cross-site page must not be able to log you out. No refresh first: leaving needs no permission.
+        if not auth.valid_csrf(token, request.headers.get("x-csrf-token")):
+            raise HTTPException(status_code=403, detail="a session write needs the X-CSRF-Token header")
         auth.logout(token)
     response = Response(status_code=204)
     response.delete_cookie(SESSION_COOKIE)
@@ -147,14 +157,14 @@ def _key_json(key: ApiKey) -> dict[str, Any]:
 
 @router.get("/keys")
 async def list_keys(request: Request) -> dict[str, Any]:
-    require_session(request, write=False)
+    await require_session(request, write=False)
     return {"keys": [_key_json(k) for k in await _keys(request).list()]}
 
 
 @router.post("/keys", status_code=201)
 async def create_key(request: Request, body: NewKey) -> dict[str, Any]:
     """The key's secret is in this response and nowhere else: it is stored only as a hash."""
-    require_session(request, write=True)
+    await require_session(request, write=True)
     try:
         key, secret = await _keys(request).create(name=body.name, scopes=tuple(body.scopes))
     except ApiKeyError as exc:
@@ -164,7 +174,7 @@ async def create_key(request: Request, body: NewKey) -> dict[str, Any]:
 
 @router.delete("/keys/{key_id}")
 async def revoke_key(request: Request, key_id: int) -> dict[str, Any]:
-    require_session(request, write=True)
+    await require_session(request, write=True)
     if not await _keys(request).revoke(key_id):
         raise HTTPException(status_code=404, detail=f"no active key {key_id}")
     return {"id": key_id, "revoked": True}

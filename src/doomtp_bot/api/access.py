@@ -69,6 +69,21 @@ def caller_for_session(session: Session) -> Caller:
     )
 
 
+async def current_session(request: Request) -> Session | None:
+    """The request's session, with a Twitch sign-in's role and channels brought up to date first (at most
+    every few minutes, `twitch/signin.py`). A user Twitch no longer vouches for is signed out here."""
+    auth: AdminAuth = request.app.state.admin_auth
+    token = request.cookies.get(SESSION_COOKIE)
+    session = auth.session(token)
+    signin = getattr(request.app.state, "twitch_signin", None)
+    if session is None or session.grant is None or signin is None:
+        return session
+    if not await signin.refresh(session):
+        auth.logout(token)
+        return None
+    return session
+
+
 def _state(request: Request, name: str) -> Any:
     found = getattr(request.app.state, name, None)
     if found is None:
@@ -89,7 +104,7 @@ async def authenticate(request: Request, scope: str) -> Caller:
         return Caller(f"key:{key.name}", API_ACTOR)
     auth: AdminAuth = _state(request, "admin_auth")
     token = request.cookies.get(SESSION_COOKIE)
-    session = auth.session(token)
+    session = await current_session(request)
     if session is not None:
         if scope != "read" and not auth.valid_csrf(token, request.headers.get("x-csrf-token")):
             raise HTTPException(status_code=403, detail="a session write needs the X-CSRF-Token header")

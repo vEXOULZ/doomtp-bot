@@ -148,6 +148,10 @@ class PolicyService:
             rank=max(names.values()),
         )
 
+    def is_bot_admin(self, user_id: str) -> bool:
+        """A bot owner (`BOT_OWNER_IDS`) or a global bot admin (`!admin add`): an admin of the web API too."""
+        return user_id in self.owners or user_id in self._snapshot.global_admins
+
     def ignored_in(self, channel_id: str) -> frozenset[str]:
         """The user ids ignored in one scope (a channel, or `GLOBAL`), not counting the other."""
         return self._snapshot.ignored.get(channel_id, frozenset())

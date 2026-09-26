@@ -44,6 +44,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
 from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHttp
 from doomtp_bot.twitch.client import TwitchService
+from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
@@ -280,6 +281,15 @@ async def run(settings: Settings) -> None:
             on_broadcaster_authorized=on_broadcaster_authorized,
             expected_bot_id=settings.twitch_bot_id,
         )
+    # People signing in to the web admin (ADR-0017). Needs only the app's credentials, not the bot's token.
+    signin: TwitchSignIn | None = None
+    if settings.twitch_client_id and secret:
+        signin = TwitchSignIn(
+            client_id=settings.twitch_client_id,
+            redirect_uri=settings.public_base_url.rstrip("/") + "/auth/admin/callback",
+            http=TwitchSignInHttp(settings.twitch_client_id, secret),
+            policy=policy,
+        )
 
     async def db_check() -> ComponentHealth:
         return ComponentHealth(
@@ -324,6 +334,7 @@ async def run(settings: Settings) -> None:
             "api_keys": ApiKeyService(dbs.bot),
             "streams": streams,  # {channel.live} and friends in /explain runs
             "explain_reports": explain_reports,
+            "twitch_signin": signin,
         },
         admin_password=settings.admin_password_value(),
     )
