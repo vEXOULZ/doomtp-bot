@@ -202,6 +202,7 @@ async def commands(request: Request) -> dict[str, Any]:
                         "type": p.type,
                         "required": p.required,
                         "description": p.description,
+                        "choices": list(p.choices),
                     }
                     for p in spec.params
                 ],
@@ -213,6 +214,8 @@ async def commands(request: Request) -> dict[str, Any]:
                     role: {"tier_s": c.tier_s, "user_s": c.user_s}
                     for role, c in spec.default_cooldowns.items()
                 },
+                "toggleable": spec.toggleable,  # False: "always on", no channel can switch it off
+                "fixed_policy": spec.fixed_policy,  # no role and no cooldown to configure
             }
         )
     return {"syntax_version": SYNTAX_VERSION, "commands": listing}

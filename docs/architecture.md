@@ -601,7 +601,7 @@ A **race window** remains: a mod can act after the message has already been sent
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked on the admin page, and the key is shown once, on the page that creates it, never through a redirect where it would land in logs and history. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
 | `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). Same password and sessions as `/admin`; the CSRF token comes from `GET /session`. Keys are managed with a session only, never with a key. Failed logins are limited per client address, together with the `/admin` form; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
-| `GET /api/v1/site`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
+| `GET /api/v1/site`, `/site/channels/{login}`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, one channel's sign, tier and status, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
 | `GET /api/v1/channels/{login}/modules`, `/ignored` | **Now** | API key or admin session: which modules are on and which users are ignored, as the admin channel page shows them |
 | `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. `/admin/explain` explains as a chatter you name (§4.4). |
 | `GET /explain/<token>` | **Now** | The full `!explain` report chat links to (§4.4). Public, short-lived, and it shows only what its caller saw. |
@@ -610,11 +610,12 @@ A **race window** remains: a mod can act after the message has already been sent
 **UI technology:**
 - **Pages** are server-rendered **Jinja2** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages. *(Built with plain forms so far: HTMX would be a CDN dependency or a vendored file, and nothing yet needs partial updates. Add it when a page does.)*
 - **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component whose own lexer (`web-editor/src/tokens.js`) only colours text; diagnostics come from `/api/v1/parse`, autocomplete from `/api/v1/language` and `/api/v1/commands`, and the preview from `/api/v1/explain`.
-  - It ships as a single static bundle (esbuild), **committed** at `webui/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
+  - It ships as a static bundle (esbuild), **committed** at `webui/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
+  - The lexer alone is also built to `webui/static/editor/tokens.js`, an ES module, so doomtp-web colours command text exactly as the editor does (ADR-0016).
   - It is a web component, `<dtb-editor>`, that upgrades the `<textarea>` it wraps — so a page works without JavaScript and an ordinary form post still carries the same field. Only this component needs Node tooling.
   - It's on the language page as a playground today; the pages that edit bodies and triggers can use the same element.
 - **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
-- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `dtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
+- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `doomtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
 
 *Future (not designed): Twitch OAuth login for a per-user dashboard.* Two ways in exist today, and they
 meet in one place: `_authenticate` in `api/routes/data.py` takes an API key (`api/keys.py`) or an admin
@@ -658,8 +659,9 @@ src/doomtp_bot/
 ├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
 └─ api/         app.py keys.py routes/ (health auth language data session site) ✔
                 webui/static/editor/editor.js                              ✔ the built editor bundle, committed
+                webui/static/editor/tokens.js                              ✔ its lexer alone, as an ES module, committed
 
-web-editor/                  # the only Node-tooled part: CodeMirror 6 → one static bundle (ADR-0011)
+web-editor/                  # the only Node-tooled part: CodeMirror 6 → the static editor bundle and its lexer (ADR-0011)
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)
 docs/grammar/railroad.ebnf   # spec Appendix D, CI-checked copy for railroad diagrams
 ```

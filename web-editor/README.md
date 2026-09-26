@@ -13,7 +13,7 @@ This is the only Node-tooled part of the repository.
 ```bash
 npm install
 npm test     # vitest: token classes, including against ../tests/lang/corpus.yaml
-npm run build  # esbuild → ../src/doomtp_bot/webui/static/editor/editor.js
+npm run build  # esbuild → ../src/doomtp_bot/webui/static/editor/{editor,tokens}.js
 ```
 
 **The built bundle is committed.** The Docker image has no Node in it and the bot serves the file as it
@@ -32,6 +32,18 @@ It upgrades the `<textarea>` it wraps and keeps it in sync, so the page still wo
 and an ordinary form post still carries the same field. `context` is the parse context (`line`, `body`,
 `trigger`, `listener`, `callback`), `channel` supplies that channel's prefix and visible commands to the
 server, and `explain` adds the report under the editor.
+
+The lexer is also published on its own, as an ES module at `/static/editor/tokens.js`, for a site on the
+same origin that wants the editor's colours without the editor (doomtp-web colours every command it shows
+this way, ADR-0016):
+
+```js
+const { tokenize } = await import("/static/editor/tokens.js");
+tokenize("🏜random 1-6 | echo {1}", { context: "line" }); // [{ t: "prefix", s: 0, e: 2 }, …]
+```
+
+Its exports (`tokenize`, `allowsGap`, `DEFAULT_PREFIX`, `VARIATION_SELECTOR`) and the token classes are a
+contract with that site: add to them, don't rename them.
 
 ## Layout
 
