@@ -64,7 +64,7 @@ never run is the real thing:
 ### The new web site — ADR-0016 items 3 to 5
 
 The JSON the pages need is in the API: session login, API keys, and the reads the Jinja pages used to
-take straight from the app. The pages themselves are being rebuilt in `dtp-web`, a separate repository
+take straight from the app. The pages themselves are being rebuilt in `doomtp-web`, a separate repository
 on the design the other vexoulz sites share. When it covers every page, the bot stops serving its own
 (item 4) and §11 is rewritten to match (item 5). Until then both work, with one login.
 

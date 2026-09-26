@@ -20,7 +20,7 @@ form post that only works for a page the bot rendered itself.
 
 ## Decision
 
-- **A separate repository, `dtp-web`,** holds the pages: Vue and TypeScript on the shared design package,
+- **A separate repository, `doomtp-web`,** holds the pages: Vue and TypeScript on the shared design package,
   built to static files. The bot does not build, contain or serve it.
 - **Same origin.** The site is served from the same host as the bot's `/api/*`, `/auth/*`, `/static/*`
   and `/healthz`, with the reverse proxy sending those paths to the bot and everything else to the static
@@ -69,7 +69,7 @@ login becomes an API that the internet can reach, which is why logins are now ra
 
 - **Easier:** page changes no longer touch the bot. The API is complete enough that any other client (a
   script, a phone shortcut) sees everything the pages do.
-- **Harder:** the API is now a public contract for another repository. Renaming a field breaks `dtp-web`,
+- **Harder:** the API is now a public contract for another repository. Renaming a field breaks `doomtp-web`,
   so fields are added, not changed, and removals go through a release of both.
 - **Sharp edge:** a wrong `WEB_FORWARDED_ALLOW_IPS` either trusts clients to choose their own address,
   which defeats the limit, or lumps every login behind the proxy into one address, so one person's typos
@@ -84,7 +84,7 @@ login becomes an API that the internet can reach, which is why logins are now ra
 2. [x] The public reads (`/site`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`,
    `/channels/{login}/packs`) and the admin reads (`/channels/{login}/modules`, `/ignored`).
    *(2026-09-25)*
-3. [ ] `dtp-web` covers every page: home, commands, language, features, channel, explain, login, admin,
+3. [ ] `doomtp-web` covers every page: home, commands, language, features, channel, explain, login, admin,
    admin channel and admin explain.
 4. [ ] Stop serving the Jinja pages and remove `webui/pages.py` and its templates, keeping `/auth/*` and
    `/static/*`.

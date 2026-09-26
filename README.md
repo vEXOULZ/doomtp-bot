@@ -383,7 +383,7 @@ mkdir -p secrets && printf '%s' 'a long random password' > secrets/admin_passwor
 Then set `ADMIN_PASSWORD_FILE=./secrets/admin_password` in `.env`. Without it `/admin` returns 404 rather
 than being open. The bot binds to `127.0.0.1` by default; keep it on the LAN.
 
-The pages are moving to a separate site, `dtp-web`, that talks to the JSON API from the same host
+The pages are moving to a separate site, `doomtp-web`, that talks to the JSON API from the same host
 ([ADR-0016](docs/adr/0016-web-ui-as-a-separate-site-over-the-json-api.md)). It logs in through
 `/api/v1/session` with the same password. Failed logins are limited per client address. If a reverse
 proxy sits in front of the bot, set `WEB_FORWARDED_ALLOW_IPS` to the proxy's address, so that the limit
