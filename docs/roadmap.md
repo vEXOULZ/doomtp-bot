@@ -68,6 +68,13 @@ take straight from the app. The pages themselves are being rebuilt in `doomtp-we
 on the design the other vexoulz sites share. When it covers every page, the bot stops serving its own
 (item 4) and §11 is rewritten to match (item 5). Until then both work, with one login.
 
+### Moderators signing in with Twitch — ADR-0017, proposed
+
+The site has a moderator view that only the admin password reaches today. ADR-0017 proposes what a
+Twitch session looks like in `GET /api/v1/session` and which endpoints a moderator may use in the
+channels they moderate, enforced on the server. Nothing is built until the shape is agreed with
+`doomtp-web` (item 1).
+
 ### Waiting on a reply — ADR-0008 item 4
 
 Backfill reads from `recent-messages.robotty.de`, a service someone else runs and pays for. The bot
