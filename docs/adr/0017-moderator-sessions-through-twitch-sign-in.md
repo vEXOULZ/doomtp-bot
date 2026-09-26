@@ -1,6 +1,6 @@
 # ADR-0017: Moderator sessions through Twitch sign-in
 
-**Status:** Proposed — the session shape needs agreeing with `doomtp-web` before any code
+**Status:** Accepted (in progress; see Action Items) — 2026-09-26
 **Date:** 2026-09-26
 **Deciders:** Project owner
 
@@ -18,7 +18,7 @@ channel without being handed the admin password.
 Hiding things in the site is not access control. Whatever a moderator session may not do, the API must
 refuse.
 
-## Decision (proposed)
+## Decision
 
 ### The session says who is behind it
 
@@ -55,7 +55,7 @@ Checked on the server for every request, against the channel in the path:
 | Modules, command rules, triggers, filters, ignored users | read and write | yes |
 | Channel settings: `prefix`, `quiet_errors`, `cc_edit_notice`, `reply_hold_ms`, `timezone`, `automod_*` | read and write | yes |
 | Channel settings: the "who may" roles (`*_role`), `log_enabled`, `history_backfill` | read only | yes |
-| Publications, variables | read (writes as chat allows) | yes |
+| Publications, variables | read only | yes |
 | `POST /explain`, including `as_user` | in their channels | yes |
 | `/audit?channel=` | that channel's entries | yes |
 | `/audit` without a channel, `/channels` listing | only their channels | yes |
@@ -72,15 +72,15 @@ A Twitch session writes with `Actor(user_id, "web")`: `actor_user_id` is the sig
 by the same rule chat uses: `DELETE /channels/{login}/ignored/{user_id}` is allowed to any signed-in user
 whose id is `user_id`, when the entry's `added_by` is also that id (§5.4).
 
-### Groundwork, before the sign-in itself
+### Where it lives
 
-1. `_authenticate` in `api/routes/data.py` returns a `Caller` (`role`, `user_id`, `channels`,
-   `actor`) instead of a string, and every route takes the `Actor` from it instead of the module-level
-   `ACTOR`. Keys and the password session map to what they are today, so nothing changes for them.
-2. One `require_channel(caller, settings, area)` check per route, driven by the table above, so the
-   table is code in one place, and a test walks every route with a moderator caller.
-3. Then the OAuth flow under `/auth/` (it already hosts the bot and broadcaster flows), the session
-   store keyed by Twitch user, and the three new `/session` fields.
+- `api/access.py` turns a request into a `Caller` (`role`, `user_id`, `channels`, `actor`). Keys and
+  the password session are admins with `Actor(None, "api")`, as before.
+- Each private route declares an **area**: `channel` (moderators, in the channels they manage) or
+  `admin`. `test_api_moderator.py` walks every data route and fails on one that declares neither and
+  isn't on the public list.
+- `Session` carries `role`, `user_id`, `user_login` and `channels`, and `/api/v1/session` reports them.
+  The Jinja `/admin` pages and API keys stay admin-only.
 
 ## Options Considered
 
@@ -104,14 +104,15 @@ last refresh.
   test, not quietly allow everyone.
 - **Sharp edge:** sessions are in memory. A restart signs everyone out, as it does for the password
   session today.
-- **Open questions to settle with `doomtp-web`:** whether `channels` should carry more than logins (the
-  sign and the tier would spare a request per channel), and whether a moderator sees `/runs` for their
-  own channel.
+- **Settled on 2026-09-26:** `/runs` and `/messages` stay admin-only for now; publications are read-only
+  for moderators, even though chat lets a moderator `cc disable` one; `channels` carries logins only.
 
 ## Action Items
 
-1. [ ] Agree the `/session` shape and the table above with `doomtp-web`, then mark this ADR accepted.
-2. [ ] `Caller` from `_authenticate`, the `Actor` taken from it, and `require_channel` with a test over
-   every route.
-3. [ ] Twitch sign-in under `/auth/`, sessions keyed by Twitch user, and the new `/session` fields.
-4. [ ] Signed-in users may delete their own self-ignore.
+1. [x] Agree the `/session` shape and the table above with `doomtp-web`. *(2026-09-26)*
+2. [x] `Caller` from `api/access.py`, the `Actor` taken from it, an area on every private route, and a
+   test that fails when a route has none. *(2026-09-26)*
+3. [ ] Twitch sign-in under `/auth/`: the OAuth flow, `channels` from Helix, the refresh, and a
+   `Session` made with `AdminAuth.login(role=…, user_id=…, user_login=…, channels=…)`. The session
+   fields, the checks and the audit actor are already in place, so this item is only the sign-in.
+4. [x] Signed-in users may delete their own self-ignore. *(2026-09-26)*

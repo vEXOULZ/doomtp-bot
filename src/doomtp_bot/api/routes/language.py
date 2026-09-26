@@ -11,7 +11,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from doomtp_bot.api.routes.data import _authenticate
+from doomtp_bot.api.access import authenticate, check_area
 from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
@@ -122,7 +122,8 @@ async def explain_expression(request: Request, body: ExplainRequest) -> dict[str
     channel = _channel(request, body.channel)
     invoker = None
     if body.as_user:
-        await _authenticate(request, "read")
+        caller = await authenticate(request, "read")
+        check_area(caller, "channel", body.channel)  # a moderator explains as users of their channels
         invoker = await chatter_for(request, channel, body.as_user, frozenset(body.badges))
     ctx = runtime.make_context(channel=channel, invoker=invoker)
     report = await explain(runtime, body.text, ctx, context=Context(body.context), run=body.run)

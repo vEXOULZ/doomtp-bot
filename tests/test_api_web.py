@@ -76,6 +76,9 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
         "csrf": None,
         "expires_at": None,
         "admin_enabled": True,
+        "role": None,
+        "user": None,
+        "channels": None,
     }
     assert (await client.post("/api/v1/session", json={"password": "nope"})).status_code == 401
 
@@ -85,6 +88,8 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
     assert "httponly" in cookie and "samesite=lax" in cookie and "secure" not in cookie  # plain http here
     session = (await client.get("/api/v1/session")).json()
     assert session["authenticated"] and session["csrf"] == response.json()["csrf"] and session["expires_at"]
+    # The password is an admin with no Twitch user behind it, over every channel (ADR-0017).
+    assert (session["role"], session["user"], session["channels"]) == ("admin", None, None)
 
     # The same session works on the data API, and it is the one the admin pages use.
     assert (await client.get("/api/v1/channels")).status_code == 200

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from doomtp_bot.clock import now_ms
@@ -50,13 +51,22 @@ async def write_audit(
 
 
 async def read_audit(
-    conn: Connection, *, channel_id: str | None = None, limit: int = 50
+    conn: Connection,
+    *,
+    channel_id: str | None = None,
+    limit: int = 50,
+    channel_ids: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """The newest audit rows first, optionally only one channel's, with `before` and `after` decoded.
+    """The newest audit rows first, optionally only one channel's (or only some channels'), with `before`
+    and `after` decoded.
 
     Older rows whose values aren't JSON keep the stored string rather than failing the read.
     """
-    where, params = ("", ()) if channel_id is None else (" WHERE channel_id = %s", (channel_id,))
+    where, params = "", tuple[object, ...]()
+    if channel_id is not None:
+        where, params = " WHERE channel_id = %s", (channel_id,)
+    elif channel_ids is not None:
+        where, params = " WHERE channel_id = ANY(%s)", (list(channel_ids),)
     async with await conn.execute(
         "SELECT id, channel_id, actor_user_id, via, action, target, before, after, at"
         f" FROM audit_log{where} ORDER BY id DESC LIMIT %s",

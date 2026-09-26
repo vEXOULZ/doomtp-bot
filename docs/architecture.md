@@ -601,7 +601,7 @@ A **race window** remains: a mod can act after the message has already been sent
 | `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables, message search, command runs, `/api/v1/audit` | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked on the admin page, and the key is shown once, on the page that creates it, never through a redirect where it would land in logs and history. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
-| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). Same password and sessions as `/admin`; the CSRF token comes from `GET /session`. Keys are managed with a session only, never with a key. Failed logins are limited per client address, together with the `/admin` form; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
+| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a moderator session (ADR-0017, the Twitch sign-in still to come) reaches only the `channel` routes of the channels it lists, and its writes are audited as `via="web"` under the user's id. Keys and the Jinja admin pages are for admins. Same password and sessions as `/admin`; the CSRF token comes from `GET /session`. Keys are managed with a session only, never with a key. Failed logins are limited per client address, together with the `/admin` form; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
 | `GET /api/v1/site`, `/site/channels/{login}`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, one channel's sign, tier and status, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
 | `GET /api/v1/channels/{login}/modules`, `/ignored`; `POST /ignored`, `DELETE /ignored/{user_id}` | **Now** | API key or admin session. Modules include the packs a channel can use and `custom` (commands published one by one), each with the `enabled` chat would apply. Ignored users come with who ignored them, when and why; adding and removing them is audited like `ignore` in chat |
 | `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. `/admin/explain` explains as a chatter you name (§4.4). |
@@ -618,14 +618,13 @@ A **race window** remains: a mod can act after the message has already been sent
 - **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
 - If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `doomtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
 
-*Future (not designed): Twitch OAuth login for a per-user dashboard.* Two ways in exist today, and they
-meet in one place: `_authenticate` in `api/routes/data.py` takes an API key (`api/keys.py`) or an admin
-session (`webui/auth.py`) and answers who is calling; the admin pages ask `_require_admin`. A Twitch login
-would go in beside them. *(Changed in revision 5: this line used to promise a pluggable `Authenticator`
-written ahead of time. It was never built, and it is not planned: a Twitch login is not a third way to be
-the admin but a new kind of caller — someone with rights over their own data only — and an interface
-written before that caller is designed would only guess at its shape. The dashboard adds its principal,
-and the seam, when it is designed.)*
+**Who is calling (ADR-0017).** Every way in meets in `api/access.py`: `authenticate` takes an API key
+(`api/keys.py`) or a session (`webui/auth.py`) and returns a `Caller` with a role, the channels it may
+manage and the `Actor` its writes are audited as. Keys and the password session are admins. A moderator
+session, which the Twitch sign-in will create, reaches only the routes marked `channel`, and only for
+the channels it lists; routes marked `admin` refuse it. The admin pages ask `_require_admin`, which also
+wants an admin. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it
+would have guessed at is now designed, and the seam came with it.)*
 
 ---
 
