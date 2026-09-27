@@ -135,6 +135,7 @@ class TwitchService:
         tokens: TokenStore,
         sink: EventSink,
         on_stopped: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        expected_bot_id: str | None = None,
     ) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
@@ -142,6 +143,10 @@ class TwitchService:
         self.sink = sink
         #: Called when the client stops by itself, so whoever started it can start it again (ADR-0001).
         self.on_stopped = on_stopped
+        #: TWITCH_BOT_ID. A stored token for any other account is refused rather than run with.
+        self.expected_bot_id = expected_bot_id
+        #: Why start() refused the stored token, for health; None once a start gets past that check.
+        self.refused: str | None = None
         self.client: _BotClient | None = None
         self.bot_id: str | None = None
         self.bot_login: str | None = None
@@ -159,6 +164,22 @@ class TwitchService:
         if stored is None or not stored.refresh_token:
             log.warning("twitch.not_authorized", hint="open /auth/login to authorize the bot account")
             return False
+        if self.expected_bot_id and stored.user_id != self.expected_bot_id:
+            # /auth/callback checks the account, but a token stored before TWITCH_BOT_ID changed would
+            # otherwise go on running as the old account, into the old account's channels.
+            self.refused = (
+                f"the stored bot token is for {stored.login} ({stored.user_id}), but TWITCH_BOT_ID is"
+                f" {self.expected_bot_id}; open /auth/login and sign in as the bot account"
+            )
+            log.error(
+                "twitch.wrong_bot_account",
+                stored=stored.login,
+                stored_id=stored.user_id,
+                expected_id=self.expected_bot_id,
+            )
+            await self.stop()
+            return False
+        self.refused = None
         await self.stop()
         self.bot_id, self.bot_login = stored.user_id, stored.login
         self.client = _BotClient(
@@ -199,7 +220,8 @@ class TwitchService:
 
     async def health(self) -> ComponentHealth:
         if self.client is None:
-            return ComponentHealth(Status.DEGRADED, {"reason": "bot not authorized; open /auth/login"})
+            reason = self.refused or "bot not authorized; open /auth/login"
+            return ComponentHealth(Status.DEGRADED, {"reason": reason})
         if self._task is not None and self._task.done():
             return ComponentHealth(Status.UNHEALTHY, {"reason": "client stopped", "error": self.last_error})
         return ComponentHealth(Status.OK, {"bot": self.bot_login, "channels": len(self._subscribed)})
