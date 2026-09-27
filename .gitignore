@@ -14,6 +14,9 @@ build/
 data/
 secrets/
 .env
+# Copies of it too (.env.backup, .env.local, ...); the template is the one meant to be committed.
+.env.*
+!.env.example
 
 # Web editor
 web-editor/node_modules/
