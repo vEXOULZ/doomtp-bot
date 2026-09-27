@@ -11,9 +11,9 @@ from fastapi.routing import APIRoute
 
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.api.routes.data import router
+from doomtp_bot.api.sessions import SESSION_COOKIE
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.webui.auth import SESSION_COOKIE
 from scripts.dev_api import add_dev_login, parse_moderators
 from tests.test_api_data import (  # noqa: F401  (fixtures)
     CHANNEL_ID,
@@ -121,7 +121,6 @@ async def test_a_moderator_cannot_reach_what_is_for_admins(
     ).status_code == 403
     assert (await client.get("/api/v1/keys")).status_code == 403
     assert (await client.post("/api/v1/keys", json={"name": "mine"}, headers=mod)).status_code == 403
-    assert (await client.get("/admin")).status_code == 403  # the Jinja admin pages show every channel
 
     explain = {"text": "ping", "context": "body", "as_user": "friend"}
     assert (

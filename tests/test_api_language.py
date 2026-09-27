@@ -124,7 +124,7 @@ async def test_explain_as_another_user_needs_an_admin_session_or_a_key(dbs: Data
     request = {"text": "role list", "context": "body", "channel": CHANNEL_LOGIN, "as_user": "mod"}
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         assert (await http.post("/api/v1/explain", json=request)).status_code == 401
-        await http.post("/admin/login", data={"password": "pw"})
+        await http.post("/api/v1/session", json={"password": "pw"})
         as_mod = (await http.post("/api/v1/explain", json={**request, "badges": ["moderator"]})).json()
         assert as_mod["invocations"][0]["allowed"] is True and as_mod["invocations"][0]["rank"] == 80
         no_channel = await http.post("/api/v1/explain", json={**request, "channel": None})

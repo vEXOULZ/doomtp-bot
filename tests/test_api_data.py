@@ -11,6 +11,7 @@ from httpx import ASGITransport
 
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.api.sessions import SESSION_COOKIE
 from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
@@ -25,7 +26,6 @@ from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.variables.store import PostgresVariableStore
-from doomtp_bot.webui.auth import SESSION_COOKIE
 from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -168,8 +168,8 @@ async def test_a_key_records_when_it_was_used(app_and_keys: tuple[Any, ApiKeySer
 
 
 async def test_a_session_write_needs_the_csrf_header(client: httpx.AsyncClient) -> None:
-    login = await client.post("/admin/login", data={"password": PASSWORD})
-    assert login.status_code == 303
+    login = await client.post("/api/v1/session", json={"password": PASSWORD})
+    assert login.status_code == 200
     token = client.cookies.get(SESSION_COOKIE)
     assert token is not None
 
@@ -177,30 +177,11 @@ async def test_a_session_write_needs_the_csrf_header(client: httpx.AsyncClient) 
     refused = await client.patch(f"/api/v1/channels/{CHANNEL_LOGIN}", json={"quiet_errors": True})
     assert refused.status_code == 403
 
-    page = (await client.get("/admin")).text
-    csrf = page.split('name="csrf" value="')[1].split('"')[0]
+    csrf = login.json()["csrf"]
     allowed = await client.patch(
         f"/api/v1/channels/{CHANNEL_LOGIN}", json={"quiet_errors": True}, headers={"X-CSRF-Token": csrf}
     )
     assert allowed.status_code == 200 and allowed.json()["quiet_errors"] is True
-
-
-async def test_the_admin_page_creates_and_revokes_keys(client: httpx.AsyncClient) -> None:
-    await client.post("/admin/login", data={"password": PASSWORD})
-    csrf = (await client.get("/admin")).text.split('name="csrf" value="')[1].split('"')[0]
-    created = await client.post(
-        "/admin/keys", data={"name": "dashboard", "scopes": "read,write", "csrf": csrf}
-    )
-    assert created.status_code == 200 and "dtb_" in created.text
-    secret = created.text.split("<code>dtb_")[1].split("</code>")[0]
-    assert (await client.get("/api/v1/channels", headers=auth("dtb_" + secret))).status_code == 200
-
-    # Not a hard-coded 1: Postgres sequences are not rolled back with the transaction that used them,
-    # so ids carry across tests. Ask the page which key it is showing.
-    key_id = (await client.get("/admin")).text.split('name="key_id" value="')[1].split('"')[0]
-    revoked = await client.post("/admin/keys/revoke", data={"key_id": key_id, "csrf": csrf})
-    assert revoked.status_code == 303
-    assert (await client.get("/api/v1/channels", headers=auth("dtb_" + secret))).status_code == 401
 
 
 # ── channels ───────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ from railroad import Choice, Diagram, NonTerminal, OneOrMore, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "grammar" / "railroad.ebnf"
-OUT = ROOT / "src" / "doomtp_bot" / "webui" / "static" / "grammar"
+OUT = ROOT / "src" / "doomtp_bot" / "api" / "static" / "grammar"
 
 # The site's own colours, spelled out: an <img> can't reach the page's CSS variables, but it does follow
 # the reader's light or dark preference, which is what the page follows too.

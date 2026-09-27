@@ -71,7 +71,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | Log durability | Every message received is stored, except messages still in the batch window (≤1 s) at the moment of a crash. Gaps are recorded explicitly and filled from recent-messages where possible. |
 | Safety | All chat input is untrusted. Pipelines have bounded time, size and depth. Published commands run with the **invoker's** permissions. |
 | Footprint | Under 250 MB RAM |
-| Network | Outbound-only connections to Twitch. The API and web UI are LAN-only until a reverse proxy and authentication are added. |
+| Network | Outbound-only connections to Twitch. The bot listens on localhost; the web site and the paths it needs from the bot are published by a reverse proxy in front of both (§11), never by a port forward to the bot. |
 
 ---
 
@@ -127,7 +127,7 @@ flowchart TB
     OUT -.-> CHAT
     RT -.-> CHAT
     SVC -.-> BOT
-    API["api/ + webui/<br/>health · OAuth · /api/v1 · /admin"] -.-> BOT
+    API["api/<br/>health · OAuth · /api/v1 · /static"] -.-> BOT
     API -.-> CHAT
 
     subgraph DATA["postgres — one database, a schema each (ADR-0014)"]
@@ -141,7 +141,7 @@ Three properties the picture is meant to make obvious:
 
 - **Nothing reaches in.** The four outside boxes are all connections *the bot opens* — events arrive
   down a socket it dialled, and even the deploy is a pull (ADR-0001, ADR-0013). The homelab needs no
-  port forward, and the web UI is bound to localhost.
+  port forward, and the bot's HTTP side is bound to localhost.
 - **Logging is not in the command path.** The writer is a queue; a slow disk delays storage, never a
   reply, and every message is logged including ignored users' (architecture §3.1).
 - **The pipeline is the only thing that runs user text**, and it is checked at both ends: preflight
@@ -350,12 +350,12 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 - the placeholders each command references, and whether they can be satisfied
 - the executed result, only if `!explain --run` is used, and even then without committing variable writes or sending anything
 
-**The report page** is `GET /explain/<token>`, on the public side, because it is what chat links to. The
-web UI is LAN-only by default, so the link is added only when `PUBLIC_WEB_UI=true` says `PUBLIC_BASE_URL`
+**The report page** is the web site's `/explain/<token>`, on the public side, because it is what chat links
+to; it reads `GET /api/v1/explain/<token>`. The site isn't published until a proxy is set up, so the link is added only when `PUBLIC_WEB_UI=true` says `PUBLIC_BASE_URL`
 is reachable from outside (a reverse proxy, a tunnel); otherwise chat gets the summary alone. Reports are
 kept in memory for an hour, at most 500, under an unguessable token (`runtime/explain.py` `ReportStore`),
 and a report holds only what its caller typed and was shown. Checking *as someone else* is admin-only:
-`/admin/explain` and `as_user` on `POST /api/v1/explain` (§11). Their reports are shown to the admin and
+`as_user` on `POST /api/v1/explain` (§11), which the web site's admin explain page uses. Their reports are shown to the admin and
 never kept, so no public link ever says whose view it was. Chat badges (moderator, VIP, subscriber) only
 arrive with a chat message, so these take the badges to assume; custom roles, the broadcaster and bot
 admins are looked up as in chat.
@@ -573,9 +573,9 @@ A **race window** remains: a mod can act after the message has already been sent
     and the outbox hands the channel to `ChannelManager.leave_banned`, which parts it as the `system`
     actor (so the audit log has it) with `status='banned'` rather than `parted`. The rest of that message
     is not sent. The bot's own channel is never left this way: nobody can be banned from their own chat,
-    so a 403 there is logged as a token problem. The flag shows on the admin pages and as `banned` in
+    so a 403 there is logged as a token problem. The flag shows on the web admin and as `banned` in
     `/api/v1/channels`, and coming back is deliberate: `!join <channel> rejoin` for a bot admin, the
-    admin page's rejoin button, `"rejoin": true` on `POST /api/v1/channels` (409 without it), or the
+    web admin's rejoin button, `"rejoin": true` on `POST /api/v1/channels` (409 without it), or the
     broadcaster inviting the bot again themselves (`!join` in the bot's chat, or `/auth/connect`).
   - Never send unsolicited messages in basic-tier channels. Timers and alerts there require an explicit opt-in by a mod.
 - **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (opt-in), `log_enabled`, `quiet_errors`, `cc_edit_notice` (off by default) and the callback defaults.
@@ -600,30 +600,33 @@ A **race window** remains: a mod can act after the message has already been sent
 | `GET /api/v1/channels/{login}/commands`, `/publications`, `GET /api/v1/custom-commands` | **Now** | Public, like the pages that already show them |
 | `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables, message search, command runs, `/api/v1/audit` | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
-**API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked on the admin page, and the key is shown once, on the page that creates it, never through a redirect where it would land in logs and history. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
-| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a Twitch sign-in (ADR-0017, `/auth/admin/login`) is an admin for a bot owner or bot admin and a moderator otherwise, and a moderator session reaches only the `channel` routes of the channels it lists, and its writes are audited as `via="web"` under the user's id. Keys and the Jinja admin pages are for admins. Same password and sessions as `/admin`; the CSRF token comes from `GET /session`, and `twitch_login` there says whether the Twitch sign-in is set up. Keys are managed with a session only, never with a key. Failed logins are limited per client address, together with the `/admin` form; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
+**API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked with an admin session through `/api/v1/keys` (the web admin), and the key is in the response that creates it and nowhere else. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
+| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a Twitch sign-in (ADR-0017, `/auth/admin/login`) is an admin for a bot owner or bot admin and a moderator otherwise, and a moderator session reaches only the `channel` routes of the channels it lists, and its writes are audited as `via="web"` under the user's id. Keys are for admins. The CSRF token comes from `GET /session`, and `twitch_login` there says whether the Twitch sign-in is set up. Keys are managed with a session only, never with a key. Failed logins are limited per client address; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
 | `GET /api/v1/site`, `/site/channels/{login}`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, one channel's sign, tier and status, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
 | `GET /api/v1/channels/{login}/modules`, `/ignored`; `POST /ignored`, `DELETE /ignored/{user_id}` | **Now** | API key or admin session. Modules include the packs a channel can use and `custom` (commands published one by one), each with the `enabled` chat would apply. Ignored users come with who ignored them, when and why; adding and removing them is audited like `ignore` in chat. `everywhere` (the bot-wide list) is for admins |
-| `/admin/*` | **Now** | **Admin UI.** Local admin password (scrypt from the standard library, not argon2 — one less native dependency), sessions in memory, CSRF token per form. Disabled entirely when no password is set. `/admin/explain` explains as a chatter you name (§4.4). |
-| `GET /explain/<token>` | **Now** | The full `!explain` report chat links to (§4.4). Public, short-lived, and it shows only what its caller saw. |
-| `/` | **Now** | **Public UI.** Feature documentation, the generated command reference, the language reference and per-channel pages. The command reference and the channel pages share one compact table: a line per command, a `<details>` pane for arguments, cooldowns and examples, and a search box that filters client-side over a precomputed `data-search` string (so it needs no request per keystroke, and the page still lists everything without JavaScript). |
+| `/static/*` | **Now** | The expression editor bundle and its lexer (`/static/editor/`), and the railroad diagrams (`/static/grammar/`). The web site loads them from here, so there is one copy of each. |
+| `/docs`, `/openapi.json` | **Now** | Swagger UI and the OpenAPI document. Exactly these two: `/docs/…` below them are the web site's pages. |
 
-**UI technology:**
-- **Pages** are server-rendered **Jinja2** inside the same FastAPI app. That's the smallest option for a single Python maintainer: no second container, and no build for pages. *(Built with plain forms so far: HTMX would be a CDN dependency or a vendored file, and nothing yet needs partial updates. Add it when a page does.)*
+The admin password (`ADMIN_PASSWORD`) is hashed with scrypt from the standard library, not argon2 — one
+less native dependency — and sessions live in memory (`api/sessions.py`). Without a password the password
+login is off, and a Twitch sign-in still works. The password is the way in when Twitch is down or the
+sign-in isn't set up.
+
+**UI technology (ADR-0016):**
+- **The pages are a separate site,** [`doomtp-web`](https://github.com/vEXOULZ/doomtp-web): Vue and TypeScript on the design the other vexoulz sites share, built to static files. The bot serves no pages of its own. The site is served from the same origin as the bot, with a reverse proxy sending `/api/*`, `/auth/*`, `/static/*`, `/healthz`, `/readyz`, and exactly `/docs` and `/openapi.json` to the bot and everything else to the site. So there is no CORS, and the session is a plain same-origin cookie. The site keeps the URLs the bot's own pages had, so chat's explain links and older bookmarks still work.
+- **What the site needs from the bot is JSON.** When a page needs something the API doesn't return, it is added to the API here; the site doesn't work it out on its own.
 - **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component whose own lexer (`web-editor/src/tokens.js`) only colours text; diagnostics come from `/api/v1/parse`, autocomplete from `/api/v1/language` and `/api/v1/commands`, and the preview from `/api/v1/explain`.
-  - It ships as a static bundle (esbuild), **committed** at `webui/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
-  - The lexer alone is also built to `webui/static/editor/tokens.js`, an ES module, so doomtp-web colours command text exactly as the editor does (ADR-0016).
+  - It ships as a static bundle (esbuild), **committed** at `api/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
+  - The lexer alone is also built to `api/static/editor/tokens.js`, an ES module, so doomtp-web colours command text exactly as the editor does (ADR-0016).
   - It is a web component, `<dtb-editor>`, that upgrades the `<textarea>` it wraps — so a page works without JavaScript and an ordinary form post still carries the same field. Only this component needs Node tooling.
-  - It's on the language page as a playground today; the pages that edit bodies and triggers can use the same element.
-- **Public docs pages** include railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
-- If the UI ever needs rich client-side state beyond this, a SPA generated from the OpenAPI schema can replace the pages without API changes. *(That is now happening: ADR-0016 moves the pages to `doomtp-web`, a separate site over this API. The Jinja pages stay until it covers all of them.)*
+  - The web site's language page carries it as a playground; the pages that edit bodies and triggers can use the same element.
+- **The language page** includes railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
 
 **Who is calling (ADR-0017).** Every way in meets in `api/access.py`: `authenticate` takes an API key
-(`api/keys.py`) or a session (`webui/auth.py`) and returns a `Caller` with a role, the channels it may
+(`api/keys.py`) or a session (`api/sessions.py`) and returns a `Caller` with a role, the channels it may
 manage and the `Actor` its writes are audited as. Keys and the password session are admins. A moderator
 session reaches only the routes marked `channel`, and only for the channels it lists; routes marked
-`admin` refuse it, and so does anything that writes the bot-wide scope (an `everywhere` ignore). The
-admin pages ask `_require_admin`, which also wants an admin.
+`admin` refuse it, and so does anything that writes the bot-wide scope (an `everywhere` ignore).
 
 **Signing in with Twitch (ADR-0017).** `/auth/admin/login?next=<path>` sends a person to Twitch for
 `user:read:moderated_channels` and back to `/auth/admin/callback`, which Twitch must have registered as
@@ -671,10 +674,11 @@ src/doomtp_bot/
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
 │               moderation.py quotes.py logsearch.py                       ✔ timeout, shoutout (§4.3); quotes; log search
-├─ webui/       pages.py auth.py emoji.py templates/ static/               ✔ server-rendered pages
-└─ api/         app.py keys.py routes/ (health auth language data session site) ✔
-                webui/static/editor/editor.js                              ✔ the built editor bundle, committed
-                webui/static/editor/tokens.js                              ✔ its lexer alone, as an ES module, committed
+└─ api/         app.py keys.py sessions.py access.py grammar.py            ✔ no pages: those are doomtp-web's (ADR-0016)
+                routes/ (health auth language data session site)          ✔
+                static/editor/editor.js                                    ✔ the built editor bundle, committed
+                static/editor/tokens.js                                    ✔ its lexer alone, as an ES module, committed
+                static/grammar/*.svg                                       ✔ the railroad diagrams, committed
 
 web-editor/                  # the only Node-tooled part: CodeMirror 6 → the static editor bundle and its lexer (ADR-0011)
 tests/lang/corpus.yaml       # spec Appendix A, shared by pytest (parser) and vitest (highlighter)
@@ -732,7 +736,7 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   chosen under. Rolling back means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and
   are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
   before the deploy.
-- **What the image holds:** the locked dependency set and the installed package — templates, static files,
+- **What the image holds:** the locked dependency set and the installed package — static files,
   the built editor bundle and the copy of the grammar the language page shows (force-included into the
   wheel, since `docs/` isn't installed). There is no Node in the image, which is why `web-editor/`'s
   output is committed rather than built there. *Built and run from a clean tree on 2026-09-19: migrations

@@ -4,7 +4,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing anything. It covers bran
 
 ## graphify
 
-This repo has a [graphify](https://github.com/safishamsi/graphify) knowledge graph of the code, docs, ADRs and web UI templates. It shows the main hubs, the clusters of related code, and links from docs to code. There is only one graph, in the **main checkout's** `graphify-out/`, and it is not committed. Claude Code sessions run in worktrees under `.claude/worktrees/`, which have no graph of their own. Always go through `scripts/graphify.sh`: it finds the main checkout's graph from any worktree.
+This repo has a [graphify](https://github.com/safishamsi/graphify) knowledge graph of the code, docs and ADRs. It shows the main hubs, the clusters of related code, and links from docs to code. There is only one graph, in the **main checkout's** `graphify-out/`, and it is not committed. Claude Code sessions run in worktrees under `.claude/worktrees/`, which have no graph of their own. Always go through `scripts/graphify.sh`: it finds the main checkout's graph from any worktree.
 
 Rules:
 - **Before exploring code** to answer a question or to plan a change, ask the graph first:

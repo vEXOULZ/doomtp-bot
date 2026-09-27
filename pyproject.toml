@@ -9,8 +9,6 @@ dependencies = [
     "aiohttp>=3.9",
     "psycopg[binary]>=3.2",
     "fastapi>=0.115",
-    "jinja2>=3.1",
-    "python-multipart>=0.0.9",
     "uvicorn>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -45,7 +43,7 @@ packages = ["src/doomtp_bot"]
 
 [tool.hatch.build.targets.wheel.force-include]
 # The language page shows the grammar (ADR-0011), and `docs/` is not installed: ship a copy with it.
-"docs/grammar/railroad.ebnf" = "doomtp_bot/webui/static/railroad.ebnf"
+"docs/grammar/railroad.ebnf" = "doomtp_bot/api/static/railroad.ebnf"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

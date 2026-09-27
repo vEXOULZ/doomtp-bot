@@ -10,10 +10,10 @@ import httpx
 import pytest
 
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.api.sessions import SESSION_COOKIE
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.twitch.auth import OAuthError
 from doomtp_bot.twitch.signin import REFRESH_S, SIGNIN_SCOPES, TokenRevoked, TwitchSignIn, safe_next
-from doomtp_bot.webui.auth import SESSION_COOKIE
 from tests.test_api_data import (  # noqa: F401  (fixtures)
     CHANNEL_ID,
     CHANNEL_LOGIN,

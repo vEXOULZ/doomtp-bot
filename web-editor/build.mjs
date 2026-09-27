@@ -12,7 +12,7 @@
 import { build } from "esbuild";
 import { mkdir } from "node:fs/promises";
 
-const outdir = "../src/doomtp_bot/webui/static/editor";
+const outdir = "../src/doomtp_bot/api/static/editor";
 const banner = "/* doomtp-bot expression editor — built by web-editor/build.mjs, do not edit */";
 
 await mkdir(new URL(`${outdir}/`, import.meta.url), { recursive: true });

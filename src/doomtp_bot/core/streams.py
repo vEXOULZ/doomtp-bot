@@ -41,7 +41,7 @@ class JoinedChannels(Protocol):
 
 @dataclass
 class StreamStatus:
-    """The live set, shared with anything that cares (timers, triggers, the admin page)."""
+    """The live set, shared with anything that cares (timers, triggers, the API)."""
 
     streams: dict[str, dict[str, Any]] = field(default_factory=dict)
 

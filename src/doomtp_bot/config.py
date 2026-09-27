@@ -44,8 +44,8 @@ class Settings(BaseSettings):
 
     default_prefix: str = DEFAULT_PREFIX
 
-    # Admin UI: the password is read from a file (a Docker secret) or the environment. Without one,
-    # /admin is disabled rather than open.
+    # The admin password: the web site's way in that doesn't need Twitch. Read from the environment (.env)
+    # or a file. Without one, the password login is off rather than open.
     admin_password: SecretStr | None = None
     admin_password_file: Path | None = None
     history_provider_url: str = "https://recent-messages.robotty.de/api/v2"

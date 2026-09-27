@@ -80,7 +80,7 @@ whose id is `user_id`, when the entry's `added_by` is also that id (§5.4).
   `admin`. `test_api_moderator.py` walks every data route and fails on one that declares neither and
   isn't on the public list.
 - `Session` carries `role`, `user_id`, `user_login` and `channels`, and `/api/v1/session` reports them.
-  The Jinja `/admin` pages and API keys stay admin-only.
+  The Jinja `/admin` pages and API keys stay admin-only. *(The Jinja pages were retired on 2026-09-27, ADR-0016.)*
 
 ## Options Considered
 

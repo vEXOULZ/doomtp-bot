@@ -1,6 +1,6 @@
 # ADR-0016: The web UI moves to a separate site over the JSON API
 
-**Status:** Accepted (in progress; see Action Items) — 2026-09-25
+**Status:** Accepted — 2026-09-25; done 2026-09-27
 **Date:** 2026-09-25
 **Deciders:** Project owner
 
@@ -46,7 +46,7 @@ form post that only works for a page the bot rendered itself.
   The address is only right behind a proxy that uvicorn trusts, so `WEB_FORWARDED_ALLOW_IPS` names those
   proxies (default: `127.0.0.1`, uvicorn's own default).
 - **The Jinja pages stay until the new site covers every one of them,** then they are retired in a later
-  release. `/auth/*` (bot OAuth, broadcaster connect) and `/static/*` (the editor bundle, the railroad
+  release. *(Retired 2026-09-27; see item 4.)* `/auth/*` (bot OAuth, broadcaster connect) and `/static/*` (the editor bundle, the railroad
   diagrams) stay in the bot either way.
 
 ## Options Considered
@@ -86,8 +86,15 @@ login becomes an API that the internet can reach, which is why logins are now ra
 2. [x] The public reads (`/site`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`,
    `/channels/{login}/packs`) and the admin reads (`/channels/{login}/modules`, `/ignored`).
    *(2026-09-25)*
-3. [ ] `doomtp-web` covers every page: home, commands, language, features, channel, explain, login, admin,
-   admin channel and admin explain.
-4. [ ] Stop serving the Jinja pages and remove `webui/pages.py` and its templates, keeping `/auth/*` and
-   `/static/*`.
-5. [ ] Rewrite the "UI technology" part of architecture §11 for the new site once item 4 lands.
+3. [x] `doomtp-web` covers every page: home, commands, language, features, channel, explain, login, admin,
+   admin channel and admin explain. *(2026-09-27. The site does more than the old pages did: it edits
+   settings and command rules, joins and leaves channels, and has an audit page. The one thing it
+   lacked was the "changed since vN" note on a publication, which needed `last_run_version` in
+   `/channels/{login}/publications`.)*
+4. [x] Stop serving the Jinja pages and remove `webui/pages.py` and its templates, keeping `/auth/*` and
+   `/static/*`. *(2026-09-27. The whole `webui/` package is gone: the sessions moved to `api/sessions.py`,
+   the grammar to `api/grammar.py`, and the editor bundle and diagrams to `api/static/`. The Twemoji sign
+   went with the templates, since the site ships its own. jinja2 and python-multipart left the
+   dependencies.)*
+5. [x] Rewrite the "UI technology" part of architecture §11 for the new site once item 4 lands.
+   *(2026-09-27)*
