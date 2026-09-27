@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -9,11 +10,12 @@ from fastapi.staticfiles import StaticFiles
 
 from doomtp_bot import __version__
 from doomtp_bot.api.routes import auth, data, health, language, session, site
+from doomtp_bot.api.sessions import AdminAuth, LoginLimiter
 from doomtp_bot.core.health import HealthRegistry
 from doomtp_bot.twitch.auth import TwitchAuth
-from doomtp_bot.webui import pages
-from doomtp_bot.webui.auth import AdminAuth, LoginLimiter
-from doomtp_bot.webui.emoji import STATIC_DIR
+
+# The editor bundle and the railroad diagrams, which the web site (doomtp-web) loads from here (ADR-0016).
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_app(
@@ -31,7 +33,7 @@ def create_app(
     app.state.runtime = runtime  # the language API parses and explains with the live registry
     app.state.policy = policy
     app.state.admin_auth = AdminAuth(password=admin_password)
-    app.state.login_limiter = LoginLimiter()  # shared by the JSON login and the admin page's form
+    app.state.login_limiter = LoginLimiter()  # failed JSON logins, per client address
     for name, service in (services or {}).items():  # customcmds, packs, triggers, filters
         setattr(app.state, name, service)
     app.include_router(health.router)
@@ -40,6 +42,5 @@ def create_app(
     app.include_router(data.router)
     app.include_router(session.router)
     app.include_router(site.router)
-    app.include_router(pages.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

@@ -1,8 +1,8 @@
-"""`/api/v1/session` and `/api/v1/keys`: the admin login and API keys, for a UI served elsewhere (ADR-0016).
+"""`/api/v1/session` and `/api/v1/keys`: the admin login and API keys, for the web site (ADR-0016).
 
-The same password and the same in-memory sessions as the server-rendered admin pages (`webui/auth.py`), so
-either UI can log in and both see the result. The session cookie is `HttpOnly`; the browser learns the
-CSRF token from `GET /session` instead and sends it back in `X-CSRF-Token` on every change.
+A session comes from the admin password here or from signing in with Twitch (ADR-0017); both live in
+memory (`api/sessions.py`). The session cookie is `HttpOnly`; the browser learns the CSRF token from
+`GET /session` instead and sends it back in `X-CSRF-Token` on every change.
 
 API keys are managed with a session only. A key that could mint keys would turn one leaked `write` key
 into a permanent one, and scripts have no business creating credentials.
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from doomtp_bot.api.access import current_session
 from doomtp_bot.api.keys import SCOPES, ApiKey, ApiKeyError, ApiKeyService
-from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth, LoginLimiter, Session
+from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, LoginLimiter, Session
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
 

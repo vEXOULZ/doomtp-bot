@@ -19,8 +19,8 @@ from typing import Any, Literal
 
 from fastapi import Depends, HTTPException, Request
 
+from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, Session
 from doomtp_bot.policy.repository import Actor
-from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth, Session
 
 Area = Literal["channel", "admin"]
 API_ACTOR = Actor(None, "api")

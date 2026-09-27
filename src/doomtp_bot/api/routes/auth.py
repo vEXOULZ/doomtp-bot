@@ -18,9 +18,9 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from doomtp_bot.api.routes.session import set_session_cookie
+from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth
 from doomtp_bot.twitch.auth import STATE_TTL_S, OAuthError, TwitchAuth
 from doomtp_bot.twitch.signin import SignInError, TwitchSignIn, safe_next
-from doomtp_bot.webui.auth import SESSION_COOKIE, AdminAuth
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

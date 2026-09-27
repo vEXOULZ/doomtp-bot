@@ -10,7 +10,9 @@ import pytest
 from httpx import ASGITransport
 
 from doomtp_bot.api.app import create_app
+from doomtp_bot.api.grammar import GRAMMAR_RULES
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.api.sessions import AdminAuth, LoginLimiter
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandService
@@ -21,8 +23,6 @@ from doomtp_bot.policy.roles import BUILTIN_RANKS, GLOBAL
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.storage.db import Databases
-from doomtp_bot.webui.auth import LoginLimiter
-from doomtp_bot.webui.pages import GRAMMAR_RULES
 from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -92,9 +92,8 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
     # The password is an admin with no Twitch user behind it, over every channel (ADR-0017).
     assert (session["role"], session["user"], session["channels"]) == ("admin", None, None)
 
-    # The same session works on the data API, and it is the one the admin pages use.
+    # The same session works on the data API.
     assert (await client.get("/api/v1/channels")).status_code == 200
-    assert (await client.get("/admin")).status_code == 200
 
     assert (await client.delete("/api/v1/session")).status_code == 403  # no CSRF token: a cross-site page
     assert (
@@ -116,9 +115,21 @@ async def test_logins_are_rate_limited_per_address(client: httpx.AsyncClient, ap
         assert (await client.post("/api/v1/session", json={"password": "nope"})).status_code == 401
     refused = await client.post("/api/v1/session", json={"password": PASSWORD})
     assert refused.status_code == 429 and int(refused.headers["retry-after"]) > 0
-    # The admin page's form shares the limit, so it is no way around it.
-    form = await client.post("/admin/login", data={"password": PASSWORD}, follow_redirects=False)
-    assert "too+many" in form.headers["location"]
+
+
+async def test_sessions_expire() -> None:
+    now = {"t": 0.0}
+    auth = AdminAuth(password=PASSWORD, ttl_s=60, clock=lambda: now["t"])
+    session = auth.login()
+    assert auth.session(session.token) is not None
+    now["t"] = 61
+    assert auth.session(session.token) is None
+
+
+def test_the_password_is_not_stored_in_the_clear() -> None:
+    auth = AdminAuth(password=PASSWORD)
+    assert auth.check_password(PASSWORD) and not auth.check_password("nope")
+    assert PASSWORD.encode() not in bytes(auth._digest)  # noqa: SLF001 - the point of the test
 
 
 def test_the_limiter_forgets_old_failures_and_resets_on_success() -> None:
@@ -212,6 +223,28 @@ async def test_roles_and_grammar_are_public(client: httpx.AsyncClient) -> None:
     assert {r["name"]: r["rank"] for r in roles["roles"]} == BUILTIN_RANKS
     grammar = (await client.get("/api/v1/grammar")).json()
     assert grammar["rules"] == GRAMMAR_RULES and grammar["text"]
+
+
+async def test_the_static_files_the_site_loads_are_served(client: httpx.AsyncClient) -> None:
+    """doomtp-web loads the editor, its lexer and the railroad diagrams from the bot (ADR-0011, ADR-0016)."""
+    assert len(GRAMMAR_RULES) > 10
+    for rule in GRAMMAR_RULES:  # one diagram per rule, committed by scripts/render_railroad.py
+        diagram = await client.get(f"/static/grammar/{rule['name']}.svg")
+        assert diagram.status_code == 200, rule["name"]
+        assert diagram.headers["content-type"].startswith("image/svg") and "railroad-diagram" in diagram.text
+
+    for script in ("editor.js", "tokens.js"):
+        bundle = await client.get(f"/static/editor/{script}")
+        assert bundle.status_code == 200
+        assert bundle.headers["content-type"].startswith(("text/javascript", "application/javascript"))
+    assert "dtb-editor" in (await client.get("/static/editor/editor.js")).text
+
+
+async def test_the_bot_serves_no_pages_of_its_own(client: httpx.AsyncClient) -> None:
+    """The pages are doomtp-web's (ADR-0016); the proxy sends these paths there, not here."""
+    for path in ("/", "/docs/commands", f"/channels/{CHANNEL_LOGIN}", "/admin", "/admin/login"):
+        assert (await client.get(path)).status_code == 404, path
+    assert (await client.get("/docs")).status_code == 200  # Swagger UI stays, at exactly /docs
 
 
 async def test_an_explain_link_serves_its_report(client: httpx.AsyncClient, app: Any) -> None:

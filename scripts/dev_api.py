@@ -29,6 +29,7 @@ from fastapi.responses import RedirectResponse
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.api.routes.session import set_session_cookie
+from doomtp_bot.api.sessions import SESSION_COOKIE
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
@@ -46,7 +47,6 @@ from doomtp_bot.storage.db import Databases, configure_event_loop
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.twitch.signin import safe_next
 from doomtp_bot.variables.store import PostgresVariableStore
-from doomtp_bot.webui.auth import SESSION_COOKIE
 
 SERVER = "postgresql://postgres:postgres@127.0.0.1:55432"
 SETUP = Actor(None, "system")

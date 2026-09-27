@@ -1,6 +1,6 @@
-"""Public reads for a web UI served elsewhere (ADR-0016): what the server-rendered public pages show.
+"""Public reads for the web site (doomtp-web, ADR-0016): what its public pages show.
 
-No authentication, and nothing here that the public pages don't already print: the channels the bot is
+No authentication, and nothing here that the public pages don't print anyway: the channels the bot is
 in, the built-in roles, the grammar, published packs, and an `!explain` report behind its chat link.
 """
 
@@ -11,11 +11,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from doomtp_bot import __version__
+from doomtp_bot.api.grammar import GRAMMAR, GRAMMAR_RULES
 from doomtp_bot.api.routes.data import _channel, _custom_json, _state
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import BUILTIN_RANKS, CUSTOM_RANK_MAX, CUSTOM_RANK_MIN, GLOBAL
-from doomtp_bot.webui.pages import GRAMMAR, GRAMMAR_RULES
 
 router = APIRouter(prefix="/api/v1", tags=["site"])
 

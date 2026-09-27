@@ -1,8 +1,9 @@
-"""Admin session handling for the web UI (architecture §11).
+"""Admin sessions for the web site (architecture §11, ADR-0016, ADR-0017).
 
-A single local admin password guards `/admin`, hashed with scrypt from the standard library and compared
-in constant time. Sessions live in memory: this is one process, and a restart logging admins out is the
-right default for a LAN tool. Without a configured password, `/admin` is disabled rather than open.
+The admin password is hashed with scrypt from the standard library and compared in constant time. It is
+the way in that doesn't depend on Twitch; a Twitch sign-in makes the same kind of session. Sessions live
+in memory: this is one process, and a restart logging everyone out is the right default. Without a
+configured password, the password login is off rather than open.
 """
 
 from __future__ import annotations
@@ -130,7 +131,7 @@ class AdminAuth:
 class LoginLimiter:
     """Failed logins per client address: after `attempts` inside `window_s`, wait until the oldest ages out.
 
-    The password is the only thing between the internet and `/admin` once the pages are published, and
+    The password is the only thing between the internet and an admin session once the site is public, and
     scrypt alone only slows a guesser down. A success clears the address's record.
     """
 

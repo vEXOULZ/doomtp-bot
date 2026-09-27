@@ -1,6 +1,6 @@
 # web-editor
 
-The expression editor for the web UI (ADR-0011): a CodeMirror 6 web component whose own lexer is used
+The expression editor for the web site (ADR-0011, ADR-0016): a CodeMirror 6 web component whose own lexer is used
 **only for colours**. Validation, diagnostics, autocomplete and explain previews come from the bot:
 
 - `POST /api/v1/parse` → the error a chat user would get, with its offset
@@ -13,7 +13,7 @@ This is the only Node-tooled part of the repository.
 ```bash
 npm install
 npm test     # vitest: token classes, including against ../tests/lang/corpus.yaml
-npm run build  # esbuild → ../src/doomtp_bot/webui/static/editor/{editor,tokens}.js
+npm run build  # esbuild → ../src/doomtp_bot/api/static/editor/{editor,tokens}.js
 ```
 
 **The built bundle is committed.** The Docker image has no Node in it and the bot serves the file as it
