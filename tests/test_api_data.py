@@ -403,6 +403,14 @@ async def test_publications_and_custom_commands_are_public(
     assert public.status_code == 200
     published = public.json()["publications"]
     assert published[0]["published_as"] == "hype" and published[0]["owner"] == "alice"
+    assert published[0]["last_run_version"] is None  # never run here yet
+
+    # Run once at v1, then edited by its author: the channel page can say it changed since.
+    publication, _ = (await service.publications_in(CHANNEL_ID))[0]
+    await service.touch_run(publication, 1)
+    await service.edit(command, "echo more hyped", channel_id=CHANNEL_ID, prefix="!")
+    edited = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/publications")).json()["publications"][0]
+    assert (edited["version"], edited["last_run_version"]) == (2, 1)
 
     disabled = await client.patch(
         f"/api/v1/channels/{CHANNEL_LOGIN}/publications/hype",
