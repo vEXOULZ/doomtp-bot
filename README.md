@@ -1,12 +1,12 @@
 # doomtp-bot
 
 A self-hosted, multi-channel Twitch chat bot with a composable command language
-(`!random 1-100 | echo you rolled {1}`), user-published custom commands, a complete chat log, and a REST API
-with a web UI.
+(`!random 1-100 | echo you rolled {1}`), user-published custom commands, a complete chat log, and a JSON API
+that its web site, [doomtp-web](https://github.com/vEXOULZ/doomtp-web), is built on.
 
 **Status:** feature-complete for v1 and not yet run in anger. The command language and its runtime,
 permissions, cooldowns and toggles, variables, the chat log with gap backfill, custom commands with
-versions and packs, triggers, the badword filter, the REST API and the web UI are all built and tested;
+versions and packs, triggers, the badword filter and the JSON API are all built and tested;
 so is the deploy path. What is left is running it against real chat — see
 [docs/roadmap.md](docs/roadmap.md).
 
@@ -20,6 +20,13 @@ so is the deploy path. What is left is running it against real chat — see
 2. Put the Client ID in `.env` as `TWITCH_CLIENT_ID`, and the client secret in `secrets/twitch_client_secret`. For local development you can use `TWITCH_CLIENT_SECRET` instead.
 3. Start the bot, then open `http://localhost:8080/auth/login` in a browser on the same machine. Sign in as the **bot account**, not your personal account.
 4. The bot joins its own channel. A streamer adds it to their channel by typing `!join` in the bot's chat. A bot owner can add any channel with `!join <channel>` there. Set owners with `BOT_OWNER_IDS`.
+
+**Keep development and the server apart.** Give each its own Twitch bot account and its own Twitch
+application, which means its own `TWITCH_CLIENT_ID`, client secret, `TWITCH_BOT_ID` and database. Then
+nothing you try in development reaches the real bot's channels or data. The bot token lives in the
+database, not in `.env`. If `TWITCH_BOT_ID` changes while an older token is still stored, the bot refuses
+to start the Twitch side and `/readyz` names the account it found. Sign in again at `/auth/login`, or
+start from an empty database (`docker compose down -v` throws the dev volume away).
 
 ## Docs
 
@@ -257,7 +264,17 @@ cd /srv/doomtp-bot && cp .env.example .env && mkdir -p secrets data
 
 Edit `.env`: `TWITCH_CLIENT_ID` and `TWITCH_BOT_ID` from the Twitch console, `BOT_OWNER_IDS` with your
 own Twitch user ID, and `BOT_IMAGE=ghcr.io/<owner>/doomtp-bot:main` — the package CI publishes, all
-lowercase. Leave `PUBLIC_BASE_URL=http://localhost:8080` alone; step 7 explains why.
+lowercase. Use the **server's** Twitch app and bot account here, not the ones you develop with. Leave
+`PUBLIC_BASE_URL=http://localhost:8080` for now: step 7 signs the bot in through a tunnel, and step 8
+changes it once the web site is published.
+
+Set `ADMIN_PASSWORD` in `.env` too. People sign in to the web admin with Twitch; the password is the
+way in that still works when Twitch is down or the sign-in is misconfigured. It is an admin login, so make
+it long. `.env` holds it in the clear, so keep the file to yourself (`grep ADMIN_PASSWORD .env` shows it):
+
+```bash
+printf 'ADMIN_PASSWORD=%s\n' "$(openssl rand -base64 24)" >> .env && chmod 600 .env
+```
 
 Then the two secrets, which only ever live in files:
 
@@ -292,9 +309,9 @@ waiting for step 7. `docker compose logs -f doomtp-bot` shows what it is doing.
 
 ### 7. Authorize the bot account
 
-The web UI is bound to `127.0.0.1` on the guest and the redirect URL registered with Twitch is
-`http://localhost:8080/auth/callback`. An SSH tunnel satisfies both at once, so nothing in `.env` or the
-Twitch console has to change. **From your own machine:**
+The bot listens on `127.0.0.1` on the guest and the redirect URL registered with Twitch is
+`http://localhost:8080/auth/callback`. An SSH tunnel satisfies both at once. Register that URL on the
+server's Twitch app for this step; step 8 adds the public ones. **From your own machine:**
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 you@bot-guest
@@ -311,7 +328,51 @@ curl -s localhost:8080/readyz
 `"status":"ok"`. The bot is now in its own chat. Type `!join` there from your channel's account to add
 it, or `!join <channel>` as a bot owner.
 
-### 8. Turn on unattended updates
+### 8. Publish the web site
+
+The pages are [doomtp-web](https://github.com/vEXOULZ/doomtp-web), a separate site built to static
+files; its CI publishes each build to that repository's `deploy` branch. The bot serves no pages. A
+reverse proxy puts the two on **one hostname with HTTPS**, so the browser needs no CORS and the session
+stays a plain cookie (ADR-0016):
+
+| Paths | Go to |
+|-------|-------|
+| `/api/*`, `/auth/*`, `/static/*`, `/healthz`, `/readyz`, exactly `/docs` and exactly `/openapi.json` | the bot, `127.0.0.1:8080` |
+| everything else | the site's files, with `index.html` for any path that isn't a file |
+
+`/metrics` stays off the public side: scrape it on the LAN. Run the proxy, or the tunnel agent if you
+publish through one, on the guest itself. The bot's port is published on `127.0.0.1` only, on purpose.
+Which proxy, and where, is yours to pick. Keep those details in your private notes rather than this
+repository.
+
+Then point the bot at the public address. In `.env`:
+
+```
+PUBLIC_BASE_URL=https://bot.example.com
+PUBLIC_WEB_UI=true
+WEB_FORWARDED_ALLOW_IPS=172.18.0.1
+```
+
+`WEB_FORWARDED_ALLOW_IPS` is the address the bot sees the proxy connect from. The failed-login limit
+trusts `X-Forwarded-For` from that address only. A proxy on the guest reaching `127.0.0.1:8080` arrives
+through Docker's port mapping, so the bot sees the compose network's gateway, not `127.0.0.1`:
+
+```bash
+docker network inspect doomtp-bot_default -f '{{(index .IPAM.Config 0).Gateway}}'
+```
+
+On the **server's** Twitch app, add both redirect URLs for the new address:
+`https://bot.example.com/auth/callback` (the bot account and broadcasters connecting) and
+`https://bot.example.com/auth/admin/callback` (signing in to the web admin). Then restart:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml up -d
+```
+
+The bot token you stored in step 7 stays valid; nothing needs signing in again. Open
+`https://bot.example.com/admin/login` and sign in with Twitch as a bot owner, or with the password.
+
+### 9. Turn on unattended updates
 
 ```bash
 sudo cp deploy/doomtp-bot-update.* /etc/systemd/system/ && sudo systemctl enable --now doomtp-bot-update.timer
@@ -331,7 +392,7 @@ sudo systemctl start doomtp-bot-update && journalctl -u doomtp-bot-update -n 20
 
 That second command deploys now instead of waiting for tonight.
 
-### 9. Back it up
+### 10. Back it up
 
 The `bot` schema holds the OAuth refresh tokens, every channel's configuration and every custom command.
 A Proxmox backup of a running VM snapshots a disk, which is not the same as a consistent dump of a
@@ -344,7 +405,7 @@ database that was mid-write — so run the job that is, from the guest's own cro
 Keep a copy off the guest. The snapshots sit on the same disk as the originals, so they survive mistakes,
 not drive failures.
 
-### 10. Day to day
+### 11. Day to day
 
 | | |
 |---|---|
@@ -365,31 +426,30 @@ deploy.
 |---------|-------|
 | `up -d` tries to build | `BOT_IMAGE` is unset, or `compose.prod.yaml` was left off the command |
 | `denied` or `manifest unknown` on pull | The package path is wrong or private — GHCR paths are lowercase, and a private package needs `docker login ghcr.io` |
-| `/readyz` says `bot not authorized` after signing in | The token belongs to another account, or `PUBLIC_BASE_URL` no longer matches the redirect URL registered with Twitch |
-| The browser can't reach the login page | The tunnel dropped. The bot listens on `127.0.0.1` on the guest by design |
+| `/readyz` says the stored bot token is for another account | `TWITCH_BOT_ID` changed, or a token from before it was set is stored. Open `/auth/login` and sign in as the bot account |
+| `/readyz` says `bot not authorized` after signing in | `PUBLIC_BASE_URL` no longer matches the redirect URL registered with Twitch |
+| Twitch says the redirect URI doesn't match | `PUBLIC_BASE_URL` + `/auth/callback` (or `/auth/admin/callback`) isn't registered on the Twitch app the bot's `TWITCH_CLIENT_ID` names |
+| Nobody can log in with the password: "too many failed logins" | `WEB_FORWARDED_ALLOW_IPS` doesn't name the proxy, so every visitor shares its address and its limit (step 8) |
+| The site loads, but `/admin` shows nothing and the API calls fail | The proxy sends the bot's paths to the site's files. Check the table in step 8 |
+| The browser can't reach `/auth/login` before step 8 | The tunnel dropped. The bot listens on `127.0.0.1` on the guest by design |
 | `chatlog.unclean_shutdown_detected` at startup | Something killed the bot instead of stopping it — revisit step 2 |
 | The update unit is failed but the bot is fine | That is the coverage check reporting a gap. `journalctl -u doomtp-bot-update` says which channel |
 
-## Web UI
+## Web site
 
-With the bot running, <http://127.0.0.1:8080/> documents every feature, the command reference is
-generated from the bot's own specs, and `/docs/language` is the language reference.
+The pages, public and admin, are [doomtp-web](https://github.com/vEXOULZ/doomtp-web): a separate Vue site
+over this bot's JSON API, served from the same hostname (ADR-0016; step 8 above). The bot serves the API,
+`/auth/*`, `/static/*` (the expression editor and the railroad diagrams the site loads) and Swagger at
+`/docs`, and no pages of its own. Anything the site needs that the API doesn't return is added to the API
+here.
 
-The admin pages at `/admin` show health, channels, modules, triggers, filters, published commands and the
-audit trail, and can toggle each of those. They need a password:
+To work on the site without Twitch, run `scripts/dev_api.py` here. It serves the same API with made-up
+data, and doomtp-web's `npm run dev` forwards to it. Its README has the details.
 
-```bash
-mkdir -p secrets && printf '%s' 'a long random password' > secrets/admin_password
-```
-
-Then set `ADMIN_PASSWORD_FILE=./secrets/admin_password` in `.env`. Without it `/admin` returns 404 rather
-than being open. The bot binds to `127.0.0.1` by default; keep it on the LAN.
-
-The pages are moving to a separate site, `doomtp-web`, that talks to the JSON API from the same host
-([ADR-0016](docs/adr/0016-web-ui-as-a-separate-site-over-the-json-api.md)). It logs in through
-`/api/v1/session` with the same password. Failed logins are limited per client address. If a reverse
-proxy sits in front of the bot, set `WEB_FORWARDED_ALLOW_IPS` to the proxy's address, so that the limit
-sees each visitor's own address rather than the proxy's.
+**Admin sign-in.** Bot owners and admins sign in with Twitch, and so do broadcasters and moderators, who
+get only their own channels (ADR-0017). `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
+Without it the password login is off. Failed logins are limited per client address. Behind a proxy, set
+`WEB_FORWARDED_ALLOW_IPS` to the proxy's address, or the limit counts every visitor as the proxy.
 
 ## Backups
 
@@ -432,12 +492,12 @@ the originals, so they survive mistakes, not drive failures.
 
 ```
 src/doomtp_bot/
-  api/          FastAPI app: health, OAuth, the language API and /api/v1
+  api/          FastAPI app: health, OAuth, the language API, /api/v1, admin sessions, and the
+                static files the web site loads (editor bundle, railroad diagrams)
   core/         dispatch, channels, outbox, health, capabilities, stream status
   lang/         AST, parse errors, PEG recursive-descent parser
   runtime/      Result, command specs, resolver, preflight, executor, explain
   storage/      Postgres connections + migrations for the bot and chatlog schemas
-  webui/        server-rendered pages, the admin UI and the static files they serve
   twitch/ history/ chatlog/ moderation/ policy/ customcmds/
   variables/ triggers/ filters/ audit/ modules/
 tests/          pytest; tests/lang/corpus.yaml is the shared parser conformance corpus
