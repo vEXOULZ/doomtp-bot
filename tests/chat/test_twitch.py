@@ -401,3 +401,21 @@ async def test_a_client_that_stops_on_its_own_asks_to_be_started_again() -> None
     await service._run(stale)  # type: ignore[arg-type]
     await asyncio.sleep(0)
     assert restarts == ["go", "go"]
+
+
+async def test_a_stored_token_for_another_account_is_refused_at_startup(dbs: Databases) -> None:
+    """Changing TWITCH_BOT_ID must not leave the bot running as the account it used before."""
+    tokens = TokenStore(dbs.bot)
+    await tokens.save(
+        identity="bot", user_id="999", login="oldbot", access_token="a", refresh_token="r",
+        scopes=BOT_SCOPES, expires_in=3600,
+    )  # fmt: skip
+
+    async def sink(event: Event) -> None: ...
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=tokens, sink=sink, expected_bot_id="42")
+    assert await service.start() is False
+    assert service.client is None and service.bot_id is None
+
+    health = await service.health()
+    assert "oldbot (999)" in health.detail["reason"] and "/auth/login" in health.detail["reason"]
