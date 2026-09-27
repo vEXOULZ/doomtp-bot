@@ -645,6 +645,8 @@ async def publications(request: Request, login: str) -> dict[str, Any]:
                 "published_as": publication.name,
                 "status": publication.status,
                 "required_role": publication.required_role,
+                # The version this channel last ran; differs from "version" when the author edited it since.
+                "last_run_version": publication.last_run_version,
             }
             for publication, command in found
         ],
