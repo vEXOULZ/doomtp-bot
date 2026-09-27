@@ -100,6 +100,7 @@ async def run(settings: Settings) -> None:
             tokens=TokenStore(dbs.bot),
             sink=sink,
             on_stopped=lambda: restart_twitch(),  # by name: it is defined further down
+            expected_bot_id=settings.twitch_bot_id,
         )
 
     streams = StreamStatus()
