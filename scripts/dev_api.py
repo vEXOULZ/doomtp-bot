@@ -122,6 +122,10 @@ async def seed(
         await customcmds.set_summary(command, summary)
         made[name] = command
     await customcmds.publish(channel_id=vex, name="hype", command=made["hype"], published_by=vex)
+    # vexoulz ran hype at v1, then alice edited it: the admin page says "changed since v1".
+    hype, _ = next(p for p in await customcmds.publications_in(vex) if p[0].name == "hype")
+    await customcmds.touch_run(hype, 1)
+    await customcmds.edit(made["hype"], "echo HYPE HYPE HYPE HYPE", channel_id=vex, prefix="!")
     games = await packs.create(owner_user_id=alice, name="games", summary="Little games for chat")
     for name in ("dice", "coin"):
         await packs.add_member(games, made[name])
