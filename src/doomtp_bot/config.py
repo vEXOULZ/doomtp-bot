@@ -9,6 +9,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from doomtp_bot.api.sessions import LOCAL_NETWORKS
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 
 
@@ -48,6 +49,9 @@ class Settings(BaseSettings):
     # or a file. Without one, the password login is off rather than open.
     admin_password: SecretStr | None = None
     admin_password_file: Path | None = None
+    # Where the password login is taken from: comma-separated addresses or CIDRs, or `*` for anywhere.
+    # Default: this host and the private ranges.
+    admin_password_networks: str = LOCAL_NETWORKS
     history_provider_url: str = "https://recent-messages.robotty.de/api/v2"
 
     log_level: str = "INFO"

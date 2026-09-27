@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from doomtp_bot import __version__
 from doomtp_bot.api.routes import auth, data, health, language, session, site
-from doomtp_bot.api.sessions import AdminAuth, LoginLimiter
+from doomtp_bot.api.sessions import LOCAL_NETWORKS, AdminAuth, LoginLimiter, parse_networks
 from doomtp_bot.core.health import HealthRegistry
 from doomtp_bot.twitch.auth import TwitchAuth
 
@@ -26,6 +26,7 @@ def create_app(
     policy: Any = None,
     services: dict[str, Any] | None = None,
     admin_password: str | None = None,
+    admin_password_networks: str = LOCAL_NETWORKS,
 ) -> FastAPI:
     app = FastAPI(title="doomtp-bot", version=__version__, docs_url="/docs", redoc_url=None)
     app.state.health = health_registry
@@ -33,6 +34,7 @@ def create_app(
     app.state.runtime = runtime  # the language API parses and explains with the live registry
     app.state.policy = policy
     app.state.admin_auth = AdminAuth(password=admin_password)
+    app.state.admin_password_networks = parse_networks(admin_password_networks)
     app.state.login_limiter = LoginLimiter()  # failed JSON logins, per client address
     for name, service in (services or {}).items():  # customcmds, packs, triggers, filters
         setattr(app.state, name, service)

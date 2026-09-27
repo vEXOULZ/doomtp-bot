@@ -269,8 +269,9 @@ lowercase. Use the **server's** Twitch app and bot account here, not the ones yo
 changes it once the web site is published.
 
 Set `ADMIN_PASSWORD` in `.env` too. People sign in to the web admin with Twitch; the password is the
-way in that still works when Twitch is down or the sign-in is misconfigured. It is an admin login, so make
-it long. `.env` holds it in the clear, so keep the file to yourself (`grep ADMIN_PASSWORD .env` shows it):
+way in that still works when Twitch is down or the sign-in is misconfigured. It only works from the local
+network (`ADMIN_PASSWORD_NETWORKS`: this host and the private ranges by default), so the public site
+doesn't offer it. It is an admin login, so make it long. `.env` holds it in the clear, so keep the file to yourself (`grep ADMIN_PASSWORD .env` shows it):
 
 ```bash
 printf 'ADMIN_PASSWORD=%s\n' "$(openssl rand -base64 24)" >> .env && chmod 600 .env
@@ -429,6 +430,7 @@ deploy.
 | `/readyz` says the stored bot token is for another account | `TWITCH_BOT_ID` changed, or a token from before it was set is stored. Open `/auth/login` and sign in as the bot account |
 | `/readyz` says `bot not authorized` after signing in | `PUBLIC_BASE_URL` no longer matches the redirect URL registered with Twitch |
 | Twitch says the redirect URI doesn't match | `PUBLIC_BASE_URL` + `/auth/callback` (or `/auth/admin/callback`) isn't registered on the Twitch app the bot's `TWITCH_CLIENT_ID` names |
+| The password form is missing, or the login says "only works from the local network" | You are outside `ADMIN_PASSWORD_NETWORKS`, or the proxy isn't in `WEB_FORWARDED_ALLOW_IPS`, so the bot can't tell where you are |
 | Nobody can log in with the password: "too many failed logins" | `WEB_FORWARDED_ALLOW_IPS` doesn't name the proxy, so every visitor shares its address and its limit (step 8) |
 | The site loads, but `/admin` shows nothing and the API calls fail | The proxy sends the bot's paths to the site's files. Check the table in step 8 |
 | The browser can't reach `/auth/login` before step 8 | The tunnel dropped. The bot listens on `127.0.0.1` on the guest by design |
@@ -448,7 +450,9 @@ data, and doomtp-web's `npm run dev` forwards to it. Its README has the details.
 
 **Admin sign-in.** Bot owners and admins sign in with Twitch, and so do broadcasters and moderators, who
 get only their own channels (ADR-0017). `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
-Without it the password login is off. Failed logins are limited per client address. Behind a proxy, set
+Without it the password login is off. It is taken only from `ADMIN_PASSWORD_NETWORKS` (this host and the
+private ranges by default; `*` for anywhere), so from outside the site offers Twitch alone. A request that
+came through a proxy the bot doesn't trust is never local, since its address is the proxy's. Failed logins are limited per client address. Behind a proxy, set
 `WEB_FORWARDED_ALLOW_IPS` to the proxy's address, or the limit counts every visitor as the proxy.
 
 ## Backups
