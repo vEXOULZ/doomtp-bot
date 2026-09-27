@@ -337,6 +337,7 @@ async def run(settings: Settings) -> None:
             "twitch_signin": signin,
         },
         admin_password=settings.admin_password_value(),
+        admin_password_networks=settings.admin_password_networks,
     )
     server = uvicorn.Server(
         uvicorn.Config(
