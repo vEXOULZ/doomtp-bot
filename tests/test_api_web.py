@@ -12,7 +12,7 @@ from httpx import ASGITransport
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.grammar import GRAMMAR_RULES
 from doomtp_bot.api.keys import ApiKeyService
-from doomtp_bot.api.sessions import AdminAuth, LoginLimiter
+from doomtp_bot.api.sessions import LOCAL_NETWORKS, AdminAuth, LoginLimiter, address_in, parse_networks
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandService
@@ -152,6 +152,68 @@ async def test_login_is_off_without_a_password() -> None:
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         assert (await http.get("/api/v1/session")).json()["admin_enabled"] is False
         assert (await http.post("/api/v1/session", json={"password": "x"})).status_code == 404
+
+
+def _from(app: Any, address: str) -> httpx.AsyncClient:
+    """A client whose requests arrive from `address`, as uvicorn would report it."""
+    return httpx.AsyncClient(transport=ASGITransport(app=app, client=(address, 5000)), base_url="http://test")
+
+
+async def test_the_password_works_only_from_the_local_network(app: Any) -> None:
+    """The password is the way in when Twitch is down, not a second front door on the public site."""
+    async with _from(app, "192.168.1.5") as lan:
+        assert (await lan.get("/api/v1/session")).json()["admin_enabled"] is True
+        assert (await lan.post("/api/v1/session", json={"password": PASSWORD})).status_code == 200
+
+    async with _from(app, "203.0.113.9") as outside:
+        assert (await outside.get("/api/v1/session")).json()[
+            "admin_enabled"
+        ] is False  # the site hides the form
+        for _ in range(6):  # refused before the password is checked, so it never counts as a failure
+            refused = await outside.post("/api/v1/session", json={"password": PASSWORD})
+            assert refused.status_code == 403 and "local network" in refused.json()["detail"]
+    assert app.state.login_limiter.retry_after("203.0.113.9") is None
+
+
+async def test_an_untrusted_proxy_never_makes_a_visitor_local(app: Any) -> None:
+    """Behind a proxy uvicorn doesn't trust, the address is the proxy's: Docker's gateway, a private one."""
+    async with _from(app, "172.18.0.1") as proxied:
+        for visitor in ("203.0.113.9", "192.168.1.5"):  # can't tell which is true, so neither is taken
+            headers = {"X-Forwarded-For": visitor}
+            assert (await proxied.get("/api/v1/session", headers=headers)).json()["admin_enabled"] is False
+            login = await proxied.post("/api/v1/session", json={"password": PASSWORD}, headers=headers)
+            assert login.status_code == 403
+        # Straight to the port (an SSH tunnel) carries no forwarded header, and the gateway is local.
+        assert (await proxied.post("/api/v1/session", json={"password": PASSWORD})).status_code == 200
+
+    # A trusted proxy: uvicorn has already made the client the visitor named in the header.
+    async with _from(app, "192.168.1.5") as rewritten:
+        headers = {"X-Forwarded-For": "192.168.1.5"}
+        assert (
+            await rewritten.post("/api/v1/session", json={"password": PASSWORD}, headers=headers)
+        ).status_code == 200
+
+
+async def test_the_password_networks_can_be_widened_or_narrowed() -> None:
+    anywhere = create_app(HealthRegistry(), None, admin_password=PASSWORD, admin_password_networks="*")
+    async with _from(anywhere, "203.0.113.9") as outside:
+        assert (await outside.post("/api/v1/session", json={"password": PASSWORD})).status_code == 200
+
+    one_host = create_app(
+        HealthRegistry(), None, admin_password=PASSWORD, admin_password_networks="192.168.1.5"
+    )
+    async with _from(one_host, "192.168.1.6") as neighbour:
+        assert (await neighbour.post("/api/v1/session", json={"password": PASSWORD})).status_code == 403
+
+    with pytest.raises(ValueError):
+        parse_networks("192.168.1.0/24, lan")  # a typo stops the bot, rather than letting nobody in
+
+
+def test_an_ipv4_address_seen_as_ipv6_is_the_same_address() -> None:
+    networks = parse_networks(LOCAL_NETWORKS)
+    assert address_in("::ffff:192.168.1.5", networks) and not address_in("::ffff:203.0.113.9", networks)
+    assert address_in("::1", networks) and not address_in("unknown", networks)
+    assert address_in("anything", None)
 
 
 # ── API keys ───────────────────────────────────────────────────────────────

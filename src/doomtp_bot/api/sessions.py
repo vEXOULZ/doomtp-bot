@@ -15,10 +15,39 @@ import secrets
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 
 SESSION_COOKIE = "doomtp_admin"
 SESSION_TTL_S = 8 * 3600
 SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+#: Where the password login is taken from unless ADMIN_PASSWORD_NETWORKS says otherwise: this host and
+#: the private ranges. The password is the way in when Twitch is down, not a second front door.
+LOCAL_NETWORKS = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+
+Networks = tuple[IPv4Network | IPv6Network, ...]
+
+
+def parse_networks(csv: str) -> Networks | None:
+    """ADMIN_PASSWORD_NETWORKS: comma-separated addresses or CIDRs, or `*` for anywhere (None).
+    A typo raises at startup rather than quietly letting nobody, or everybody, in."""
+    parts = [p.strip() for p in csv.split(",") if p.strip()]
+    if "*" in parts:
+        return None
+    return tuple(ip_network(p, strict=False) for p in parts)
+
+
+def address_in(address: str, networks: Networks | None) -> bool:
+    """Whether an address is in `networks` (None: anywhere). An IPv4 address seen as IPv6
+    (`::ffff:192.168.1.5`) counts as the IPv4 one."""
+    if networks is None:
+        return True
+    try:
+        ip = ip_address(address)
+    except ValueError:  # "unknown", or whatever a test transport calls itself
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return any(ip in network for network in networks)
 
 
 def hash_password(password: str, salt: bytes | None = None) -> tuple[bytes, bytes]:

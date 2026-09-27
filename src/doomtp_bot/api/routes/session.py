@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from doomtp_bot.api.access import current_session
 from doomtp_bot.api.keys import SCOPES, ApiKey, ApiKeyError, ApiKeyService
-from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, LoginLimiter, Session
+from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, LoginLimiter, Networks, Session, address_in
 
 router = APIRouter(prefix="/api/v1", tags=["session"])
 
@@ -38,6 +38,22 @@ def client_address(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def password_allowed(request: Request) -> bool:
+    """Whether the admin password may be used from where this request comes (ADMIN_PASSWORD_NETWORKS).
+
+    A request that came through a proxy uvicorn doesn't trust still carries X-Forwarded-For, and its
+    address is the proxy's: on the same host, Docker's gateway, which is a private address. Taking that
+    as local would open the password to the whole internet, so such a request is never local."""
+    networks: Networks | None = request.app.state.admin_password_networks
+    if networks is None:
+        return True
+    address = client_address(request)
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded and address not in {part.strip() for part in forwarded.split(",")}:
+        return False
+    return address_in(address, networks)
+
+
 def _session_json(request: Request, session: Session | None) -> dict[str, Any]:
     """`role`, `user` and `channels` say who is behind the session (ADR-0017): the password is an admin
     with no user; a Twitch sign-in names the user, and a moderator's `channels` are the logins they may
@@ -50,7 +66,8 @@ def _session_json(request: Request, session: Session | None) -> dict[str, Any]:
         "authenticated": session is not None,
         "csrf": session.csrf if session else None,
         "expires_at": int((time.time() + auth.expires_in(session)) * 1000) if session else None,
-        "admin_enabled": auth.enabled,
+        # Whether the password login works for this caller: set, and asked from where it is allowed.
+        "admin_enabled": auth.enabled and password_allowed(request),
         "role": session.role if session else None,
         "user": user,
         "channels": channels,
@@ -100,6 +117,12 @@ async def login(request: Request, body: Login, response: Response) -> dict[str, 
     auth, limiter, address = _auth(request), _limiter(request), client_address(request)
     if not auth.enabled:
         raise HTTPException(status_code=404, detail="the admin UI is disabled (no ADMIN_PASSWORD set)")
+    if not password_allowed(request):
+        # Not a failed attempt: nothing was checked, so the limiter doesn't count it.
+        raise HTTPException(
+            status_code=403,
+            detail="the admin password only works from the local network; sign in with Twitch",
+        )
     wait = limiter.retry_after(address)
     if wait is not None:
         raise HTTPException(

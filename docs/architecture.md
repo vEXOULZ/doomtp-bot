@@ -610,7 +610,10 @@ A **race window** remains: a mod can act after the message has already been sent
 The admin password (`ADMIN_PASSWORD`) is hashed with scrypt from the standard library, not argon2 — one
 less native dependency — and sessions live in memory (`api/sessions.py`). Without a password the password
 login is off, and a Twitch sign-in still works. The password is the way in when Twitch is down or the
-sign-in isn't set up.
+sign-in isn't set up, so it is taken only from `ADMIN_PASSWORD_NETWORKS` (this host and the private ranges
+by default): the public site offers Twitch alone, and `admin_enabled` in `GET /session` is false there.
+A request carrying `X-Forwarded-For` whose address isn't in it came through a proxy uvicorn doesn't trust,
+so its address is the proxy's (on the same host, Docker's private gateway), and it never counts as local.
 
 **UI technology (ADR-0016):**
 - **The pages are a separate site,** [`doomtp-web`](https://github.com/vEXOULZ/doomtp-web): Vue and TypeScript on the design the other vexoulz sites share, built to static files. The bot serves no pages of its own. The site is served from the same origin as the bot, with a reverse proxy sending `/api/*`, `/auth/*`, `/static/*`, `/healthz`, `/readyz`, and exactly `/docs` and `/openapi.json` to the bot and everything else to the site. So there is no CORS, and the session is a plain same-origin cookie. The site keeps the URLs the bot's own pages had, so chat's explain links and older bookmarks still work.
