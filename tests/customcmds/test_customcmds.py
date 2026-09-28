@@ -207,8 +207,8 @@ async def test_nesting_deeper_than_the_limit_fails_preflight(h: Harness) -> None
 
 
 async def test_expanded_invocations_count_toward_the_limit(h: Harness) -> None:
-    await h.add("alice", "five", "echo a && echo b && echo c && echo d && echo e")
-    report = await h.run("alice", "!five && echo x && echo y && echo z")
+    await h.add("alice", "ten", " && ".join(["echo a"] * 10))
+    report = await h.run("alice", "!ten && " + " && ".join(["echo x"] * 6))  # 1 + 10 + 6 = 17
     assert isinstance(report.result.data, dict) and report.result.data["error"] == "E_TOO_MANY"
 
 
