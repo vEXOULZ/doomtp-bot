@@ -31,7 +31,7 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
 | [0017](adr/0017-moderator-sessions-through-twitch-sign-in.md) | Moderator sessions through Twitch sign-in | 6/6 | Complete |
 | [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 0/8 | Not started |
-| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 0/11 | Not started; needs 0018 |
+| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 0/11 | Link rule built; the rest needs 0018 |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
 **90 of 113 ADR action items are closed.** Four are waiting on a person or a server, not on code. The

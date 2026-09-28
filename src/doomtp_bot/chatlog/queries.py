@@ -42,3 +42,16 @@ async def search_messages(
         params += (user_login.lower(),)
     async with await conn.execute(sql + " ORDER BY m.sent_at DESC LIMIT %s", (*params, limit)) as cur:
         return [dict(row) for row in await cur.fetchall()]
+
+
+async def latest_badges(conn: Connection, user_id: str) -> list[tuple[str, str | None]]:
+    """(channel_id, badges JSON) of `user_id`'s newest logged message in each channel.
+
+    Seeds the bot's badge cache at startup, so it knows where it is a VIP before it speaks (ADR-0019).
+    """
+    sql = (
+        "SELECT DISTINCT ON (channel_id) channel_id, badges FROM messages"
+        " WHERE user_id = %s ORDER BY channel_id, sent_at DESC"
+    )
+    async with await conn.execute(sql, (user_id,)) as cur:
+        return [(row["channel_id"], row["badges"]) for row in await cur.fetchall()]

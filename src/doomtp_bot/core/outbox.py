@@ -1,6 +1,6 @@
 """Outbox: the only path to Twitch chat (architecture §2, §8; ADR-0001).
 
-Per channel: optional reply hold → moderation recheck → filter hook → chunking → token bucket → send → log.
+Per channel: optional reply hold → moderation recheck → filter hook → link rule → chunking → token bucket → send → log.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Protocol
 import structlog
 
 from doomtp_bot.core import metrics
+from doomtp_bot.core.links import defang_links
 
 log = structlog.get_logger(__name__)
 
@@ -119,6 +120,7 @@ class Outbox:
         rate_for: Callable[[str], tuple[int, float]] = lambda channel_id: (20, 30.0),
         hold_ms_for: Callable[[str], int] = lambda channel_id: 0,
         content_filter: FilterFn = passthrough_filter,
+        links_allowed_for: Callable[[str], bool] = lambda channel_id: True,
         ttl_s: float = DEFAULT_TTL_S,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -130,6 +132,7 @@ class Outbox:
         self.rate_for = rate_for
         self.hold_ms_for = hold_ms_for
         self.content_filter = content_filter
+        self.links_allowed_for = links_allowed_for
         self.ttl_s = ttl_s
         self.clock = clock
         self.sleep = sleep
@@ -163,6 +166,8 @@ class Outbox:
         if filtered is None:
             await self._drop(channel_id, text, "filter_block", hits, run_ref)
             return [SendResult(None, "filter_block")]
+        if not self.links_allowed_for(channel_id):  # ADR-0019: only where the bot may post links
+            filtered = defang_links(filtered)
 
         results: list[SendResult] = []
         lock = self._locks.setdefault(channel_id, asyncio.Lock())

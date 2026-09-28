@@ -390,7 +390,7 @@ The expression's final Result `F` determines what the bot sends:
 | 130 | nothing |
 
 - **Only `F` is ever sent.** Intermediate messages are never sent.
-- **Sending path:** the message goes through the Outbox: the moderation recheck, then the badword filter, then chunking into at most `MAX_CHAT_MESSAGES (2)` messages of 500 characters each, then rate limiting.
+- **Sending path:** the message goes through the Outbox: the moderation recheck, then the badword filter, then the link rule (outside channels where the bot is a moderator or VIP, or its own channel, every `.` in a link's host becomes ` dot `; ADR-0019), then chunking into at most `MAX_CHAT_MESSAGES (2)` messages of 500 characters each, then rate limiting.
 - **Contexts:** Trigger, Listener and Callback contexts follow the same table. Explain never sends `F`; it sends its report instead (§9).
 
 ### 6.7 Moderation cancellation
