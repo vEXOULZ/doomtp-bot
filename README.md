@@ -351,8 +351,12 @@ Then point the bot at the public address. In `.env`:
 ```
 PUBLIC_BASE_URL=https://bot.example.com
 PUBLIC_WEB_UI=true
+WEB_SITE_URL=https://bot.example.com
 WEB_FORWARDED_ALLOW_IPS=172.18.0.1
 ```
+
+`WEB_SITE_URL` is where the site's pages open. `!help` ends with a link to the channel's page there
+(`/channels/<login>`). It is the same address as `PUBLIC_BASE_URL` when one proxy serves both.
 
 `WEB_FORWARDED_ALLOW_IPS` is the address the bot sees the proxy connect from. The failed-login limit
 trusts `X-Forwarded-For` from that address only. A proxy on the guest reaching `127.0.0.1:8080` arrives
@@ -417,7 +421,8 @@ not drive failures.
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
 | Install the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
 
-To **roll back**, point `BOT_IMAGE` at a `:<sha>` tag and run the update unit again. Mind that migrations
+To **roll back**, point `BOT_IMAGE` at the previous release, `:vX.Y.Z` (or any `:<sha>` tag), and run the
+update unit again. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR-0021). Mind that migrations
 run at startup and only go forward: roll back within a schema, or restore a backup taken before the
 deploy.
 

@@ -163,7 +163,7 @@ Three properties the picture is meant to make obvious:
    - The runtime checks the Moderation Index between stages and cancels if the trigger was invalidated (exit code 130).
    - The **Outbox rechecks immediately before calling Helix**.
    - Buffered variable writes are committed only if the run wasn't cancelled.
-5. The final result goes through the Outbox: badword filter, then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
+5. The final result goes through the Outbox: badword filter, then the link rule (links stay clickable only where the bot is a moderator or VIP, or in its own channel; ADR-0019), then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
 6. The run is recorded in `command_runs` according to the command's log level.
 
 ### How step 1 is tested
@@ -324,7 +324,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 - `reads` and `writes` are **enforced**. A handler reaches variables only through `ctx.variables`, which lets it read and write the `namespace.name` keys its spec declares (a declared write is also a read) and fails anything else with code 126. `!var` declares `*`, because the variable is its argument: it is the documented exception (variable-access-matrix.md §2), and a test fails if any other built-in declares `*` or reaches round `ctx.variables`. Expression stores (`> channel.x`) and placeholders are the expression's, not the command's, and the access policy governs those. *(Changed in revision 5: these used to be declarations only.)*
 - `side_effects=True` marks a command that acts on Twitch (§4.3). The runtime checks the moderation index once more right before running it, after its arguments were expanded, and `!explain --run` never runs it.
 - Custom commands carry the same metadata (summary, params, examples), written by their owner.
-- `!help` filters by the **effective policy** for the caller in that channel. `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
+- `!help` filters by the **effective policy** for the caller in that channel, and ends with a link to the channel's page on the web site when `WEB_SITE_URL` is set (ADR-0019). `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
 
 ### 4.3 Execution rules
 
@@ -701,7 +701,7 @@ owner, as `chatlog/queries.py` does for the full-text search the API and `logsea
 
 ```mermaid
 flowchart LR
-    push["git push to main"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
+    push["release merged into main<br/>(dev → main, ADR-0021)"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
     ci -->|red| none["nothing is published"]
     ci -->|green| ghcr[("ghcr.io/owner/doomtp-bot<br/>:main and :sha")]
 
@@ -731,12 +731,14 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
     only read SQLite.
   - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
     (ADR-0013). The same file builds locally in development and pulls on a server.
-- **How an update reaches the server (ADR-0013):** CI pushes `:main` and `:<sha>` to GHCR on every push to
+- **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
+  `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
+  publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to
   `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
   hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and
+  chosen under. Rolling back means pinning `BOT_IMAGE` to the previous release tag (or a sha tag) — but migrations run at startup and
   are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
   before the deploy.
 - **What the image holds:** the locked dependency set and the installed package — static files,
