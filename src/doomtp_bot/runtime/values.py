@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Awaitable, Callable, Sequence
@@ -193,6 +194,19 @@ async def convert(
             if text.lower() == choice.lower():
                 return choice
         raise ConversionError("expected one of: " + ", ".join(choices))
+    elif type_name in ("list", "map"):
+        kind = list if type_name == "list" else dict
+        if isinstance(value, kind):  # a single placeholder's list or map passes through untouched
+            return value
+        try:
+            converted = json.loads(text)
+        except ValueError:
+            converted = None
+        if not isinstance(converted, kind):
+            raise ConversionError(
+                "expected a list like [1, 2]" if kind is list else 'expected a map like {"a": 1}'
+            )
+        return converted
     elif type_name == "url":
         parts = urlsplit(text)
         if parts.scheme not in ("http", "https") or not parts.netloc:

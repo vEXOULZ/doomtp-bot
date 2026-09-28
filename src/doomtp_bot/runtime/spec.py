@@ -26,7 +26,9 @@ class LogLevel(enum.StrEnum):
     ALL = "all"
 
 
-PARAM_TYPES = frozenset({"str", "int", "float", "bool", "range", "duration", "user", "url", "choice"})
+PARAM_TYPES = frozenset(
+    {"str", "int", "float", "bool", "range", "duration", "user", "url", "choice", "list", "map"}
+)
 _POSITION_RE = re.compile(r"^([1-9][0-9]*)(\+)?$")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 

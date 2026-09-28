@@ -12,22 +12,30 @@ from typing import TYPE_CHECKING
 
 from doomtp_bot.lang.ast import (
     And,
+    Expr,
     Group,
+    IfElse,
     Invocation,
     Node,
     Or,
     Pipe,
     Placeholder,
+    Ref,
     Store,
-    Text,
+    Subst,
+    arg_exprs,
+    arg_substitutions,
     invocations,
+    render_expr,
+    substitutions,
+    walk_expr,
 )
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.context import Publisher
-from doomtp_bot.runtime.namespaces import VarPath, classify, is_reserved_var_name, root_available
+from doomtp_bot.runtime.namespaces import bot_field_known, root_available
 from doomtp_bot.runtime.result import Code, Result, error_result
 from doomtp_bot.runtime.spec import InputMode
-from doomtp_bot.runtime.variables import VAR_NAME_RE, VariableError, key_for
+from doomtp_bot.runtime.variables import VariableError, key_for
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
@@ -50,6 +58,20 @@ class Preflight:
     failed_name: str | None = None
 
 
+def first_invocations(node: Node) -> list[Invocation]:
+    """The invocations that can run first in `node`: an `ifelse` starts with either branch."""
+    match node:
+        case Invocation():
+            return [node]
+        case And(left, _) | Or(left, _) | Pipe(left, _):
+            return first_invocations(left)
+        case Group(inner) | Store(inner, _, _):
+            return first_invocations(inner)
+        case IfElse(_, then, else_):
+            return first_invocations(then) + (first_invocations(else_) if else_ is not None else [])
+    raise TypeError(f"not an AST node: {node!r}")
+
+
 def stdin_receivers(node: Node) -> set[int]:
     """Invocation indexes that receive pipe stdin (the first evaluated invocation of each pipe's right side)."""
     found: set[int] = set()
@@ -57,7 +79,7 @@ def stdin_receivers(node: Node) -> set[int]:
     def walk(n: Node) -> None:
         match n:
             case Pipe(left, right):
-                found.add(invocations(right)[0].index)
+                found.update(inv.index for inv in first_invocations(right))
                 walk(left)
                 walk(right)
             case And(left, right) | Or(left, right):
@@ -65,6 +87,10 @@ def stdin_receivers(node: Node) -> set[int]:
                 walk(right)
             case Group(inner) | Store(inner, _, _):
                 walk(inner)
+            case IfElse(_, then, else_):
+                walk(then)
+                if else_ is not None:
+                    walk(else_)
             case Invocation():
                 pass
 
@@ -73,45 +99,39 @@ def stdin_receivers(node: Node) -> set[int]:
 
 
 def placeholders_in(invocation: Invocation) -> Iterator[Placeholder]:
-    def walk(parts: tuple[Text | Placeholder, ...]) -> Iterator[Placeholder]:
-        for part in parts:
-            if isinstance(part, Placeholder):
-                yield part
-                if part.fallback:
-                    yield from walk(part.fallback)
-
-    for arg in invocation.args:
-        yield from walk(arg)
+    """Every placeholder an invocation's arguments hold, fallbacks' and nested ones included."""
+    for top in arg_exprs(invocation):
+        for expr in walk_expr(top):
+            if isinstance(expr, Placeholder):
+                yield expr
 
 
-def check_placeholder(ph: Placeholder, index: int, ctx: ExecContext) -> str | None:
-    """Return an error message, or None if the reference is valid here (spec §5.2 check 4, §7.2).
+def refs_in(expr: Expr) -> Iterator[Ref]:
+    for e in walk_expr(expr):
+        if isinstance(e, Ref):
+            yield e
 
-    Every message here is reported as E_BAD_REFERENCE.
+
+def check_expr(expr: Expr, index: int, ctx: ExecContext) -> tuple[str, str] | None:
+    """(problem, reference) for the first name not valid here, else None (spec §5.2 check 4, §7.2).
+
+    `index` is the invocation the expression belongs to, or for a `{!…}` the invocation holding it: that
+    decides which `_N` have run. Every problem is reported as E_BAD_REFERENCE.
     """
-    root, path = ph.root, ph.path
-    if not root_available(root, ctx.context):
-        return f"{{{root}}} is not available here"
-    if root.isdigit():
-        if int(root) >= index:
-            return f"{{{root}}} refers to a command that runs later"
-    elif root in ("chatter", "channel", "publisher"):
-        target = classify(root, path)
-        if target is None:
-            return f"incomplete reference {{{'.'.join((root, *path))}}}"
-        if isinstance(target, VarPath) and (
-            not VAR_NAME_RE.match(target.name) or is_reserved_var_name(target.namespace, target.name)
-        ):
-            return f"invalid variable name {target.namespace}.{target.name}"
-    elif root == "arg":
-        if not path:
-            return "{arg} needs a position, e.g. {arg.1}"
-        for i, segment in enumerate(path):
-            if segment.endswith(("+", "+raw")) and i != 0:
-                return "{arg.N+} captures must come right after arg"
-    elif root in ("bot", "now", "run", "cmd") and not path:
-        return f"{{{root}}} needs a field, e.g. {{{root}.name}}"
+    for ref in refs_in(expr):
+        reference = "{" + render_expr(ref) + "}"
+        root = ref.root
+        if not root_available(root, ctx.context):
+            return f"{{{root}}} is not available here", reference
+        if root.startswith("_") and root != "_" and int(root[1:]) >= index:
+            return f"{reference} refers to a command that runs later", reference
+        if root.startswith("$") and not bot_field_known(root, ref.path[0]):
+            return f"{root} has no field {ref.path[0]}", reference
     return None
+
+
+def exprs_of(invocation: Invocation) -> list[Expr]:
+    return list(arg_exprs(invocation))
 
 
 def preflight(
@@ -138,6 +158,7 @@ def preflight(
         resolved_map: dict[int, Resolved],
         receives_stdin: set[int],
         stack: tuple[str, ...],
+        holder_index: int | None = None,
     ) -> Preflight | None:
         nonlocal counted
         counted += 1
@@ -164,15 +185,44 @@ def preflight(
                     "E_INPUT_NOT_ACCEPTED", f"{inv.name} does not accept piped input", command=inv.name
                 ),
             )
-        for ph in placeholders_in(inv):
-            problem = check_placeholder(ph, inv.index, here)
-            if problem is not None:
-                reference = "{" + ".".join((ph.root, *ph.path)) + "}"
-                return fail(
-                    inv.index, inv.name, error_result("E_BAD_REFERENCE", problem, reference=reference)
-                )
+        holder = inv.index if holder_index is None else holder_index
+        failure = check_exprs(inv, exprs_of(inv), holder, here)
+        if failure is not None:
+            return failure
+        for inner in substitutions(iter(exprs_of(inv))):
+            failure = check_invocation(inner, here, resolved_map, receives_stdin, stack, holder)
+            if failure is not None:
+                return failure
         if resolved.custom is not None:
             return check_body(inv, resolved, here, stack)
+        return None
+
+    def check_exprs(
+        inv: Invocation | None, exprs: list[Expr], index: int, here: ExecContext
+    ) -> Preflight | None:
+        for expr in exprs:
+            found = check_expr(expr, index, here)
+            if found is not None:
+                problem, reference = found
+                return fail(
+                    inv.index if inv else None,
+                    inv.name if inv else None,
+                    error_result("E_BAD_REFERENCE", problem, reference=reference),
+                )
+        return None
+
+    def check_cond(
+        cond: IfElse, here: ExecContext, resolved_map: dict[int, Resolved], stack: tuple[str, ...]
+    ) -> Preflight | None:
+        """`ifelse`'s condition runs before either branch, so only commands before it have results."""
+        first = first_invocations(cond.then)[0].index
+        failure = check_exprs(None, [p for p in cond.cond if isinstance(p, Placeholder)], first, here)
+        if failure is not None:
+            return failure
+        for inner in arg_substitutions(cond.cond):
+            failure = check_invocation(inner, here, resolved_map, set(), stack, first)
+            if failure is not None:
+                return failure
         return None
 
     def check_body(
@@ -214,6 +264,19 @@ def preflight(
 
     def check_store(store: Store, here: ExecContext) -> Preflight | None:
         target = store.target
+        for step in target.path:
+            if any(isinstance(e, Subst) for e in walk_expr(step)):
+                return fail(
+                    None,
+                    None,
+                    error_result(
+                        "E_BAD_REFERENCE", "a store target can't run {!…}", reference=render_expr(target)
+                    ),
+                )
+        after = max(inv.index for inv in invocations(store.inner)) + 1  # the path is read once inner ran
+        failure = check_exprs(None, list(target.path), after, here)
+        if failure is not None:
+            return failure
         try:
             key_for(here, target.namespace, target.name)  # same addressability rules as the write itself
         except VariableError as exc:
@@ -246,6 +309,12 @@ def preflight(
                 return sub(inner)
             case Store(inner, _, _):
                 return sub(inner) or check_store(n, here)
+            case IfElse(_, then, else_):
+                return (
+                    check_cond(n, here, resolved_map, stack)
+                    or sub(then)
+                    or (sub(else_) if else_ is not None else None)
+                )
         return None
 
     failure = walk(node, ctx, outcome.resolved, stdin_receivers(node), ())

@@ -105,6 +105,8 @@ class ExecContext:
     rng: random.Random = field(default_factory=random.Random)
     clock: Callable[[], float] = time.time
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    expr_ops: int = 0  # expression steps so far this run (ADR-0018 D8k)
+    subst_depth: int = 0  # `{!...}` invocations currently open
 
     def ensure_not_cancelled(self) -> None:
         if self.is_cancelled():

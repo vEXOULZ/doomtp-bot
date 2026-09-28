@@ -67,15 +67,15 @@ async def test_a2_9_unknown_later_command_replies() -> None:
 
 
 class DenyAdd(AllowAllPolicy):
-    """`add` needs a moderator, refused in preflight; `ping` is on cooldown, refused when it is reached."""
+    """`plus` needs a moderator, refused in preflight; `ping` is on cooldown, refused when it is reached."""
 
     def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
-        if spec.name == "add":
+        if spec.name == "plus":
             return Decision(False, Code.DENIED, "needs mod", {"required_role": "moderator"})
         return Decision.allow()
 
     def is_permitted(self, ctx, spec: CommandSpec) -> bool:  # type: ignore[no-untyped-def]
-        return spec.name != "add"
+        return spec.name != "plus"
 
     def check_cooldown(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
         if spec.name == "ping":
@@ -99,7 +99,7 @@ class LosesTheRace(AllowAllPolicy):
 
 
 async def test_a2_10_denied_is_silent_with_callback() -> None:
-    r = await run(make_runtime(policy=DenyAdd()), "!add 1 2")
+    r = await run(make_runtime(policy=DenyAdd()), "!plus 1 2")
     assert (r.result.code, r.send, r.callback, r.result.data) == (
         126,
         None,
@@ -241,7 +241,7 @@ async def test_true_passes_data_through() -> None:
 # ── placeholders ───────────────────────────────────────────────────────────
 async def test_bare_result_prefers_scalar_data_then_message() -> None:
     rt = make_runtime()
-    assert (await run(rt, "!add 2 3 | echo {1}")).send == "5"
+    assert (await run(rt, "!plus 2 3 | echo {1}")).send == "5"
     assert (await run(rt, "!weather Lisbon | echo {1}")).send == "Lisbon: 21.5°C"
     assert (await run(rt, "!weather Lisbon | echo {1.tags}")).send == "sun, warm"
     assert (await run(rt, "!weather Lisbon | echo {1.tags.1} {1.code}")).send == "warm 0"
@@ -250,7 +250,7 @@ async def test_bare_result_prefers_scalar_data_then_message() -> None:
 async def test_fallbacks_and_types() -> None:
     rt = make_runtime()
     assert (await run(rt, "!echo {chatter.location ?? {channel.location ?? Lisbon}}")).send == "Lisbon"
-    assert (await run(rt, "!add 1 1 | echo {1:int ?? no}")).send == "2"
+    assert (await run(rt, "!plus 1 1 | echo {1:int ?? no}")).send == "2"
     assert (await run(rt, "!weather Lisbon | echo {1.nope ?? none}")).send == "none"
     assert (await run(rt, "!echo abc | echo {_:int ?? not a number}")).send == "not a number"
 
@@ -286,10 +286,10 @@ async def test_arg_captures_in_body_context() -> None:
 # ── arguments ──────────────────────────────────────────────────────────────
 async def test_argument_validation_usage_message() -> None:
     rt = make_runtime()
-    r = await run(rt, "!add one 2")
-    assert r.result.code == Code.USAGE and r.send == "usage: !add <a> <b> — a: expected a whole number"
-    r = await run(rt, "!add 1")
-    assert r.send == "usage: !add <a> <b> — b is required"
+    r = await run(rt, "!plus one 2")
+    assert r.result.code == Code.USAGE and r.send == "usage: !plus <a> <b> — a: expected a whole number"
+    r = await run(rt, "!plus 1")
+    assert r.send == "usage: !plus <a> <b> — b is required"
     r = await run(rt, "!ping extra")
     assert r.send == "usage: !ping — takes no arguments"
 
@@ -418,7 +418,7 @@ async def test_parse_error_visible_only_when_first_command_runnable() -> None:
     rt = make_runtime(policy=DenyAdd())
     shown = await run(rt, "!echo a ; b")
     assert shown.origin == "parse" and shown.send and "E_RESERVED_OPERATOR" in shown.send
-    hidden = await run(rt, "!add 1 ; 2")
+    hidden = await run(rt, "!plus 1 ; 2")
     assert hidden.send is None
     unknown = await run(rt, "!nope a ; b")
     assert unknown.send is None

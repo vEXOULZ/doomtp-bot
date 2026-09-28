@@ -76,13 +76,13 @@ async def boom(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
 
 @command(
     CommandSpec(
-        name="add",
+        name="plus",
         module="test",
         summary="adds ints",
         params=(Param("1", "a", type="int", required=True), Param("2", "b", type="int", required=True)),
     )
 )
-async def add(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+async def plus(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     total = args["a"] + args["b"]
     return Result.success(str(total), total)
 
@@ -103,7 +103,7 @@ async def fakedeny(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.failure(Code.DENIED, "nope")
 
 
-TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, add, rawecho, cancelme, fakedeny)
+TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, plus, rawecho, cancelme, fakedeny)
 
 
 def registry() -> CommandRegistry:
