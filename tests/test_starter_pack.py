@@ -6,6 +6,7 @@ import argparse
 
 import pytest
 
+from doomtp_bot.customcmds.system import CORE_COMMANDS
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.storage.db import Databases, fetch_value
 from scripts.starter_pack import PACK, STARTER, install, run
@@ -87,7 +88,7 @@ async def test_the_script_installs_into_the_database_it_is_pointed_at(
     count = await fetch_value(
         dbs.bot, "SELECT count(*) FROM custom_commands WHERE owner_user_id = %s", (OWNER["id"],)
     )
-    assert count == len(STARTER)
+    assert count == len(STARTER) + len(CORE_COMMANDS)
 
 
 async def test_the_script_needs_an_owner_before_it_touches_anything(

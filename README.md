@@ -148,9 +148,13 @@ uv lock
 
 ## Starter commands
 
-The bot ships a small set of commands written in its own language rather than Python — `hug`, `lurk`,
-`roll`, `so` and `deaths` — published globally as the `starter` pack. They are not installed
-automatically; the database stays the only source of truth for what the bot offers:
+The bot ships commands written in its own language rather than Python: the sentinels `false` and
+`default` in the `core` system pack, and `hug`, `lurk`, `roll`, `so` and `deaths`, published globally as
+the `starter` pack. They are not installed automatically; the database stays the only source of truth for
+what the bot offers. **The bot refuses to start until `core` is installed at the version it expects**, so
+run this after every upgrade (`deploy/update.sh` does it for you) and restart the bot if `core` changed. On
+a brand-new database the bot starts anyway and warns, because the script installs under the bot's account:
+sign the bot in at `/auth/login`, run the script, then restart:
 
 ```bash
 docker compose --profile tools run --rm starter-pack
@@ -415,7 +419,7 @@ not drive failures.
 | What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
 | Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
-| Install the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
+| Install `core` and the starter commands (before starting) | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
 
 To **roll back**, point `BOT_IMAGE` at a `:<sha>` tag and run the update unit again. Mind that migrations
 run at startup and only go forward: roll back within a schema, or restore a backup taken before the

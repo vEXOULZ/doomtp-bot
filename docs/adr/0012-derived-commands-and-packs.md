@@ -46,6 +46,23 @@ stand`. Publishing the pack publishes **every member at once**, and unpublishing
 - A command may belong to several packs. Its policy key stays its command id, so cooldowns and permissions
   follow the command, not the pack it arrived through.
 
+### Amendment (2026-09-28, ADR-0019): internal members and system packs
+
+- A pack member can be **internal**: `!cc pack internal <pack> <commands…> on|off`. An internal member
+  resolves only inside the bodies of commands that arrived through the same pack, so a pack can keep helpers
+  without putting them in every channel's command list. Typed, it doesn't exist (127), `help` hides it, and
+  `!cc pack info` marks it. A channel's own publication of the same name doesn't shadow it inside the pack.
+- A **system pack** belongs to the bot account and is created only by `scripts/starter_pack.py`. Its public
+  members resolve before the built-ins in every channel, without a publication, and can't be toggled,
+  shadowed, published or changed from chat. Their bodies may call only sentinels. The first one is `core`,
+  which holds the derived sentinels `false` and `default` (spec §8).
+- The script records the `core` version it installed, and the bot refuses to start when `core` is missing
+  or older than the code expects, naming the script. The one exception is a database the bot has never
+  signed in to, since the script installs under the bot's account: it starts, warns, and waits for the
+  script. The script applies pending migrations itself, and `deploy/update.sh` runs it from the new image
+  before restarting the bot. System packs load once at startup, so a `core` change needs a restart; the
+  `starter` pack still updates live.
+
 ## Options Considered
 
 | Option | Verdict |

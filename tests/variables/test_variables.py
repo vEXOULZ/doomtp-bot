@@ -319,7 +319,7 @@ async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
 
 
 async def test_var_writes_are_part_of_the_run(h: Harness) -> None:
-    report = await h.run("mod", "!var set channel.a 1 && var get channel.a && false")
+    report = await h.run("mod", "!var set channel.a 1 && var get channel.a && fail")
     assert report.result.code == Code.FAIL
     assert await h.value("channel", CHANNEL_ID, name="a") == 1  # committed even though the line failed
 

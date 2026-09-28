@@ -70,6 +70,7 @@ class Publisher:
     alias: str = ""
     version: int = 0
     publication: str | None = None  # set when running through a channel publication (vs. a personal link)
+    pack_id: str | None = None  # the pack the command was reached through, whose internal members it sees
 
 
 class RunCancelled(Exception):

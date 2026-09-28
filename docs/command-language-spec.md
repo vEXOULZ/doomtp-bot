@@ -350,10 +350,17 @@ After parsing, and **before any invocation executes**, the implementation MUST r
 For each `Invocation` in channel C for invoker U:
 
 1. If `personal` is set (`@name`): U's personal alias `name`, otherwise unresolved.
-2. A built-in command or built-in alias named `name` that is enabled in C.
-3. A publication named `name` in C with status `active`.
-4. U's personal alias `name`.
-5. Otherwise unresolved. Result code **127**.
+2. A public member of a **system pack** named `name` (§8). System packs resolve in every channel without
+   being published, and can't be disabled or shadowed.
+3. A built-in command or built-in alias named `name` that is enabled in C.
+4. Inside the body of a command that arrived through a pack P: an **internal** member of P named `name`.
+5. A publication named `name` in C with status `active`.
+6. U's personal alias `name`.
+7. Otherwise unresolved. Result code **127**.
+
+An internal pack member is reachable only through step 4, so typing its name, or calling it from a body
+outside its pack, is unresolved (127), and `help` doesn't list it. A channel publication of the same name
+doesn't shadow it inside the pack's own bodies.
 
 Custom command names MUST NOT equal a sentinel name (§8) or a `core_admin` command name.
 
@@ -651,7 +658,12 @@ A reference is **missing** when:
 
 ## 8. Sentinel commands
 
-These are built into the `core` module. They can't be disabled or shadowed, have no cooldowns, require role `everyone`, are logged at level `off`, and **count toward `MAX_INVOCATIONS`**.
+They can't be disabled or shadowed, have no cooldowns, require role `everyone`, are logged at level `off`, and **count toward `MAX_INVOCATIONS`**. `true`, `fail` and `echo` are primitives in the `core` module. `false` and `default` are **derived**: custom commands in the bot-owned `core` system pack (§5.1 step 2), whose bodies may call only other sentinels. A call to a derived sentinel doesn't count toward `MAX_CC_DEPTH`.
+
+| Derived sentinel | Body |
+|------------------|------|
+| `false` | `fail` |
+| `default` | `echo {args}` |
 
 | Command | Arguments | Result |
 |---------|-----------|--------|

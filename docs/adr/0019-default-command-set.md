@@ -137,10 +137,10 @@ Rejected again on 2026-09-28 in favour of the startup check.
 4. [x] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
    endpoint, and `!var usage`. *(The admin UI is a doomtp-web PR. `MAX_LIST_ITEMS` and
    `MAX_NAMES_PER_SPACE` are still constants.)*
-5. [ ] Internal pack members and system packs, with `false` and `default` moved into `core`
+5. [x] Internal pack members and system packs, with `false` and `default` moved into `core`
    (amends ADR-0012).
 6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
-   starter readouts, and `$channel.next_stream`.
+   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.

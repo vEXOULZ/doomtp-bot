@@ -234,7 +234,7 @@ def preflight(
             return fail(
                 inv.index, inv.name, error_result("E_CC_CYCLE", f"{inv.name} calls itself", command=inv.name)
             )
-        if len(stack) + 1 > MAX_CC_DEPTH:
+        if len(stack) + 1 > MAX_CC_DEPTH and not target.system:  # a sentinel is never too deep
             return fail(
                 inv.index,
                 inv.name,
@@ -253,6 +253,7 @@ def preflight(
                 alias=inv.name,
                 version=target.version,
                 publication=target.publication,
+                pack_id=target.pack_id,
             ),
         )
         resolved_map = outcome.bodies.setdefault(target.command_id, {})
