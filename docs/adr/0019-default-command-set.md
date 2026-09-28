@@ -55,8 +55,9 @@ These stay as they are, plus:
   a command in an `ifelse` branch is refused only if its branch is chosen, spec §6.3). It adds the
   readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
 - **Quotes** become a derived pack. `quote` dispatches with `ifelse` to the internal members
-  `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `channel.quotes` and
-  `channel.quote_next`. `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
+  `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `publisher.channel.quotes`
+  and `publisher.channel.quote_next` (the pack's own commands are the only writers, so the data belongs
+  to the bot as their publisher, not to the channel). `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
   data is migrated. `quote find` waits for search over values.
 - **Internal pack members** can be called only from bodies in the same pack. They are hidden from
   `help`, and code 127 when typed.
@@ -158,7 +159,13 @@ Rejected again on 2026-09-28 in favour of the startup check.
    revision 0006 moves `triggers` module toggles and callbacks to `automation`. `!trigger` keeps its old
    grammar and says it is going away.)*
 8. [ ] `customecho` and the `:template` accessor.
-9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
+9. [x] Quotes as a derived pack, the data migration, and the removal of the table. *(2026-09-28: the
+   `quotes` pack in `scripts/starter_pack.py`; Alembic revision 0008 moves each channel's live quotes
+   into the bot's `publisher.channel.quotes` (number → `{text, date, game?}`) and the last number given
+   out into `quote_next`, then drops the table, and raises the bot's publisher limits if the copy wouldn't
+   fit. The dispatcher tests `(arg.1 ?? "-")`, since `""` counts as missing (spec §7.3.3). It fits
+   `MAX_INVOCATIONS` because an `ifelse` counts as its larger branch. Lost from the module: word search
+   and `!quote #2`; a non-moderator's `add`/`del` fails with a message instead of silently.)*
 10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
 11. [x] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.

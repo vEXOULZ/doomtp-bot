@@ -30,7 +30,7 @@ from collections.abc import Sequence
 import psycopg
 
 from doomtp_bot.config import Settings
-from doomtp_bot.customcmds.packs import Pack, PackService
+from doomtp_bot.customcmds.packs import RESERVED_PACK_NAMES, Pack, PackService
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.customcmds.system import (
     CORE,
@@ -104,6 +104,80 @@ STARTER: tuple[Derived, ...] = (
 )
 
 
+QUOTES_PACK = "quotes"
+QUOTES_SUMMARY = "The channel's numbered quotes"
+_Q, _N = "publisher.channel.quotes", "publisher.channel.quote_next"
+_NO_ARG = '(arg.1 ?? "-")'  # `""` counts as missing (spec §7.3.3), so "no argument" compares as "-"
+
+# A quote is a map in the bot's `publisher.channel.quotes`, keyed by its number: `text`, `date`, and `game`
+# when the stream was live. `publisher.channel.quote_next` is the last number given out, so a deleted
+# quote's number is never given again. Only this pack's commands write them (ADR-0019 item 9).
+QUOTES: tuple[Derived, ...] = (
+    Derived(
+        name="quote",
+        summary="Read, add and delete the channel's quotes",
+        body=(
+            f'ifelse {{{_NO_ARG} == "add"}} ( quote_add {{arg.2+}} )'
+            f' ( ifelse {{{_NO_ARG} == "del" or {_NO_ARG} == "delete"}} ( quote_del {{arg.2}} )'
+            f' ( ifelse {{{_NO_ARG} == "-"}} ( quote_random ) ( quote_show {{arg.1}} ) ) )'
+        ),
+        declarations=('1+ name=what required=no "a number, or add <text>, or del <number>"',),
+    ),
+    Derived(
+        name="quote_add",
+        summary="Add a quote (moderators)",
+        body=(
+            "ifelse {$chatter.is_mod}"
+            " ( ifelse {arg.text:len > 400} ( fail 2 a quote is at most 400 characters )"
+            f" ( var incr {_N} && var set {_Q}[{{{_N}}}][text] {{arg.text}}"
+            f" && var set {_Q}[{{{_N}}}][date] {{$now.date}}"
+            ' && ( ifelse {$channel.live and ($channel.game ?? "-") != "-"}'
+            f" ( var set {_Q}[{{{_N}}}][game] {{$channel.game}} ) )"
+            f" && echo added #{{{_N}}} ) )"
+            " ( fail adding quotes takes moderator rank )"
+        ),
+        declarations=('1+ name=text required=yes "the quote"',),
+        internal=True,
+    ),
+    Derived(
+        name="quote_del",
+        summary="Delete a quote (moderators); its number stays taken",
+        body=(
+            "ifelse {$chatter.is_mod}"
+            f" ( ifelse {{({_Q}[arg.number] ?? 0) != 0}}"
+            f" ( var del {_Q}[{{arg.number}}] && echo deleted #{{arg.number}} )"
+            " ( fail 3 there is no quote #{arg.number} ) )"
+            " ( fail deleting quotes takes moderator rank )"
+        ),
+        declarations=('1 name=number type=int required=yes "which quote, by number"',),
+        internal=True,
+    ),
+    Derived(
+        name="quote_show",
+        summary="Say one quote",
+        body=(
+            f"ifelse {{({_Q}[arg.number] ?? 0) != 0}}"
+            f' ( ifelse {{"game" in {_Q}[arg.number]}}'
+            f" ( echo #{{arg.number}}: {{{_Q}[arg.number][text]}} [{{{_Q}[arg.number][game]}}, {{{_Q}[arg.number][date]}}] )"
+            f" ( echo #{{arg.number}}: {{{_Q}[arg.number][text]}} [{{{_Q}[arg.number][date]}}] ) )"
+            " ( fail 3 there is no quote #{arg.number} )"
+        ),
+        declarations=('1 name=number type=int required=yes "which quote, by number"',),
+        internal=True,
+    ),
+    Derived(
+        name="quote_random",
+        summary="Say a random quote",
+        body=(
+            f"ifelse {{({_Q}:len ?? 0) > 0}}"
+            f" ( random 1-{{{_Q}:len}} | quote_show {{{_Q}:keys[_1 - 1]}} )"
+            " ( fail 3 no quotes yet — {$channel.prefix}quote add <text> )"
+        ),
+        internal=True,
+    ),
+)
+
+
 def check_core() -> None:
     """Every `core` body may call only what can never be switched off (ADR-0019). Raises NotASentinel."""
     registry = builtin_registry()
@@ -130,6 +204,7 @@ async def install(
         commands, packs, owner, CORE, CORE_SUMMARY, CORE_COMMANDS, CORE_VERSION, dry_run=dry_run
     )
     done += await _install(commands, packs, owner, PACK, PACK_SUMMARY, STARTER, None, dry_run=dry_run)
+    done += await _install(commands, packs, owner, QUOTES_PACK, QUOTES_SUMMARY, QUOTES, None, dry_run=dry_run)
     return done
 
 
@@ -157,6 +232,7 @@ async def _install(
                 summary=summary,
                 actor_via="script",
                 system_version=system_version,
+                replaces_module=name in RESERVED_PACK_NAMES,
             )
     members = {c.name for c in await packs.members(pack.id)} if pack is not None else set()
     internal = await packs.internal_names(pack.id) if pack is not None else set()

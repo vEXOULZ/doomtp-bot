@@ -11,7 +11,7 @@ from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.result import ErrorCode
 from doomtp_bot.storage.db import Databases, fetch_value
 from doomtp_bot.webfetch.fetcher import Fetched, HttpError
-from scripts.starter_pack import PACK, STARTER, install, run
+from scripts.starter_pack import PACK, QUOTES, STARTER, install, run
 from tests.customcmds.test_customcmds import USERS
 from tests.customcmds.test_packs import Harness, h  # noqa: F401
 
@@ -137,7 +137,7 @@ async def test_the_script_installs_into_the_database_it_is_pointed_at(
     count = await fetch_value(
         dbs.bot, "SELECT count(*) FROM custom_commands WHERE owner_user_id = %s", (OWNER["id"],)
     )
-    assert count == len(STARTER) + len(CORE_COMMANDS)
+    assert count == len(STARTER) + len(CORE_COMMANDS) + len(QUOTES)
 
 
 async def test_the_script_needs_an_owner_before_it_touches_anything(
