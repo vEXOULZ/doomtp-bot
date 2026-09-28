@@ -33,12 +33,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 8/8 | Complete |
 | [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 6/11 | Link rule, storage limits, moderation primitives, internal and system packs done; the readouts, automation, `customecho` and quotes are next |
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 1/5 | Accepted; not built yet |
-| [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 1/4 | CI and hooks done; the GitHub settings and first release are next |
+| [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
 | [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 2/3 | Built; the first real rollback on the server is next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**108 of 125 ADR action items are closed.** Five are waiting on a person or a server, not on code. The
-other 12 are the rest of ADR-0019, ADR-0020 and ADR-0021, decided on 2026-09-28; ADR-0018 is complete. **All 9 architecture promises are closed**: six built,
+**111 of 125 ADR action items are closed.** Five are waiting on a person or a server, not on code. The
+other 9 are the rest of ADR-0019 and ADR-0020, decided on 2026-09-28; ADR-0018 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
@@ -148,6 +148,7 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 4. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.
-5. **Language v2, then the default command set** (ADR-0018, then ADR-0019). ADR-0018 item 1,
-   the error codes, is done, and every later item raises them. Quotes move last, once brackets, expressions
-   and internal pack members exist.
+5. **The rest of the default command set** (ADR-0019). Language v2 (ADR-0018) shipped in `v0.2.0`, so
+   picking from a list or map, `customecho`, the readouts and the `automation` module are unblocked.
+   Quotes move last, once `random` can pick from a map. The server runs `scripts/migrate_v2.py` once when
+   it first takes `v0.2.0`.
