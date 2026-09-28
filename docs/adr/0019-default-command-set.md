@@ -53,7 +53,7 @@ These stay as they are, plus:
 - **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to echo a line, calling
   `shoutout` first when a moderator runs it (`ifelse {$chatter.is_mod} ( shoutout … || true ) && echo …`;
   a command in an `ifelse` branch is refused only if its branch is chosen, spec §6.3). It adds the
-  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
+  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, fetched when a command reads it and cached per channel.
 - **Quotes** become a derived pack. `quote` dispatches with `ifelse` to the internal members
   `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `channel.quotes` and
   `channel.quote_next`. `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
@@ -150,8 +150,14 @@ Rejected again on 2026-09-28 in favour of the startup check.
    joined as `list_items` and `names_per_space`, `!admin listitems|names`, in migration 0004.)*
 5. [x] Internal pack members and system packs, with `false` and `default` moved into `core`
    (amends ADR-0012).
-6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
-   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
+6. [x] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
+   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5. 2026-09-28:
+   `ping` is `echo pong` in `starter`. `$channel.next_stream` is read from Helix only when a command
+   names it and kept for ten minutes per channel (`core/schedule.py`), rather than polled like the live
+   set, because few commands read it; a failed request reads as nothing scheduled for a minute.
+   `$channel.uptime` and `next_stream[in]` stay seconds, and a new `:human` accessor says them as
+   `1h 2m`. `uptime` and `nextstream` pick their line with `ifelse`, so a channel's own wording is
+   used while the stream is live or a stream is scheduled.)*
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
 8. [x] `customecho` and the `:template` accessor. *(2026-09-28: `!customecho` is moderator-only and
    writes `channel.customecho[<command>]` itself, whatever `channel_var_write_role` says. A placeholder

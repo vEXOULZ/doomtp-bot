@@ -23,6 +23,7 @@ from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.core.instance_lock import InstanceLock, InstanceLockError
 from doomtp_bot.core.links import BotBadges
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.core.schedule import NextStreams
 from doomtp_bot.core.streams import StreamPoller, StreamStatus
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader, SystemResolver
@@ -139,7 +140,7 @@ async def run(settings: Settings) -> None:
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
     }
     if twitch is not None:
-        services.update(twitch=twitch, login_for=twitch.login_for)
+        services.update(twitch=twitch, login_for=twitch.login_for, schedule=NextStreams(twitch))
     registry = builtin_registry()
     runtime = Runtime(
         registry,

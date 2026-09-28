@@ -546,6 +546,38 @@ class TwitchService:
             }
         return live
 
+    async def fetch_schedule(self, channel_id: str) -> list[dict[str, str]]:
+        """The channel's next scheduled streams from Helix `Get Channel Stream Schedule` (app token, no
+        scope), soonest first, as {title, category, start}. Cancelled segments and those inside a vacation
+        are left out, and a channel with no schedule has none. Raises if the request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        upcoming: list[dict[str, str]] = []
+        try:
+            async for schedule in self.client.create_partialuser(channel_id).fetch_stream_schedule(
+                first=5, max_results=1
+            ):
+                away = schedule.vacation
+                for segment in schedule.segments:
+                    if segment.canceled_until is not None:
+                        continue
+                    if away is not None and away.start_time <= segment.start_time < away.end_time:
+                        continue
+                    upcoming.append(
+                        {
+                            "title": segment.title or "",
+                            "category": segment.category.name if segment.category else "",
+                            "start": segment.start_time.isoformat(),
+                        }
+                    )
+        except twitchio.HTTPException as exc:
+            if exc.status == 404:  # Twitch's answer for a channel that never set a schedule
+                return []
+            raise
+        except (TypeError, IndexError):  # twitchio can't read a page whose `segments` is null or empty
+            return []
+        return sorted(upcoming, key=lambda s: s["start"])
+
     async def try_moderator_subscription(self, channel_id: str) -> bool:
         """Subscribe to `channel.follow`, which only a moderator may. Success *is* the mod check.
 

@@ -65,6 +65,7 @@ from doomtp_bot.runtime.values import (
 from doomtp_bot.runtime.variables import VariableError, WriteOp, key_for
 
 if TYPE_CHECKING:
+    from doomtp_bot.core.schedule import NextStreams
     from doomtp_bot.runtime.policy import Decision, Policy
     from doomtp_bot.runtime.resolver import Resolved
     from doomtp_bot.runtime.spec import CommandSpec
@@ -429,7 +430,7 @@ class Executor:
             case Lit(value):
                 return value
             case Ref():
-                return self.ref_value(expr, ctx, scope, prev)
+                return await self.ref_value(expr, ctx, scope, prev)
             case VarRef(namespace, name, path):
                 try:
                     key = key_for(ctx, namespace, name)
@@ -454,6 +455,8 @@ class Executor:
                     return ops.values(value)
                 if name == "template":
                     return await self.template(value, ctx, scope, prev)
+                if name == "human":
+                    return ops.human(value)
                 try:
                     return await convert(value, name, choices=choices, resolve_user=ctx.resolve_user)
                 except ConversionError:
@@ -545,11 +548,13 @@ class Executor:
         n = int(root[1:])
         return scope.results.get(n) if n in scope.executed else None
 
-    def ref_value(self, ref: Ref, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+    async def ref_value(self, ref: Ref, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
         root, path = ref.root, ref.path
         if root.startswith("_"):
             result = self.result_ref(root, scope, prev)
             return MISSING if result is None else result_value(result, path)
+        if root == "$channel" and path[:1] == ("next_stream",):
+            return descend(await self.next_stream(ctx), path[1:])
         if root.startswith("$"):
             fields = self.bot_fields(ctx, root[1:])
             return MISSING if fields is None else descend(fields, path)
@@ -594,6 +599,13 @@ class Executor:
         if head in args.params:
             return descend(args.params[head], rest)
         return MISSING
+
+    @staticmethod
+    async def next_stream(ctx: ExecContext) -> Any:
+        """`$channel.next_stream`, asked of Helix only when a command reads it (core/schedule.py)."""
+        schedule: NextStreams | None = ctx.services.get("schedule")
+        found = None if schedule is None else await schedule.next_stream(ctx.channel.id, ctx.clock())
+        return MISSING if found is None else found
 
     def bot_fields(self, ctx: ExecContext, root: str) -> dict[str, Any] | None:
         """The `$` fields (ADR-0018 D11). A field with nothing to show is MISSING."""

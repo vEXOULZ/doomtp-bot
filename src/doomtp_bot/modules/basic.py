@@ -15,19 +15,6 @@ MODULE = "basic"
 
 @command(
     CommandSpec(
-        name="ping",
-        module=MODULE,
-        summary="Check that the bot is alive",
-        examples=(Example("{sign}ping", "pong"),),
-        default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=10)},
-    )
-)
-async def ping(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    return Result.success("pong", "pong")
-
-
-@command(
-    CommandSpec(
         name="random",
         module=MODULE,
         aliases=("rng",),
@@ -57,4 +44,4 @@ def seeded(seed: str) -> random.Random:
     return random.Random(int.from_bytes(hashlib.sha256(seed.encode("utf-8")).digest()[:8], "big"))
 
 
-COMMANDS: tuple[Command, ...] = (ping, random_cmd)
+COMMANDS: tuple[Command, ...] = (random_cmd,)

@@ -51,7 +51,14 @@ PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
 
 
+def echo_or_custom(name: str, wording: str) -> str:
+    """A readout's `echo`: the channel's own wording from `!customecho set <name> …` if it has one,
+    else `wording` (ADR-0019)."""
+    return f"echo {{channel.customecho[{name}]:template ?? {wording}}}"
+
+
 STARTER: tuple[Derived, ...] = (
+    Derived(name="ping", summary="Check that the bot is alive", body="echo pong"),
     Derived(
         name="hug",
         summary="Hug someone, or the whole chat",
@@ -86,6 +93,56 @@ STARTER: tuple[Derived, ...] = (
         summary="Count the deaths of the run",
         body="var incr channel.deaths | echo deaths: {_1}",
         note="writes a channel variable, so each channel allows it once: `!cc grant deaths channel.deaths`",
+    ),
+    # Readouts: what the channel and the bot look like right now, each rewordable per channel.
+    Derived(
+        name="uptime",
+        summary="How long the stream has been live",
+        body=(
+            "ifelse {$channel.live} ( "
+            + echo_or_custom(
+                "uptime", "{$channel.display} has been live for {$channel.uptime:human ?? a moment}"
+            )
+            + " ) ( echo {$channel.display} isn't live right now )"
+        ),
+    ),
+    Derived(
+        name="title",
+        summary="The stream's title",
+        body=echo_or_custom("title", "{$channel.title ?? no title — the stream is offline}"),
+    ),
+    Derived(
+        name="game",
+        summary="What the stream is playing",
+        body=echo_or_custom("game", "{$channel.display} is playing {$channel.game ?? nothing right now}"),
+    ),
+    Derived(
+        name="viewers",
+        summary="How many people are watching",
+        body=echo_or_custom("viewers", "{$channel.viewers} watching"),
+    ),
+    Derived(
+        name="time",
+        summary="The time where the channel is",
+        body=echo_or_custom("time", "it's {$now.time} on {$now.weekday} here"),
+    ),
+    Derived(
+        name="bot",
+        summary="Which bot this is",
+        body=echo_or_custom("bot", "I'm {$bot.name} v{$bot.version}"),
+    ),
+    Derived(
+        name="nextstream",
+        summary="When the next scheduled stream starts",
+        body=(
+            "ifelse {$channel.next_stream ?? false} ( "
+            + echo_or_custom(
+                "nextstream",
+                "next stream in {$channel.next_stream[in]:human}: {$channel.next_stream[title] ?? untitled}"
+                " ({$channel.next_stream[category] ?? no category})",
+            )
+            + " ) ( echo nothing on {$channel.display}'s schedule right now )"
+        ),
     ),
 )
 

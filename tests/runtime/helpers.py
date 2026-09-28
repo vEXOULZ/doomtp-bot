@@ -17,7 +17,7 @@ from doomtp_bot.runtime.engine import RunReport, Runtime
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.resolver import BuiltinResolver
 from doomtp_bot.runtime.result import Code, Result
-from doomtp_bot.runtime.spec import CommandSpec, InputMode, Param
+from doomtp_bot.runtime.spec import CommandSpec, Cooldown, InputMode, Param
 
 CHANNEL = ChannelInfo(id="c1", login="doomtp", display="DoomTP", prefix="!")
 ALICE = Chatter(
@@ -106,7 +106,21 @@ async def fakedeny(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.failure(Code.DENIED, "nope")
 
 
-TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, plus, rawecho, cancelme, fakedeny)
+@command(
+    CommandSpec(
+        name="ping",
+        module="test",
+        summary="says pong",
+        default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=10)},
+    )
+)
+async def ping(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+    """The `ping` that was a built-in before it moved to the starter pack (ADR-0019): a plain command
+    with a cooldown, which is what the policy, cooldown and dispatch tests need."""
+    return Result.success("pong", "pong")
+
+
+TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, plus, rawecho, cancelme, fakedeny, ping)
 
 
 def registry() -> CommandRegistry:
