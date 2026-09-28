@@ -135,7 +135,9 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 2. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
    and read what `scripts/coverage.py` says the next morning.
 3. **Sign the bot in again** once it runs there: `!shoutout` needs `moderator:manage:shoutouts`, which a
-   token from before 2026-09-23 doesn't carry (the chat line works without it; the card doesn't).
+   token from before 2026-09-23 doesn't carry, and `!warn`, `!announce`, `!chatmode` and `!shield` need
+   the scopes added 2026-09-28. A broadcaster who wants `!settitle`, `!setgame`, `!marker` or `!raid`
+   connects the channel again at `/auth/connect`.
 4. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.

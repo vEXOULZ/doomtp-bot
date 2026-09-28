@@ -35,6 +35,18 @@ SHOUTOUT_REFUSALS = {
     403: "the bot isn't a moderator here",
     429: "Twitch allows one shoutout every 2 minutes, and the same streamer once an hour",
 }
+# Why any other Helix action was refused, by whose token it went out on. A status not listed here takes
+# Twitch's own message, which for a 400 names the problem ("The user is already banned").
+BOT_REFUSALS = {
+    401: "the bot's sign-in predates this permission: sign the bot in again at /auth/login",
+    403: "the bot isn't a moderator here",
+    429: "Twitch is rate limiting the bot: try again in a moment",
+}
+BROADCASTER_REFUSALS = {
+    401: "the broadcaster hasn't granted this: they can connect the channel again at /auth/connect",
+    403: "the broadcaster hasn't granted this: they can connect the channel again at /auth/connect",
+    429: "Twitch is rate limiting the channel: try again in a moment",
+}
 
 CHAT_SUBSCRIPTIONS: tuple[type[Any], ...] = (
     eventsub.ChatMessageSubscription,
@@ -55,6 +67,13 @@ def _already_subscribed(exc: Exception) -> bool:
     """TwitchIO raises on a duplicate subscription; that still means the bot is allowed to have it."""
     text = repr(exc).lower()
     return "409" in text or "conflict" in text or "already" in text
+
+
+def _refusal(exc: twitchio.HTTPException, refusals: dict[int, str]) -> str:
+    if exc.status in refusals:
+        return refusals[exc.status]
+    message = exc.extra.get("message") if isinstance(exc.extra, dict) else None
+    return f"Twitch said: {message}" if message else f"Twitch answered {exc.status}"
 
 
 def _unauthorized(exc: Exception) -> bool:
@@ -152,6 +171,7 @@ class TwitchService:
         self.bot_login: str | None = None
         self._task: asyncio.Task[None] | None = None
         self._subscribed: set[str] = set()
+        self._pinned: dict[str, str] = {}  # channel → the message the bot last pinned there
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._users_by_login: OrderedDict[str, dict[str, str]] = OrderedDict()
         self._logins_by_id: dict[str, str] = {}
@@ -372,6 +392,145 @@ class TwitchService:
             log.warning("twitch.shoutout_failed", channel=channel_id, status=exc.status)
             return SHOUTOUT_REFUSALS.get(exc.status, f"Twitch answered {exc.status}")
         return None
+
+    # Moderator and channel actions (ADR-0019 item 3). Each returns None when Twitch did it, else why not.
+    async def _act(
+        self, what: str, call: Callable[[Any], Awaitable[Any]], channel_id: str, *, as_bot: bool = True
+    ) -> str | None:
+        if self.client is None or self.bot_id is None:
+            return "not connected to Twitch"
+        try:
+            await call(self.client.create_partialuser(channel_id))
+        except twitchio.HTTPException as exc:
+            log.warning("twitch.action_refused", action=what, channel=channel_id, status=exc.status)
+            return _refusal(exc, BOT_REFUSALS if as_bot else BROADCASTER_REFUSALS)
+        except Exception as exc:
+            # No token for the broadcaster, most likely: the channel was never connected.
+            log.warning("twitch.action_failed", action=what, channel=channel_id, error=repr(exc))
+            return "Twitch didn't take it" + (
+                "" if as_bot else ": is the channel connected at /auth/connect?"
+            )
+        return None
+
+    async def ban_user(self, channel_id: str, user_id: str, reason: str) -> str | None:
+        return await self._act(
+            "ban",
+            lambda c: c.ban_user(
+                moderator=self.bot_id, user=user_id, reason=reason or None, token_for=self.bot_id
+            ),
+            channel_id,
+        )
+
+    async def unban_user(self, channel_id: str, user_id: str) -> str | None:
+        """Lifts a ban or a timeout: Twitch's Unban does both."""
+        return await self._act(
+            "unban",
+            lambda c: c.unban_user(moderator=self.bot_id, user_id=user_id, token_for=self.bot_id),
+            channel_id,
+        )
+
+    async def warn_user(self, channel_id: str, user_id: str, reason: str) -> str | None:
+        return await self._act(
+            "warn",
+            lambda c: c.warn_user(
+                moderator=self.bot_id, user_id=user_id, reason=reason, token_for=self.bot_id
+            ),
+            channel_id,
+        )
+
+    async def announce(self, channel_id: str, text: str, color: str | None) -> str | None:
+        return await self._act(
+            "announce",
+            lambda c: c.send_announcement(
+                moderator=self.bot_id, message=text, color=color, token_for=self.bot_id
+            ),
+            channel_id,
+        )
+
+    async def update_chat_settings(self, channel_id: str, settings: dict[str, Any]) -> str | None:
+        return await self._act(
+            "chat_settings",
+            lambda c: c.update_chat_settings(self.bot_id, token_for=self.bot_id, **settings),
+            channel_id,
+        )
+
+    async def clear_chat(self, channel_id: str) -> str | None:
+        return await self._act(
+            "clear",
+            lambda c: c.delete_chat_messages(moderator=self.bot_id, token_for=self.bot_id),
+            channel_id,
+        )
+
+    async def shield_mode(self, channel_id: str, active: bool) -> str | None:
+        return await self._act(
+            "shield",
+            lambda c: c.update_shield_mode_status(
+                moderator=self.bot_id, active=active, token_for=self.bot_id
+            ),
+            channel_id,
+        )
+
+    async def pin_message(self, channel_id: str, message_id: str, duration: int | None) -> str | None:
+        """Helix Pin Chat Message; `duration` in seconds (30–1800), None until unpinned."""
+        refused = await self._act(
+            "pin",
+            lambda c: c.pin_message(
+                message_id=message_id, moderator=self.bot_id, duration=duration, token_for=self.bot_id
+            ),
+            channel_id,
+        )
+        if refused is None:
+            self._pinned[channel_id] = message_id
+        return refused
+
+    async def unpin_message(self, channel_id: str, message_id: str | None) -> str | None:
+        """Unpin that message, or else the last one the bot pinned in the channel."""
+        message_id = message_id or self._pinned.get(channel_id)
+        if message_id is None:
+            return "reply to the pinned message to unpin it"
+        refused = await self._act(
+            "unpin",
+            lambda c: c.unpin_message(message_id=message_id, moderator=self.bot_id, token_for=self.bot_id),
+            channel_id,
+        )
+        if refused is None and self._pinned.get(channel_id) == message_id:
+            del self._pinned[channel_id]
+        return refused
+
+    async def find_game(self, name: str) -> dict[str, str] | None:
+        """A category by its exact name, or else Twitch's best search match."""
+        if self.client is None:
+            return None
+        game = await self.client.fetch_game(name=name)
+        if game is None:
+            async for found in self.client.search_categories(name, max_results=1):
+                game = found
+                break
+        return None if game is None else {"id": str(game.id), "name": game.name}
+
+    # These go out on the broadcaster's own token (ADR-0007 item 5): no moderator may do them for Twitch.
+    async def update_channel(
+        self, channel_id: str, *, title: str | None = None, game_id: str | None = None
+    ) -> str | None:
+        return await self._act(
+            "modify_channel",
+            lambda c: c.modify_channel(title=title, game_id=game_id),
+            channel_id,
+            as_bot=False,
+        )
+
+    async def stream_marker(self, channel_id: str, description: str | None) -> str | None:
+        return await self._act(
+            "marker",
+            lambda c: c.create_stream_marker(token_for=channel_id, description=description),
+            channel_id,
+            as_bot=False,
+        )
+
+    async def start_raid(self, channel_id: str, to_user_id: str) -> str | None:
+        return await self._act(
+            "raid", lambda c: c.start_raid(to_broadcaster=to_user_id), channel_id, as_bot=False
+        )
 
     async def fetch_live(self, channel_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
         """Helix `Get Streams` for up to 100 channels (ADR-0007). Raises if the request fails."""

@@ -337,7 +337,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 | Arguments | Declared param types and inline `{arg.N:type}` are validated before the body runs. Failure returns code 2 with generated usage text. |
 | Re-entrancy | Output is never parsed as a command. The bot ignores its own messages. |
 | Variable writes | Buffered per run. They commit atomically at the end if the run was not cancelled, **including when the final code is non-zero** (e.g. `!counter +1 && !fail`). |
-| Side-effect commands | `!timeout` and `!shoutout` (`modules/moderation.py`, `side_effects=True`) act on Twitch at the time of their stage, not at the end of the run. The runtime checks the moderation index right before running them, and each handler checks again right before its Helix call, since looking the target up takes a moment. They need the `moderate` capability. `!explain --run` reports them as not run. |
+| Side-effect commands | `!timeout`, `!shoutout` and the rest of the `moderation` module (`modules/moderation.py`, `side_effects=True`) act on Twitch at the time of their stage, not at the end of the run. The runtime checks the moderation index right before running them, and each handler checks again right before its Helix call, since looking the target up takes a moment. Most need the `moderate` capability; `!settitle`, `!setgame`, `!marker` and `!raid` go out on the broadcaster's token and need `broadcast` or `raids` instead. `!delete`, `!pin` and `!unpin` act on the message the asking one replies to (`ExecContext.reply_to`). `!explain --run` reports them as not run. |
 
 ### 4.4 `!explain <expr>`
 
@@ -557,11 +557,29 @@ A **race window** remains: a mod can act after the message has already been sent
 | Tier | How the channel gets it | What works |
 |------|-------------------------|------------|
 | **basic** | A bot owner or admin runs `!join <channel>`, or the broadcaster types `!join` in the bot's own channel. **No broadcaster OAuth.** | Chat, deletes, clears and chat notifications (subs, resubs, gifts, raids, announcements), reading and sending chat, commands, the log, variables and custom commands. Stream online/offline comes from Helix polling (see ADR-0007). |
-| **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why), the `automod` module and the `moderation` module (`!timeout`, `!shoutout`) |
+| **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why), the `automod` module and the `moderation` module (`!timeout`, `!ban`, `!unban`, `!warn`, `!shoutout`, `!announce`, `!chatmode`, `!clear`, `!shield`, `!delete`, `!pin`, `!unpin`) |
 | **full** | The broadcaster completes OAuth at `/auth/connect` | Everything in moderator, plus channel point redemptions, subscription and cheer event details, the chat bot badge (`channel:bot`) and other broadcaster-scoped features |
 
 - The **CapabilityProbe** runs at join and hourly, and updates `channels.capabilities` and `channels.tier`. It measures mod status by *asking for* the moderator-only `channel.follow` subscription: no endpoint tells the bot's own token whether it is a mod without a scope the broadcaster would have to grant anyway, and that subscription is what a follow trigger needs in any case. What the broadcaster granted (redemptions, subs, bits) is never taken away by a probe — only the broadcaster flow (ADR-0007 item 5) sets it.
-- **The broadcaster flow** (`/auth/connect`) is one link a broadcaster follows. It asks for `channel:bot`, `channel:read:redemptions`, `channel:read:subscriptions` and `bits:read`, and none of them is required: whatever comes back becomes that channel's capabilities, and the rest stays unavailable with a reason. The token is stored as `broadcaster:<user_id>` alongside the bot's own, the channel is joined if it wasn't, and the redemption and cheer subscriptions are created with it. Both OAuth flows return to the one `/auth/callback` Twitch has registered, and are told apart by the `state` — which is doing its anti-forgery job at the same time. At startup, every stored broadcaster token is handed back to the Twitch client and its subscriptions are recreated.
+- **The broadcaster flow** (`/auth/connect`) is one link a broadcaster follows. It asks for `channel:bot`, `channel:read:redemptions`, `channel:read:subscriptions`, `bits:read`, `channel:manage:broadcast` and `channel:manage:raids`, and none of them is required: whatever comes back becomes that channel's capabilities, and the rest stays unavailable with a reason. The token is stored as `broadcaster:<user_id>` alongside the bot's own, the channel is joined if it wasn't, and the redemption and cheer subscriptions are created with it. Both OAuth flows return to the one `/auth/callback` Twitch has registered, and are told apart by the `state` — which is doing its anti-forgery job at the same time. At startup, every stored broadcaster token is handed back to the Twitch client and its subscriptions are recreated.
+
+**Scopes for later.** Asking for a scope is cheap to add and costs every bot and broadcaster a fresh sign-in, so these are listed rather than requested before a feature uses them (reviewed 2026-09-28):
+
+| Feature | Scope | Token |
+|---|---|---|
+| Polls and predictions | `channel:manage:polls`, `channel:manage:predictions` | broadcaster |
+| Creating, fulfilling or refunding channel point rewards | `channel:manage:redemptions` | broadcaster |
+| VIPs and moderators from chat | `channel:manage:vips`, `channel:manage:moderators` | broadcaster |
+| Running ads, reading the ad schedule | `channel:edit:commercial`, `channel:read:ads` | broadcaster |
+| Editing the stream schedule | `channel:manage:schedule` | broadcaster |
+| Hype train and goal events | `channel:read:hype_train`, `channel:read:goals` | broadcaster |
+| Clips from chat | `clips:edit` | bot or broadcaster |
+| Who is in chat (`$channel.chatters`, raffles among present chatters) | `moderator:read:chatters` | bot |
+| Twitch's own AutoMod queue and settings | `moderator:manage:automod`, `moderator:manage:automod_settings` | bot |
+| Blocked terms kept in Twitch rather than in our filter | `moderator:manage:blocked_terms` | bot |
+| Unban requests | `moderator:manage:unban_requests` | bot |
+| Suspicious-user and warning events | `moderator:read:suspicious_users`, `moderator:read:warnings` | bot |
+
   - A broadcaster can take the grant back from Twitch's **Connections** page, and Twitch doesn't tell us. The next subscription attempt is what notices: a 401 or 403 there (or a token Twitch won't take at all) drops the stored token and calls `CapabilityProbe.revoke_full`, so the channel falls back to whatever the bot earned by being a moderator. A request that merely failed on the way is not treated as a revoked grant, and the grant is checked again at every startup rather than on a timer.
 - **Stream status** is Helix `Get Streams` for every joined channel, batched 100 per request, once a minute (`core/streams.py`). A failed request keeps the last answer rather than declaring everybody offline. Transitions become `StreamStatusChanged`, which fires the `stream_online`/`stream_offline` triggers and feeds `only_live`. Live state is memory-only: it is stale the moment the process stops, and the first poll after a restart rebuilds it.
 - Modules and triggers declare what they `require`. Unmet requirements disable a feature with a visible reason instead of an error.
@@ -676,7 +694,7 @@ src/doomtp_bot/
 ├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔ connections and migrations only
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
-│               moderation.py quotes.py logsearch.py                       ✔ timeout, shoutout (§4.3); quotes; log search
+│               moderation.py quotes.py logsearch.py                       ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); quotes; log search
 └─ api/         app.py keys.py sessions.py access.py grammar.py            ✔ no pages: those are doomtp-web's (ADR-0016)
                 routes/ (health auth language data session site)          ✔
                 static/editor/editor.js                                    ✔ the built editor bundle, committed

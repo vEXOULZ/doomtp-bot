@@ -61,6 +61,18 @@ def should_log_run(report: RunReport, level: LogLevel) -> bool:
     return True
 
 
+def _reply_to(msg: ChatMessage) -> dict[str, str] | None:
+    """The replied-to message, for commands that act on it (`delete`, `pin`)."""
+    if msg.reply_parent_id is None:
+        return None
+    return {
+        "message_id": msg.reply_parent_id,
+        "id": msg.reply_parent_user_id or "",
+        "name": msg.reply_parent_login or "",
+        "display": msg.reply_parent_display or "",
+    }
+
+
 def is_unignore_me(text: str, prefix: str) -> bool:
     """Is this line `<prefix>unignore me`? The one command a chatter who ignored themselves still reaches."""
     return text.startswith(prefix) and [w.lower() for w in text[len(prefix) :].split()] == ["unignore", "me"]
@@ -242,6 +254,7 @@ class Dispatcher:
                     invoker=chatter,
                     trigger_type="chat",
                     message_id=msg.message_id,
+                    reply_to=_reply_to(msg),
                     is_cancelled=invalidated,
                 )
                 report = await self.runtime.run(msg.text, ctx, reply_parent_login=msg.reply_mentions)
