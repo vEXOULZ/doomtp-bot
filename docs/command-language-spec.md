@@ -342,7 +342,7 @@ Codes run from 0 to 1023. Commands MUST use 1–99 for their own failures (4 inc
 | 230–249 evaluation | 230 `E_MISSING_VALUE`, 231 `E_DATA_TOO_LARGE` |
 | 250–269 values | 252 `E_NOT_A_LIST`, 255 `E_NOT_A_NUMBER` |
 | 299 | `E_INTERNAL`: the parser failed without a named error, which is a bug |
-| 300–399 storage (§6.5) | 300 `E_LIST_FULL`, 302 `E_VALUE_TOO_BIG`, 303 `E_BAD_NAMESPACE`, 304 `E_BAD_VAR_NAME`, 305 `E_TOO_MANY_NAMES` |
+| 300–399 storage (§6.5) | 300 `E_LIST_FULL`, 301 `E_QUOTA`, 302 `E_VALUE_TOO_BIG`, 303 `E_BAD_NAMESPACE`, 304 `E_BAD_VAR_NAME`, 305 `E_TOO_MANY_NAMES` |
 
 The gaps are taken by errors ADR-0018 and ADR-0019 plan, and the rest of 100–1023 is free for new blocks.
 
@@ -387,7 +387,8 @@ The gaps are taken by errors ADR-0018 and ADR-0019 plan, and the rest of 100–1
 | list | `v` is appended. A list that already holds `MAX_LIST_ITEMS (100)` items fails the store with 300 (`E_LIST_FULL`), and nothing is dropped |
 | anything else | the store fails: the Store node returns code 252 (`E_NOT_A_LIST`) instead of `r`, and nothing is buffered |
 
-- **Limits:** the per-value size limit (2 KB) and per-space name limits (ADR-0010) are checked when a write is buffered. A violation gives 302 (`E_VALUE_TOO_BIG`) or 305 (`E_TOO_MANY_NAMES`).
+- **Limits:** a value over `MAX_VALUE_BYTES` (1 MB) or a space over its name limit (ADR-0010) fails when the write is buffered, with 302 (`E_VALUE_TOO_BIG`) or 305 (`E_TOO_MANY_NAMES`).
+- **Quotas (ADR-0019):** every variable counts against one **owner**, named by the first segment of its namespace: `chatter.*` against the chatter, `channel.*` and `channel.chatter.*` against the channel, and `publisher.*` against the command's publisher. Each owner has a quota for all its values together (default 1 MB) and a cap on any one value (default 256 KB, at most 1 MB). Admins change the defaults or one owner's limits with `!admin quota|valuecap` or the API. Both are checked at commit, in the commit's transaction: a value over its owner's cap gives 302 (`E_VALUE_TOO_BIG`), and a commit that leaves an owner over its quota gives 301 (`E_QUOTA`). Either way nothing in the run is stored. A commit that only shrinks what an owner stores always succeeds, so lowering a quota never blocks a clean-up. Sizes are the stored JSON's UTF-8 bytes. `!var usage [ns]` shows an owner's use.
 
 ### 6.6 Output
 
@@ -563,7 +564,8 @@ With `--run`, it also evaluates the expression with a **discarded** write buffer
 | `MAX_MESSAGE_CHARS` | 2000 | §6.1 |
 | `MAX_CHAT_MESSAGES` | 2 (500 chars each) | §6.6 |
 | `MAX_LIST_ITEMS` | 100 | §6.5 |
-| Variable value size | 2 KB | ADR-0010 |
+| Variable value size | 256 KB default per owner, 1 MB at most | ADR-0019 |
+| Variable quota | 1 MB default per owner | ADR-0019 |
 
 ---
 
