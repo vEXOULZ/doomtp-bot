@@ -1,6 +1,6 @@
 # Roadmap and progress
 
-**As of 2026-09-25** (the architecture's own promises are tracked beside the ADRs', and all closed). Every decision in this project carries its own action items, so this page is the
+**As of 2026-09-28** (the architecture's own promises are tracked beside the ADRs', and all closed). Every decision in this project carries its own action items, so this page is the
 sum of them: what each ADR set out to do, how much of it is done, and what is left. It is written by
 hand — when an item closes, tick it in its ADR and update the row here in the same commit.
 
@@ -29,10 +29,13 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
 | [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
+| [0017](adr/0017-moderator-sessions-through-twitch-sign-in.md) | Moderator sessions through Twitch sign-in | 6/6 | Complete |
+| [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 0/8 | Not started |
+| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 0/11 | Not started; needs 0018 |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**84 of 88 ADR action items are closed.** The four still open are waiting on a person or a server, not
-on code. **All 9 architecture promises are closed**: six built,
+**90 of 113 ADR action items are closed.** Four are waiting on a person or a server, not on code. The
+other 19 are ADR-0018 and ADR-0019, decided on 2026-09-28 and not started. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
@@ -136,3 +139,6 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 4. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.
+5. **Language v2, then the default command set** (ADR-0018, then ADR-0019). Start with ADR-0018 item 1,
+   the error codes, because every later item raises them. Quotes move last, once brackets, expressions
+   and internal pack members exist.
