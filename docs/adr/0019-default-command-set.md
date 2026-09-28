@@ -133,8 +133,9 @@ Rejected again on 2026-09-28 in favour of the startup check.
 
 ## Action Items
 
-1. [ ] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`. The link
-   rule and the cache are done (`core/links.py`); the `help` link waits for a web site URL setting.
+1. [x] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`. *(The link
+   rule and the cache are in `core/links.py`. The `help` link is one global `WEB_SITE_URL`, the same for
+   every channel, set on the deploy side.)*
 2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
    `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
 3. [ ] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
