@@ -137,8 +137,9 @@ Rejected again on 2026-09-28 in favour of the startup check.
 1. [x] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`. *(The link
    rule and the cache are in `core/links.py`. The `help` link is one global `WEB_SITE_URL`, the same for
    every channel, set on the deploy side.)*
-2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
-   `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
+2. [x] `random` with a seed, and picking from a list or map. *(Argument 1 takes a range, a list or a
+   map. A list or map from a lone placeholder arrives through the new `any` param type (spec §7.4);
+   typed, it is JSON. An empty one fails with `E_EMPTY` (254).)*
 3. [x] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
    `shoutout` is done, and so are the rest (2026-09-28): `ban`, `unban`/`untimeout`, `warn`,
    `announce`, `chatmode`, `clear`, `shield`, and `delete`, `pin` and `unpin` on the replied-to message,

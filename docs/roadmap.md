@@ -31,13 +31,13 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
 | [0017](adr/0017-moderator-sessions-through-twitch-sign-in.md) | Moderator sessions through Twitch sign-in | 6/6 | Complete |
 | [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 8/8 | Complete |
-| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 6/11 | Link rule, storage limits, moderation primitives, internal and system packs done; the readouts, automation, `customecho` and quotes are next |
+| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 7/11 | Link rule, storage limits, `random` picking, moderation primitives, internal and system packs done; the readouts, automation, `customecho` and quotes are next |
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 1/5 | Accepted; not built yet |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**109 of 122 ADR action items are closed.** Four are waiting on a person or a server, not on code. The
-other 9 are the rest of ADR-0019 and ADR-0020, decided on 2026-09-28; ADR-0018 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
+**110 of 122 ADR action items are closed.** Four are waiting on a person or a server, not on code. The
+other 8 are the rest of ADR-0019 and ADR-0020, decided on 2026-09-28; ADR-0018 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
@@ -144,6 +144,6 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.
 5. **The rest of the default command set** (ADR-0019). Language v2 (ADR-0018) shipped in `v0.2.0`, so
-   picking from a list or map, `customecho`, the readouts and the `automation` module are unblocked.
-   Quotes move last, once `random` can pick from a map. The server runs `scripts/migrate_v2.py` once when
+   `customecho`, the readouts and the `automation` module are unblocked.
+   Quotes move last; `random` can already pick from a map. The server runs `scripts/migrate_v2.py` once when
    it first takes `v0.2.0`.
