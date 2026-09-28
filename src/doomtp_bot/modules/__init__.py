@@ -17,6 +17,7 @@ def builtin_registry() -> CommandRegistry:
         explain,
         filters,
         help,
+        httpget,
         logsearch,
         moderation,
         quotes,
@@ -39,6 +40,7 @@ def builtin_registry() -> CommandRegistry:
         logsearch,
         automation,
         explain,
+        httpget,
     ):
         registry.extend(module.COMMANDS)
     return registry

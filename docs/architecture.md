@@ -690,12 +690,14 @@ src/doomtp_bot/
 ├─ variables/   store.py access.py                                         ✔
 ├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
+├─ webfetch/    addresses.py fetcher.py                                    ✔ ADR-0020: allowed hosts, public addresses only
 ├─ audit/       log.py                                                     ✔
 ├─ quotes.py    numbered per channel, never renumbered                     ✔ the quotes module's table
 ├─ storage/     db.py schema.py migrations/{bot,chatlog}/                  ✔ connections and Alembic migrations
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
 │               moderation.py quotes.py logsearch.py                       ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); quotes; log search
+│               httpget.py                                                 ✔ `http get`, only in bot admins' commands (ADR-0020)
 └─ api/         app.py keys.py sessions.py access.py grammar.py            ✔ no pages: those are doomtp-web's (ADR-0016)
                 routes/ (health auth language data session site)          ✔
                 static/editor/editor.js                                    ✔ the built editor bundle, committed

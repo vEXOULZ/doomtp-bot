@@ -53,6 +53,7 @@ from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.webfetch.fetcher import HttpFetcher, StaticHosts
 
 log = structlog.get_logger("doomtp_bot")
 
@@ -138,6 +139,9 @@ async def run(settings: Settings) -> None:
         "site_url": settings.web_site_url,  # `!help` links the channel's command page there
         "quotes": QuoteService(dbs.bot),
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
+        "chatlog_writer": writer,  # `http` logs each request it makes (ADR-0020)
+        # No host is allowed until an admin adds one, which `!admin http allow` will do (ADR-0020 item 3).
+        "http": HttpFetcher(StaticHosts()),
     }
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for)
