@@ -1,12 +1,12 @@
-"""Postgres connections and a numbered-SQL migrations runner (ADR-0014).
+"""Postgres connections, and the schema check at startup (ADR-0014, ADR-0022).
 
 One database, two schemas: `bot` holds state and configuration, `chatlog` holds the message log. Each
 gets its own connection whose `search_path` points at it, so queries name tables unqualified exactly as
 they did when these were two SQLite files, and nothing can join across the two by accident.
 
-Migrations live in `migrations/<schema>/NNNN_name.sql` and are recorded a row at a time in that schema's
-`schema_migrations` table. Postgres has transactional DDL, so a migration and its version row either both
-land or neither does — no half-applied schema to unpick by hand.
+Migrations are Alembic revisions under `migrations/<schema>/` (`storage.schema`). The bot doesn't run
+them: the `migrate` step does, before it starts, and `Databases.open` only checks that each schema is at
+this build's head.
 
 Connections are `autocommit=True`: a read should not leave a transaction open. Writes take an explicit
 `transaction()` block, which serializes on a per-connection lock because every writer in the process
@@ -22,16 +22,16 @@ import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from importlib import resources
 from typing import Any
 
 import psycopg
 import structlog
 from psycopg.rows import dict_row
 
+from doomtp_bot.storage import schema as schema_module
+
 log = structlog.get_logger(__name__)
 
-_MIGRATION_RE = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 _SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 Connection = psycopg.AsyncConnection[dict[str, Any]]
@@ -48,29 +48,6 @@ def configure_event_loop() -> None:
     """
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-@dataclass(frozen=True)
-class Migration:
-    version: int
-    name: str
-    sql: str
-
-
-def load_migrations(schema: str) -> list[Migration]:
-    """Read migrations shipped in the package for `schema` ('bot' or 'chatlog'), sorted by version."""
-    root = resources.files("doomtp_bot.storage") / "migrations" / schema
-    migrations: list[Migration] = []
-    for entry in root.iterdir():
-        match = _MIGRATION_RE.match(entry.name)
-        if not match:
-            continue
-        migrations.append(Migration(int(match.group(1)), entry.name, entry.read_text(encoding="utf-8")))
-    migrations.sort(key=lambda m: m.version)
-    expected = list(range(1, len(migrations) + 1))
-    if [m.version for m in migrations] != expected:
-        raise RuntimeError(f"{schema} migrations must be numbered contiguously from 0001")
-    return migrations
 
 
 async def connect(dsn: str, schema: str) -> Connection:
@@ -131,36 +108,29 @@ async def execute(conn: Connection, sql: str, params: Params = ()) -> int:
         return cur.rowcount
 
 
-async def current_version(conn: Connection) -> int:
-    """The schema version this connection's schema is at. `migrate` has made sure the table exists."""
-    value = await fetch_value(conn, "SELECT coalesce(max(version), 0) AS v FROM schema_migrations")
-    return int(value or 0)
+async def schema_revision(conn: Connection) -> str | None:
+    """The Alembic revision this connection's schema is at, or None if it has none."""
+    if await fetch_value(conn, "SELECT to_regclass('alembic_version') AS t") is None:
+        return None
+    value = await fetch_value(conn, "SELECT version_num FROM alembic_version")
+    return None if value is None else str(value)
 
 
-async def migrate(conn: Connection, schema: str) -> int:
-    """Apply pending migrations. Returns the resulting schema version."""
-    migrations = load_migrations(schema)
-    await conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations ("
-        " version integer PRIMARY KEY,"
-        " name text NOT NULL,"
-        " applied_at timestamptz NOT NULL DEFAULT now())"
-    )
-    version = await current_version(conn)
-    if version > len(migrations):
-        raise RuntimeError(
-            f"{schema} schema version {version} is newer than this build ({len(migrations)}); refusing to start"
+async def check_schema(conn: Connection, schema: str) -> str:
+    """Refuse a schema that isn't at this build's head, saying which way to fix it. Returns the revision."""
+    expected = schema_module.head(schema)
+    revision = await schema_revision(conn)
+    if revision == expected:
+        return revision
+    if revision is None or schema_module.known(schema, revision):
+        raise schema_module.SchemaMismatch(
+            f"{schema} schema is at {revision or 'nothing'}, this build needs {expected}: "
+            "run `doomtp-bot db upgrade` (the migrate step) first"
         )
-    for migration in migrations[version:]:
-        log.info("db.migrate", schema=schema, migration=migration.name)
-        # Transactional DDL: the file and its version row land together or not at all.
-        async with transaction(conn):
-            await conn.execute(migration.sql)
-            await conn.execute(
-                "INSERT INTO schema_migrations (version, name) VALUES (%s, %s)",
-                (migration.version, migration.name),
-            )
-    return await current_version(conn)
+    raise schema_module.SchemaMismatch(
+        f"{schema} schema is at {revision}, which a newer build wrote; this build needs {expected}: "
+        "downgrade with the newer image first (deploy/rollback.sh)"
+    )
 
 
 @dataclass
@@ -169,11 +139,20 @@ class Databases:
     chatlog: Connection
 
     @classmethod
-    async def open(cls, dsn: str) -> Databases:
+    async def open(cls, dsn: str, *, migrate: bool = False) -> Databases:
+        """Connect to both schemas and check them. `migrate` upgrades them first: tests and dev tools
+        only, since a deployed bot leaves that to the migrate step (ADR-0022)."""
+        if migrate:
+            await asyncio.to_thread(schema_module.upgrade, dsn)
         bot = await connect(dsn, "bot")
         chatlog = await connect(dsn, "chatlog")
-        await migrate(bot, "bot")
-        await migrate(chatlog, "chatlog")
+        try:
+            await check_schema(bot, "bot")
+            await check_schema(chatlog, "chatlog")
+        except BaseException:
+            await bot.close()
+            await chatlog.close()
+            raise
         return cls(bot=bot, chatlog=chatlog)
 
     async def close(self) -> None:

@@ -203,7 +203,7 @@ Deletions are flags, never row removals. Queries and the web UI choose whether t
 
 ### 3.2 Schema (schema `chatlog`)
 
-Sketch only — `storage/migrations/chatlog/0001_init.sql` is the truth. Timestamps are `bigint`
+Sketch only — `storage/migrations/chatlog/sql/0001_init.sql` and the revisions after it are the truth. Timestamps are `bigint`
 milliseconds since the epoch throughout.
 
 ```sql
@@ -454,7 +454,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - **Packs** group a user's commands so they publish and unpublish as one unit, and the pack's name is the module name for `!module` toggles (ADR-0012). A command added to a published pack appears immediately.
 - **Derived commands** are custom commands published to the global scope by a bot owner or admin: available in every channel, still overridable by a channel publication, and never able to shadow a Python built-in (a *primitive*).
 - The **`core` system pack** (the derived sentinels `false` and `default`) is installed by the same script, resolves in every channel without a publication, and is checked at startup: the bot refuses to start without it at the expected version (ADR-0012 amendment, ADR-0019).
-- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`) is installed by `scripts/starter_pack.py` (compose: `--profile tools run --rm starter-pack`), not seeded at boot: it creates the commands under the bot's own account and publishes the `starter` pack globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication.
+- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`) is installed by `scripts/starter_pack.py` (the `migrate` step runs it on every compose `up`, ADR-0022), not seeded at boot: it creates the commands under the bot's own account and publishes the `starter` pack globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication.
 
 ### Variables, briefly
 
@@ -478,7 +478,7 @@ Resolution runs in this order, and the first rule that matches decides:
 
 ## 7. Triggers, timers and listeners
 
-Sketch only — `storage/migrations/bot/0001_init.sql` is the truth.
+Sketch only — `storage/migrations/bot/sql/0001_init.sql` and the revisions after it are the truth.
 
 ```sql
 triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
@@ -692,7 +692,7 @@ src/doomtp_bot/
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ audit/       log.py                                                     ✔
 ├─ quotes.py    numbered per channel, never renumbered                     ✔ the quotes module's table
-├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔ connections and migrations only
+├─ storage/     db.py schema.py migrations/{bot,chatlog}/                  ✔ connections and Alembic migrations
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
 │               moderation.py quotes.py logsearch.py                       ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); quotes; log search
@@ -728,9 +728,10 @@ flowchart LR
         timer["systemd timer<br/>nightly"] --> upd["deploy/update.sh"]
         upd --> moved{"digest<br/>moved?"}
         moved -->|no| done["exit 0, nothing touched"]
-        moved -->|yes| restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
-        restart --> migrate["migrations run at startup<br/>forward-only"]
-        migrate --> cov["coverage check<br/>its exit code is the unit's"]
+        moved -->|yes| migrate["migrate step, new image<br/>db upgrade + starter pack (ADR-0022)"]
+        migrate -->|failed| old["old bot keeps running"]
+        migrate --> restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
+        restart --> cov["coverage check<br/>its exit code is the unit's"]
         pg[("postgres<br/>never restarted by an update")]
         migrate -.-> pg
     end
@@ -743,7 +744,9 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **Docker Compose:**
   - `doomtp-bot`: non-root, read-only root filesystem, `/data` volume (the instance lock; the
     databases are Postgres's), LAN-bound port. It waits for the database's healthcheck before it
-    starts (ADR-0014).
+    starts (ADR-0014), and for the `migrate` one-shot to finish (ADR-0022).
+  - `migrate`: runs `doomtp-bot db upgrade` and the starter pack from the bot's own image, on every `up`.
+    The bot only checks that each schema is at its own head revision, and refuses to start otherwise.
   - `postgres`: the database, on a named volume, published to nothing — only the compose network
     reaches it. To look at it from outside, tunnel in over SSH (§11).
   - `pgweb`: optional, read-only, for browsing the log by hand. It replaced Datasette, which could
@@ -757,9 +760,9 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back means pinning `BOT_IMAGE` to the previous release tag (or a sha tag) — but migrations run at startup and
-  are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
-  before the deploy.
+  chosen under. Rolling back is `deploy/rollback.sh <image>`: it backs up, downgrades the schema with the
+  image running now (the only one that has the downgrade), pins `BOT_IMAGE` to the target and starts it
+  without the migrate step (ADR-0022).
 - **What the image holds:** the locked dependency set and the installed package — static files,
   the built editor bundle and the copy of the grammar the language page shows (force-included into the
   wheel, since `docs/` isn't installed). There is no Node in the image, which is why `web-editor/`'s

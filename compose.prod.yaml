@@ -13,6 +13,11 @@ services:
     # Always ask the registry: the tag moves, and an image already on disk would otherwise win.
     pull_policy: always
 
+  # The migrate step has to be the image the bot is about to run: it installs that image's schema.
+  migrate:
+    image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
+    pull_policy: always
+
   # The one-shot tools run the same image. They keep `pull_policy: always` too, so a guest without the
   # build context beside them can never fall back to building one.
   coverage:
