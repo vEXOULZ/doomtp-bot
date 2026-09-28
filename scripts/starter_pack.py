@@ -80,9 +80,14 @@ STARTER: tuple[Derived, ...] = (
     Derived(
         name="so",
         summary="Shout out another streamer",
-        body="echo go follow twitch.tv/{arg.1} — they were last seen being excellent",
+        # A moderator's `so` also sends Twitch's shoutout card, when the bot is a moderator and the stream
+        # is live; for anyone else, or when the card can't go out, it is just the line.
+        body=(
+            "ifelse {$chatter.is_mod} ( shoutout {arg.streamer[name]} || true )"
+            " && echo go follow twitch.tv/{arg.streamer[name]} — they were last seen being excellent"
+        ),
         declarations=('1 name=streamer type=user "whose channel to name"',),
-        note="anyone can run it; restrict it per channel with `!perm set so moderator`",
+        note="anyone can run it; only a moderator's also sends Twitch's shoutout card",
     ),
     Derived(
         name="deaths",
