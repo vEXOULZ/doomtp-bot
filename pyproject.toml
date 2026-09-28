@@ -8,6 +8,9 @@ dependencies = [
     "twitchio>=3,<4",
     "aiohttp>=3.9",
     "psycopg[binary]>=3.2",
+    # Schema migrations with a downgrade for every upgrade, so an image rollback can undo them (ADR-0022).
+    "alembic>=1.14",
+    "sqlalchemy>=2.0.36",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "pydantic>=2.7",

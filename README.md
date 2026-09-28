@@ -151,13 +151,14 @@ uv lock
 The bot ships commands written in its own language rather than Python: the sentinels `false` and
 `default` in the `core` system pack, and `hug`, `lurk`, `roll`, `so` and `deaths`, published globally as
 the `starter` pack. They are not installed automatically; the database stays the only source of truth for
-what the bot offers. **The bot refuses to start until `core` is installed at the version it expects**, so
-run this after every upgrade (`deploy/update.sh` does it for you) and restart the bot if `core` changed. On
-a brand-new database the bot starts anyway and warns, because the script installs under the bot's account:
-sign the bot in at `/auth/login`, run the script, then restart:
+what the bot offers. **The bot refuses to start until `core` is installed at the version it expects.** The
+`migrate` step installs it: compose runs that before the bot on every `up`, with the schema upgrade
+(ADR-0022). On a brand-new database the bot starts anyway and warns, because the script installs under the
+bot's account: sign the bot in at `/auth/login`, then run the step again and restart:
 
 ```bash
-docker compose --profile tools run --rm starter-pack
+docker compose run --rm migrate
+docker compose restart doomtp-bot
 ```
 
 It creates them under the bot's own account (`--dry-run` says what it would change first). Re-run it
@@ -423,18 +424,26 @@ not drive failures.
 | What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
 | Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
-| Install `core` and the starter commands (before starting) | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
+| Upgrade the schema and install `core` and the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml run --rm migrate` |
+| Where does the schema stand? | `docker compose -f compose.yaml -f compose.prod.yaml run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
 
-To **roll back**, point `BOT_IMAGE` at the previous release, `:vX.Y.Z` (or any `:<sha>` tag), and run the
-update unit again. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR-0021). Mind that migrations
-run at startup and only go forward: roll back within a schema, or restore a backup taken before the
-deploy.
+To **roll back**, run `deploy/rollback.sh ghcr.io/<owner>/doomtp-bot:vX.Y.Z` (or any `:<sha>` tag). It takes
+a backup, downgrades the schema to what that image expects using the image running now, points `BOT_IMAGE`
+in `.env` at it and restarts the bot on it (ADR-0022). The update unit then stays on that tag until you
+change `BOT_IMAGE` back. A downgrade that drops a column drops its data, so the backup it took is the way
+back to that data. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR-0021).
+
+An image from before ADR-0022 has no migrate step. After rolling back to one, start it with `up -d --no-deps
+doomtp-bot`, not a bare `up -d`, which would run the step and fail.
 
 ### If something is wrong
 
 | Symptom | Cause |
 |---------|-------|
 | `up -d` tries to build | `BOT_IMAGE` is unset, or `compose.prod.yaml` was left off the command |
+| The bot logs `bot.schema_mismatch` and says to run `db upgrade` | It was started without the migrate step: `docker compose ... run --rm migrate`, then start it |
+| The bot logs `bot.schema_mismatch` and says a newer build wrote the schema | An older image was started on a newer schema: use `deploy/rollback.sh`, which downgrades first |
+| `migrate` fails and the bot isn't replaced | Working as intended: the old bot keeps running. `docker compose ... logs migrate` says why |
 | `denied` or `manifest unknown` on pull | The package path is wrong or private — GHCR paths are lowercase, and a private package needs `docker login ghcr.io` |
 | `/readyz` says the stored bot token is for another account | `TWITCH_BOT_ID` changed, or a token from before it was set is stored. Open `/auth/login` and sign in as the bot account |
 | `/readyz` says `bot not authorized` after signing in | `PUBLIC_BASE_URL` no longer matches the redirect URL registered with Twitch |

@@ -131,6 +131,15 @@ yourself to check that a machine has everything.
 CI runs those plus the web editor's tests, the committed-bundle check, the grammar and railroad diagram
 checks, and a Docker build. Nothing merges that CI hasn't agreed with.
 
+## Schema changes
+
+A schema change is an Alembic revision in `src/doomtp_bot/storage/migrations/<bot|chatlog>/versions/`
+(ADR-0022). Copy the newest one there. The id is the next four-digit number, and `down_revision` is the
+one before it. Write the SQL in `upgrade()` with `op.execute`, and write a `downgrade()` that undoes it
+exactly: `tests/test_schema.py` runs every revision down and back up, and compares the schema at each
+step. Keep changes additive where you can, because the old bot is still running while the migrate step
+runs. Drop a column one release after the code stops using it.
+
 ## Commits
 
 Write the subject as what the commit does, in the imperative and under about 60 characters — the log

@@ -45,7 +45,8 @@ from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import Connection, configure_event_loop, connect, migrate
+from doomtp_bot.storage.db import Connection, check_schema, configure_event_loop, connect
+from doomtp_bot.storage.schema import SchemaMismatch
 
 PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
@@ -213,9 +214,13 @@ async def run(args: argparse.Namespace) -> int:
         print(f"cannot reach the database: {exc}", file=sys.stderr)
         return 2
     try:
-        # A new image may ship the columns this install writes; migrating here lets an upgrade install
-        # `core` before the new bot starts, and the bot refuses to start without it.
-        await migrate(conn, "bot")
+        # The migrate step upgrades the schema just before this runs (ADR-0022). Run alone, this checks
+        # it instead: the pack is written for this build's columns.
+        try:
+            await check_schema(conn, "bot")
+        except SchemaMismatch as exc:
+            print(f"stopped: {exc}", file=sys.stderr)
+            return 1
         owner = (args.owner_id, args.owner_login) if args.owner_id and args.owner_login else None
         owner = owner or await bot_account(conn)
         if owner is None:
