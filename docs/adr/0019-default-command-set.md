@@ -106,6 +106,8 @@ moderator.
 `weather` and similar commands wait for a gated HTTP query primitive. It would be off by default, with
 per-channel domain allow-lists, GET only, timeouts, size caps and SSRF protection. It gets its own ADR
 before any code.
+*(2026-09-28: ADR-0020 decided it. The allow-list became one global list, and `http` runs only from
+derived commands a bot admin published, with API keys kept as write-only admin secrets.)*
 
 ## Options Considered
 
@@ -144,6 +146,6 @@ Rejected again on 2026-09-28 in favour of the startup check.
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
-10. [ ] An ADR for the HTTP query primitive.
+10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
 11. [ ] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.
