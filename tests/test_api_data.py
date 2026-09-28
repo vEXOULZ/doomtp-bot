@@ -26,6 +26,7 @@ from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.webfetch.hosts import HostStore
 from tests.fakes import policy_with_channels
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -84,6 +85,8 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
     health.register("databases", _ok_check)
     twitch = FakeTwitch()
     keys = ApiKeyService(dbs.bot)
+    http_hosts = HostStore(dbs.bot)
+    await http_hosts.reload()
     app = create_app(
         health,
         None,
@@ -101,6 +104,7 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
             "bot_db": dbs.bot,
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,
+            "http_hosts": http_hosts,
         },
         admin_password=PASSWORD,
     )
@@ -529,6 +533,50 @@ async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient
     assert too_many.status_code == 422
     unknown = await client.patch("/api/v1/variable-limits/viewer/alice", headers=headers, json={})
     assert unknown.status_code == 404
+
+
+async def test_http_hosts_take_a_secret_and_never_give_it_back(
+    client: httpx.AsyncClient, write_key: str
+) -> None:
+    headers = auth(write_key)
+    assert (await client.get("/api/v1/http-hosts", headers=headers)).json() == {
+        "hosts": [],
+        "limits": {"channel_per_minute": 10, "host_per_minute": 60},
+    }
+    allowed = await client.put("/api/v1/http-hosts/API.Example.com", headers=headers, json={})
+    assert allowed.json()["pattern"] == "api.example.com" and allowed.json()["secret"] is None
+    missing = await client.put(
+        "/api/v1/http-hosts/other.example.com/secret",
+        headers=headers,
+        json={"kind": "query", "name": "appid", "value": "abc"},
+    )
+    assert missing.status_code == 422
+    secret = await client.put(
+        "/api/v1/http-hosts/api.example.com/secret",
+        headers=headers,
+        json={"kind": "header", "name": "X-Api-Key", "value": "s3cret-value"},
+    )
+    assert secret.json()["secret"] == {"kind": "header", "name": "X-Api-Key"}
+    listing = await client.get("/api/v1/http-hosts", headers=headers)
+    assert "s3cret-value" not in listing.text and "s3cret-value" not in secret.text
+    reserved = await client.put(
+        "/api/v1/http-hosts/api.example.com/secret",
+        headers=headers,
+        json={"kind": "header", "name": "Host", "value": "x"},
+    )
+    assert reserved.status_code == 422
+
+    cleared = await client.delete("/api/v1/http-hosts/api.example.com/secret", headers=headers)
+    assert cleared.json()["secret"] is None
+    assert (await client.put("/api/v1/http-hosts/localhost", headers=headers, json={})).status_code == 422
+    limits = await client.patch("/api/v1/http-limits", headers=headers, json={"host_per_minute": 5})
+    assert limits.json() == {"channel_per_minute": 10, "host_per_minute": 5}
+    assert (
+        await client.patch("/api/v1/http-limits", headers=headers, json={"host_per_minute": -1})
+    ).status_code == 422
+
+    assert (await client.delete("/api/v1/http-hosts/api.example.com", headers=headers)).status_code == 200
+    assert (await client.delete("/api/v1/http-hosts/api.example.com", headers=headers)).status_code == 404
 
 
 # ── packs as modules, explain, and the ignore list ─────────────────────────

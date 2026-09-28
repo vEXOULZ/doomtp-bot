@@ -66,12 +66,25 @@ class Secret:
     value: str
 
 
+@dataclass(frozen=True, slots=True)
+class HttpLimits:
+    """Requests a minute: per channel, and per host across all channels (ADR-0020 §Limits)."""
+
+    channel_per_minute: int
+    host_per_minute: int
+
+    def as_dict(self) -> dict[str, int]:
+        return {"channel_per_minute": self.channel_per_minute, "host_per_minute": self.host_per_minute}
+
+
 class HostPolicy(Protocol):
-    """Where the allow-list and the secrets come from."""
+    """Where the allow-list, the secrets and the limits come from."""
 
     def rules(self) -> Iterable[HostRule]: ...
 
     def secret_for(self, pattern: str) -> Secret | None: ...
+
+    def limits(self) -> HttpLimits | None: ...
 
 
 @dataclass
@@ -86,6 +99,9 @@ class StaticHosts:
 
     def secret_for(self, pattern: str) -> Secret | None:
         return self.secrets.get(pattern)
+
+    def limits(self) -> HttpLimits | None:
+        return None  # the fetcher's own
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +151,7 @@ class _Window:
     def full(self, key: str) -> bool:
         hits = self.hits.get(key)
         if hits is None:
-            return False
+            return self.limit <= 0  # a limit of 0 turns requests off
         cutoff = self.clock() - 60.0
         while hits and hits[0] <= cutoff:
             hits.popleft()
@@ -173,14 +189,6 @@ class HttpFetcher:
         self._cache: dict[str, tuple[float, Fetched]] = {}
         self._inflight: dict[str, asyncio.Future[Fetched]] = {}
 
-    def set_limits(
-        self, *, channel_per_minute: int | None = None, host_per_minute: int | None = None
-    ) -> None:
-        if channel_per_minute is not None:
-            self.per_channel.limit = channel_per_minute
-        if host_per_minute is not None:
-            self.per_host.limit = host_per_minute
-
     def check(self, url: URL) -> HostRule:
         """The allow-list entry for `url`, or E_HTTP_NOT_ALLOWED saying what's wrong with it."""
         host = url.raw_host
@@ -216,6 +224,9 @@ class HttpFetcher:
             return await asyncio.shield(running)
 
         host = url.raw_host or ""
+        limits = self.hosts.limits()
+        if limits is not None:  # an admin may have changed them since the last request
+            self.per_channel.limit, self.per_host.limit = limits.channel_per_minute, limits.host_per_minute
         if self.per_channel.full(channel_id):
             raise HttpError("", "too many web requests from this channel; try again in a minute",
                             code=Code.UPSTREAM_LIMITED, host=host)  # fmt: skip
