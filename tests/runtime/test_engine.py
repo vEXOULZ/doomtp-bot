@@ -405,6 +405,15 @@ async def test_too_many_invocations() -> None:
     assert r.result.code == ErrorCode.E_TOO_MANY and r.send == "too many commands (max 8)"
 
 
+async def test_an_ifelse_counts_as_its_larger_branch() -> None:
+    """Only one branch runs, so the limit sees the larger one, not both (spec §5.2 row 7)."""
+    seven = " && ".join(["echo x"] * 7)
+    fits = await run(make_runtime(), f"!ifelse {{1 == 1}} ( {seven} ) ( {seven} ) && echo y")
+    assert fits.result.code == 0
+    over = await run(make_runtime(), f"!ifelse {{1 == 2}} ( echo x ) ( {seven} && echo x ) && echo y")
+    assert over.result.code == ErrorCode.E_TOO_MANY
+
+
 async def test_moderation_cancellation_discards_writes() -> None:
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)

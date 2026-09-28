@@ -6,7 +6,7 @@ Cooldowns are not checked here since spec 1.1 — they fail the individual invoc
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -148,6 +148,7 @@ def preflight(
     """
     outcome = Preflight(ok=True)
     counted = 0
+    costs: dict[str, int] = {}  # a custom command's invocations, counted once per expansion of its body
 
     def fail(index: int | None, name: str | None, result: Result) -> Preflight:
         return Preflight(False, outcome.resolved, outcome.bodies, result, index, name)
@@ -161,14 +162,9 @@ def preflight(
         holder_index: int | None = None,
         branch: bool = False,
     ) -> Preflight | None:
-        nonlocal counted
-        counted += 1
-        if counted > MAX_INVOCATIONS:
-            return fail(
-                None,
-                None,
-                error_result("E_TOO_MANY", f"too many commands (max {MAX_INVOCATIONS})", max=MAX_INVOCATIONS),
-            )
+        failure = count(1)
+        if failure is not None:
+            return failure
         resolved = resolver.resolve(here, inv)
         if resolved is None:
             return fail(inv.index, inv.name, Result.failure(Code.UNKNOWN, f"unknown command: {inv.name}"))
@@ -202,6 +198,17 @@ def preflight(
                 return failure
         if resolved.custom is not None:
             return check_body(inv, resolved, here, stack, branch)
+        return None
+
+    def count(n: int) -> Preflight | None:
+        nonlocal counted
+        counted += n
+        if counted > MAX_INVOCATIONS:
+            return fail(
+                None,
+                None,
+                error_result("E_TOO_MANY", f"too many commands (max {MAX_INVOCATIONS})", max=MAX_INVOCATIONS),
+            )
         return None
 
     def check_exprs(
@@ -265,8 +272,9 @@ def preflight(
         )
         resolved_map = outcome.bodies.setdefault(target.command_id, {})
         if resolved_map:  # already expanded through another invocation of the same command
-            return None
-        return walk(
+            return count(costs.get(target.command_id, 0))
+        before = counted
+        failure = walk(
             target.body,
             body_ctx,
             resolved_map,
@@ -274,6 +282,8 @@ def preflight(
             (*stack, target.command_id),
             branch,
         )
+        costs[target.command_id] = counted - before
+        return failure
 
     def check_store(store: Store, here: ExecContext) -> Preflight | None:
         target = store.target
@@ -324,12 +334,23 @@ def preflight(
             case Store(inner, _, _):
                 return sub(inner) or check_store(n, here)
             case IfElse(_, then, else_):
-                return (
-                    check_cond(n, here, resolved_map, stack)
-                    or sub(then, True)
-                    or (sub(else_, True) if else_ is not None else None)
-                )
+                return check_cond(n, here, resolved_map, stack) or check_branches(then, else_, sub)
         return None
+
+    def check_branches(
+        then: Node, else_: Node | None, sub: Callable[[Node, bool], Preflight | None]
+    ) -> Preflight | None:
+        """Both branches are checked, but only one runs, so an `ifelse` counts as its larger branch."""
+        nonlocal counted
+        start = counted
+        failure = sub(then, True)
+        if failure is not None:
+            return failure
+        taken = counted - start
+        counted = start
+        failure = sub(else_, True) if else_ is not None else None
+        counted = start + max(taken, counted - start)
+        return failure
 
     failure = walk(node, ctx, outcome.resolved, stdin_receivers(node), ())
     return failure if failure is not None else outcome
