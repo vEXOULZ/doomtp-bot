@@ -38,6 +38,7 @@ from doomtp_bot.chatlog import queries
 from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.customcmds.params import to_params
+from doomtp_bot.customcmds.resolution import system_specs
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
@@ -357,8 +358,7 @@ async def channel_commands(request: Request, login: str) -> dict[str, Any]:
     settings = _channel(request, login)
     policy, runtime = _policy(request), _state(request, "runtime")
     listing = []
-    for command in runtime.registry.all():
-        spec = command.spec
+    for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver):
         required, allowed = policy.required_role(settings.channel_id, spec)
         listing.append(
             {

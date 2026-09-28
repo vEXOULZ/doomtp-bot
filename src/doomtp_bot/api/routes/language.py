@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from doomtp_bot.api.access import authenticate, check_area
 from doomtp_bot.core.streams import live_fields
+from doomtp_bot.customcmds.resolution import system_specs
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
 from doomtp_bot.lang.errors import HINTS, ParseError, ParseErrorCode
@@ -193,8 +194,7 @@ async def commands(request: Request) -> dict[str, Any]:
     """Every built-in command with its usage, parameters and examples (architecture §4.2)."""
     runtime = _runtime(request)
     listing = []
-    for entry in runtime.registry.all():
-        spec = entry.spec
+    for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver):
         listing.append(
             {
                 "name": spec.name,

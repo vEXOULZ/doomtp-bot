@@ -8,11 +8,14 @@ from typing import Any
 
 import pytest
 
+from doomtp_bot.customcmds.resolution import SystemResolver
+from doomtp_bot.customcmds.system import CORE, CORE_COMMANDS
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, VARIATION_SELECTOR, Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.runtime.context import Args, ChannelInfo, Chatter, CommandContext
 from doomtp_bot.runtime.engine import RunReport, Runtime
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
+from doomtp_bot.runtime.resolver import BuiltinResolver
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec, InputMode, Param
 
@@ -112,8 +115,15 @@ def registry() -> CommandRegistry:
     return reg
 
 
+def with_core(reg: CommandRegistry) -> SystemResolver:
+    """The built-ins plus the `core` system pack, straight from its definitions: no database needed."""
+    return SystemResolver.from_derived(BuiltinResolver(reg), CORE, CORE_COMMANDS)
+
+
 def make_runtime(**kwargs: Any) -> Runtime:
-    return Runtime(registry(), **kwargs)
+    reg = registry()
+    kwargs.setdefault("resolver", with_core(reg))
+    return Runtime(reg, **kwargs)
 
 
 async def run(

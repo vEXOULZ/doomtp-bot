@@ -327,6 +327,7 @@ class Executor:
                 alias=inv.name,
                 version=target.version,
                 publication=target.publication,
+                pack_id=target.pack_id,
             ),
             Context.BODY,
         )

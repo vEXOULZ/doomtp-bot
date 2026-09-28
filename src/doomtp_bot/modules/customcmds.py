@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.customcmds import params
-from doomtp_bot.customcmds.packs import PackService
+from doomtp_bot.customcmds.packs import Pack, PackService, SystemPackError
 from doomtp_bot.customcmds.resolution import spec_for
 from doomtp_bot.customcmds.service import (
     CustomCommand,
@@ -38,7 +38,8 @@ USAGE = (
     " versions <name> | revert <name> <version> | share <name> on|off |"
     " param <name> <pos> name=<n> [type=…] [required=yes] <description> | describe <name> <summary> |"
     " run <id> [args…] |"
-    " pack create|add|rm|share|list|info|delete <pack> [commands…] | publish pack <pack> [global] |"
+    " pack create|add|rm|share|list|info|delete <pack> [commands…] | pack internal <pack> <commands…> on|off |"
+    " publish pack <pack> [global] |"
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
 )
@@ -258,7 +259,7 @@ async def _describe(ctx: CommandContext, v: list[str], args: Args) -> Result:
 
 
 async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
-    """`cc pack create|add|rm|list|info|delete <pack> [commands…]`."""
+    """`cc pack create|add|rm|list|info|delete <pack> [commands…]`, `cc pack internal <pack> <cmd…> on|off`."""
     need(v, 2, USAGE)
     action, packs, (user_id, _) = v[1].lower(), _packs(ctx), _invoker(ctx)
     if action == "list":
@@ -280,16 +281,27 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         raise CommandError(f"you have no pack named {name}")
     if action == "info":
         members = await packs.members(pack.id)
+        internal = await packs.internal_names(pack.id)
         published = [
             ("everywhere" if p.is_global else "here")
             for p, k in await packs.publications_in(ctx.channel.id, include_global=True)
             if k.id == pack.id and p.status == "active"
         ]
-        where = ", ".join(published) or "not published here"
+        where = "system pack" if pack.is_system else (", ".join(published) or "not published here")
+        shown = [f"{c.name} (internal)" if c.name in internal else c.name for c in members]
         return Result.success(
-            f"{pack.name}: {', '.join(c.name for c in members) or 'empty'} — {where}",
-            {"pack": pack.name, "commands": [c.name for c in members], "published": published},
+            f"{pack.name}: {', '.join(shown) or 'empty'} — {where}",
+            {
+                "pack": pack.name,
+                "commands": [c.name for c in members],
+                "internal": sorted(internal),
+                "published": published,
+            },
         )
+    if pack.is_system:
+        raise SystemPackError(pack)
+    if action == "internal":
+        return await _pack_internal(ctx, packs, pack, v[3:], user_id)
     if action == "delete":
         await packs.delete(pack)
         return Result.success(f"deleted pack {pack.name}; it is no longer published anywhere")
@@ -325,6 +337,26 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
             changed.append(command.name)
     verb = "added to" if action == "add" else "removed from"
     return Result.success(f"{', '.join(changed) or 'nothing'} {verb} {pack.name}", changed)
+
+
+async def _pack_internal(
+    ctx: CommandContext, packs: PackService, pack: Pack, rest: list[str], user_id: str
+) -> Result:
+    """An internal member runs only from the bodies of its pack's other commands (ADR-0019)."""
+    if len(rest) < 2 or rest[-1].lower() not in ("on", "off"):
+        raise CommandError(f"usage: {ctx.channel.prefix}cc pack internal <pack> <command…> on|off")
+    internal = rest[-1].lower() == "on"
+    changed: list[str] = []
+    for command_name in rest[:-1]:
+        command = await _service(ctx).by_owner(user_id, command_name)
+        if command is None:
+            raise CommandError(f"you don't have a command named {command_name}")
+        if command.name not in {c.name for c in await packs.members(pack.id)}:
+            raise CommandError(f"{command.name} isn't in {pack.name}")
+        if await packs.set_internal(pack, command, internal):
+            changed.append(command.name)
+    state = "internal: only its commands can call them" if internal else "public again"
+    return Result.success(f"{', '.join(changed) or 'nothing'} in {pack.name} now {state}", changed)
 
 
 async def _share(ctx: CommandContext, v: list[str], args: Args) -> Result:

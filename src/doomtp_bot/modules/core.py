@@ -34,22 +34,7 @@ async def true_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.success(None, ctx.prev.data if ctx.prev is not None else None)
 
 
-@command(_spec(name="false", summary="Always fails", description="Fails with code 1 and no message."))
-async def false_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    return Result.failure(Code.FAIL)
-
-
-@command(
-    _spec(
-        name="default",
-        summary="Produce a fallback value",
-        params=(Param("1+", "value", required=True, description="The value to produce"),),
-        examples=(Example("( {sign}var get channel.last || default none yet ) -> channel.last", "none yet"),),
-    )
-)
-async def default_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    value = args["value"]
-    return Result.success(value, value)
+# `false` and `default` are written in the language: the `core` system pack (customcmds/system.py).
 
 
 @command(
@@ -162,8 +147,6 @@ OPERATORS: tuple[Command, ...] = (
 
 COMMANDS: tuple[Command, ...] = (
     true_cmd,
-    false_cmd,
-    default_cmd,
     fail_cmd,
     echo_cmd,
     check_cmd,

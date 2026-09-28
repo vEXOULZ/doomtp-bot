@@ -1,17 +1,23 @@
-"""The starter set of derived commands (ADR-0012 item 6).
+"""The derived commands the bot ships: the `core` system pack and the `starter` set (ADR-0012 item 6,
+ADR-0019).
 
-A derived command is an ordinary custom command published to the global scope, so these are written in
-the command language rather than Python: readable with `!cc info`, versioned, fixable live, and switched
-off per channel like anything else (`!module disable starter`, or `!cmd disable hug`).
+A derived command is an ordinary custom command, so these are written in the command language rather than
+Python: readable with `!cc info`, versioned, fixable live. They belong to the bot's own account and go
+out as packs:
 
-They belong to the bot's own account and go out as one pack, so a channel takes the set or none of it:
+- `core` is a **system pack**: sentinels like `false` and `default`, which resolve everywhere without being
+  published and can't be switched off. The bot refuses to start without it, so run this script before the
+  first start and after every upgrade.
+- `starter` is published globally, and a channel switches it off like anything else
+  (`!module disable starter`, or `!cmd disable hug`).
 
     python scripts/starter_pack.py --database-url postgresql://doomtp@localhost/doomtp
     docker compose --profile tools run --rm starter-pack
 
 Running it again edits what changed here and leaves the rest alone, which is how an upgrade ships a fix.
-It is safe while the bot is running: resolution reads publications from the database every time, and an
-edit bumps the version the parsed-body cache is keyed by.
+The starter pack is safe to update while the bot is running: resolution reads publications from the
+database every time, and an edit bumps the version the parsed-body cache is keyed by. The bot loads
+`core` once at startup, so restart it after a `core` change.
 """
 
 from __future__ import annotations
@@ -20,43 +26,29 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import Any
 
 import psycopg
 
 from doomtp_bot.config import Settings
-from doomtp_bot.customcmds import params
-from doomtp_bot.customcmds.packs import PackService
+from doomtp_bot.customcmds.packs import Pack, PackService
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
+from doomtp_bot.customcmds.system import (
+    CORE,
+    CORE_COMMANDS,
+    CORE_SUMMARY,
+    CORE_VERSION,
+    Derived,
+    NotASentinel,
+    check_sentinel_body,
+)
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
+from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import Connection, configure_event_loop, connect
+from doomtp_bot.storage.db import Connection, configure_event_loop, connect, migrate
 
 PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
-
-
-@dataclass(frozen=True, slots=True)
-class Derived:
-    """One starter command, exactly as `!cc add`, `!cc describe` and `!cc param` would leave it."""
-
-    name: str
-    summary: str
-    body: str
-    #: Parameter declarations in the syntax `!cc param <name>` takes, minus the command name.
-    declarations: tuple[str, ...] = field(default_factory=tuple)
-    #: Printed after the install when the command needs something from the channel before it works.
-    note: str = ""
-
-    def params(self) -> tuple[dict[str, Any], ...]:
-        rows: list[dict[str, Any]] = []
-        for declaration in self.declarations:
-            position, _, rest = declaration.partition(" ")
-            assignments, description = params.split_declaration(rest)
-            rows = params.declare(rows, position, assignments, description)
-        return tuple(rows)
 
 
 STARTER: tuple[Derived, ...] = (
@@ -98,26 +90,64 @@ STARTER: tuple[Derived, ...] = (
 )
 
 
+def check_core() -> None:
+    """Every `core` body may call only what can never be switched off (ADR-0019). Raises NotASentinel."""
+    registry = builtin_registry()
+    names = [d.name for d in CORE_COMMANDS]
+    for derived in CORE_COMMANDS:
+        if registry.get(derived.name) is not None:
+            raise NotASentinel(f"{derived.name} is a built-in already")
+        body = CustomCommandService.parse_body(derived.body, DEFAULT_PREFIX)
+        check_sentinel_body(derived.name, body, registry, names)
+
+
 async def install(
     conn: Connection, *, owner_user_id: str, owner_login: str, dry_run: bool = False
 ) -> list[str]:
-    """Create or update the starter commands and publish the pack globally. Returns what it did."""
+    """Create or update `core` and the starter commands, and publish the starter pack globally. Returns
+    what it did. Raises NotASentinel before changing anything if a `core` body isn't a sentinel's."""
+    check_core()
     filters = FilterService(conn)
     await filters.reload()  # the global list: these bodies are read out in every channel
     commands = CustomCommandService(conn, filters=filters)
     packs = PackService(conn, commands)
-    done: list[str] = []
+    owner = (owner_user_id, owner_login)
+    done = await _install(
+        commands, packs, owner, CORE, CORE_SUMMARY, CORE_COMMANDS, CORE_VERSION, dry_run=dry_run
+    )
+    done += await _install(commands, packs, owner, PACK, PACK_SUMMARY, STARTER, None, dry_run=dry_run)
+    return done
 
-    pack = await packs.by_owner(owner_user_id, PACK)
+
+async def _install(
+    commands: CustomCommandService,
+    packs: PackService,
+    owner: tuple[str, str],
+    name: str,
+    summary: str,
+    derived_commands: tuple[Derived, ...],
+    system_version: int | None,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """One pack: a system pack when `system_version` is set, else published globally."""
+    owner_user_id, owner_login = owner
+    done: list[str] = []
+    pack: Pack | None = await packs.by_owner(owner_user_id, name)
     if pack is None:
-        done.append(f"create pack {PACK}")
+        done.append(f"create {'system ' if system_version else ''}pack {name}")
         if not dry_run:
             pack = await packs.create(
-                owner_user_id=owner_user_id, name=PACK, summary=PACK_SUMMARY, actor_via="script"
+                owner_user_id=owner_user_id,
+                name=name,
+                summary=summary,
+                actor_via="script",
+                system_version=system_version,
             )
     members = {c.name for c in await packs.members(pack.id)} if pack is not None else set()
+    internal = await packs.internal_names(pack.id) if pack is not None else set()
 
-    for derived in STARTER:
+    for derived in derived_commands:
         command = await commands.by_owner(owner_user_id, derived.name)
         declared = derived.params()
         if command is None:
@@ -127,7 +157,9 @@ async def install(
         elif command.params != declared or command.summary != derived.summary:
             done.append(f"redescribe {derived.name}")
         if derived.name not in members:
-            done.append(f"put {derived.name} in {PACK}")
+            done.append(f"put {derived.name} in {name}")
+        if derived.internal != (derived.name in internal):
+            done.append(f"make {derived.name} {'internal' if derived.internal else 'public'}")
         if dry_run:
             continue
 
@@ -151,9 +183,17 @@ async def install(
             await commands.set_summary(command, derived.summary, actor_via="script")
         if pack is not None and derived.name not in members:
             await packs.add_member(pack, command, actor_via="script")
+        if pack is not None and derived.internal != (derived.name in internal):
+            await packs.set_internal(pack, command, derived.internal, actor_via="script")
 
+    if system_version is not None:  # it resolves everywhere unpublished; startup checks the version
+        if pack is not None and (pack.system_version or 0) < system_version:
+            done.append(f"mark {name} version {system_version}")
+            if not dry_run:
+                await packs.set_system_version(pack, system_version)
+        return done
     if pack is None or not any(p.pack_id == pack.id for p, _ in await packs.publications_in(GLOBAL)):
-        done.append(f"publish {PACK} globally")
+        done.append(f"publish {name} globally")
     if pack is not None and not dry_run:
         await packs.publish(channel_id=GLOBAL, pack=pack, published_by=owner_user_id, actor_via="script")
     return done
@@ -173,6 +213,9 @@ async def run(args: argparse.Namespace) -> int:
         print(f"cannot reach the database: {exc}", file=sys.stderr)
         return 2
     try:
+        # A new image may ship the columns this install writes; migrating here lets an upgrade install
+        # `core` before the new bot starts, and the bot refuses to start without it.
+        await migrate(conn, "bot")
         owner = (args.owner_id, args.owner_login) if args.owner_id and args.owner_login else None
         owner = owner or await bot_account(conn)
         if owner is None:
@@ -184,7 +227,7 @@ async def run(args: argparse.Namespace) -> int:
             return 2
         try:
             done = await install(conn, owner_user_id=owner[0], owner_login=owner[1], dry_run=args.dry_run)
-        except CustomCommandError as exc:
+        except (CustomCommandError, NotASentinel) as exc:
             print(f"stopped: {exc}", file=sys.stderr)
             return 1
     finally:

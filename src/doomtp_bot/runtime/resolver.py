@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
     from doomtp_bot.runtime.result import Result
 
-Source = Literal["builtin", "publication", "personal"]
+Source = Literal["builtin", "system", "publication", "personal"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +31,10 @@ class CustomTarget:
     version: int
     body: Node
     publication: str | None = None  # set when reached through a channel publication, not a personal link
+    #: The pack it was reached through. Its body can call that pack's internal members (ADR-0019).
+    pack_id: str | None = None
+    #: A system pack member: a sentinel, so it doesn't count toward the custom command depth.
+    system: bool = False
 
 
 @dataclass(frozen=True, slots=True)
