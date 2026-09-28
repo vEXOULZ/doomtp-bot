@@ -192,7 +192,7 @@ class Executor:
                 return await self._eval(inner, ctx, scope, prev, stdin)
             case IfElse(cond, then, else_):
                 try:
-                    chosen = ops.truthy(await self.condition(cond, ctx, scope, prev))
+                    chosen = ops.holds(await self.condition(cond, ctx, scope, prev))
                 except (MissingValue, ExprError, SubstFailed) as exc:
                     return expression_failure(exc)
                 branch = then if chosen else else_
@@ -386,9 +386,8 @@ class Executor:
     async def condition(
         self, cond: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
     ) -> Any:
-        """`ifelse`'s condition: a lone placeholder's value, or the text read as a literal."""
-        value = await self.argument(cond, ctx, scope, prev)
-        return value if _is_lone(cond) else ops.literal(value)
+        """`ifelse`'s condition: a lone placeholder's value, or the text. `ops.holds` decides."""
+        return await self.argument(cond, ctx, scope, prev)
 
     async def expand(
         self, parts: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None

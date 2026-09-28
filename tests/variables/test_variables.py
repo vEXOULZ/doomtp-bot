@@ -244,7 +244,35 @@ async def test_var_set_get_incr_and_typed_values(h: Harness) -> None:
     # `{` would start a placeholder in chat, so JSON lists are the practical typed-collection input.
     assert await h.reply("mod", "!var set channel.info [1, 2, 3]") == "channel.info = 1, 2, 3"
     assert await h.value("channel", CHANNEL_ID, name="info") == [1, 2, 3]
-    assert await h.reply("mod", "!var get channel.info.1") == "channel.info.1 = 2"
+    assert await h.reply("mod", "!var get channel.info[1]") == "channel.info[1] = 2"
+
+
+async def test_var_paths_del_and_pop(h: Harness) -> None:
+    """Paths into a value, removal and pop (ADR-0019 D4b/c): writes create the maps on the way."""
+    assert await h.reply("mod", "!var set channel.stats[kills] 3") == "channel.stats[kills] = 3"
+    assert await h.reply("mod", "!var incr channel.stats[runs][best] 2") == "channel.stats[runs][best] = 2"
+    assert await h.value("channel", CHANNEL_ID, name="stats") == {"kills": 3, "runs": {"best": 2}}
+    assert await h.reply("mod", "!echo {channel.stats[runs][best] + channel.stats[kills]}") == "5"
+    assert await h.reply("mod", "!var del channel.stats[kills]") == "deleted channel.stats[kills]"
+    assert await h.value("channel", CHANNEL_ID, name="stats") == {"runs": {"best": 2}}
+    missing = await h.run("mod", "!var del channel.stats[nope]")
+    assert missing.result.code == ErrorCode.E_KEY
+
+    await h.reply("mod", "!var set channel.queue [1, 2, 3]")
+    assert await h.reply("mod", "!var pop channel.queue") == "3"
+    assert await h.reply("mod", "!var pop channel.queue 0") == "1"
+    assert await h.value("channel", CHANNEL_ID, name="queue") == [2]
+    assert (await h.run("mod", "!var pop channel.queue 5")).result.code == ErrorCode.E_INDEX
+    assert await h.reply("mod", "!var del channel.queue[-1]") == "deleted channel.queue[-1]"
+    empty = await h.run("mod", "!var pop channel.queue")
+    assert (empty.result.code, empty.send) == (ErrorCode.E_EMPTY, "channel.queue is empty")
+    # A branch on the error's own code (ADR-0018 D8j).
+    assert (
+        await h.reply("mod", "!var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty )")
+        == "queue is empty"
+    )
+    assert (await h.run("mod", "!var pop channel.stats")).result.code == ErrorCode.E_NOT_A_LIST
+    assert (await h.run("alice", "!var pop channel.queue")).result.code == Code.DENIED
 
 
 async def test_var_writes_respect_matrix(h: Harness) -> None:

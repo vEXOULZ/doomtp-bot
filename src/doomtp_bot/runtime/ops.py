@@ -61,6 +61,12 @@ def truthy(value: Any) -> bool:
     return bool(value) and value is not MISSING
 
 
+def holds(value: Any) -> bool:
+    """A condition (`check`, `ifelse`). Text is read like an argument first, so `false` or `0` from chat,
+    a stored text value or a `??` fallback is false, the same as typing it: `check false`."""
+    return truthy(literal(value) if isinstance(value, str) else value)
+
+
 def _describe(value: Any) -> str:
     if isinstance(value, bool):
         return "true/false"

@@ -6,7 +6,17 @@ from collections.abc import Sequence
 
 import pytest
 
-from doomtp_bot.lang.ast import Index, Invocation, Lit, Pipe, Placeholder, Ref, Text, invocations, to_canonical
+from doomtp_bot.lang.ast import (
+    Index,
+    Invocation,
+    Lit,
+    Pipe,
+    Placeholder,
+    Ref,
+    Text,
+    invocations,
+    to_canonical,
+)
 from doomtp_bot.lang.errors import ParseError, ParseErrorCode
 from doomtp_bot.lang.parser import (
     MAX_EXPR_CHARS,
@@ -177,7 +187,11 @@ def test_bad_placeholders(text: str) -> None:
     ("text", "code", "hint"),
     [
         ("!echo {1}", ParseErrorCode.BAD_PLACEHOLDER, "a result is {_1} now"),
-        ("!echo {chatter.display}", ParseErrorCode.BAD_PLACEHOLDER, "the bot's fields start with $: {$chatter.display}"),
+        (
+            "!echo {chatter.display}",
+            ParseErrorCode.BAD_PLACEHOLDER,
+            "the bot's fields start with $: {$chatter.display}",
+        ),
         ("!echo {_.x}", ParseErrorCode.BAD_PLACEHOLDER, "a result has .code, .message and .data; use _[key]"),
         ("!echo a > channel.x", ParseErrorCode.UNEXPECTED_OPERATOR, "> is plain text now: store with ->"),
         ("!echo a >> channel.x", ParseErrorCode.UNEXPECTED_OPERATOR, ">> is plain text now: store with -->"),
@@ -199,8 +213,14 @@ def test_greater_than_is_text_in_bodies() -> None:
     [
         ("echo {-_1 * (2 + 3) // 4 % 5 - 1}", 'echo["{((((-_1) * (2 + 3)) // 4) % 5) - 1}"]'),
         ("echo {1 < channel.x <= 3}", 'echo["{1 < channel.x <= 3}"]'),
-        ("echo {not arg.1 and $chatter.is_mod or false}", 'echo["{((not arg.1) and $chatter.is_mod) or false}"]'),
-        ("echo {arg.1 in channel.list and 2 not in _1}", 'echo["{(arg.1 in channel.list) and (2 not in _1)}"]'),
+        (
+            "echo {not arg.1 and $chatter.is_mod or false}",
+            'echo["{((not arg.1) and $chatter.is_mod) or false}"]',
+        ),
+        (
+            "echo {arg.1 in channel.list and 2 not in _1}",
+            'echo["{(arg.1 in channel.list) and (2 not in _1)}"]',
+        ),
         ("echo {channel.q[arg.1] ?? none}", 'echo["{channel.q[arg.1] ?? none}"]'),
         ("echo {arg.1 ?? 1 ?? 2}", 'echo["{arg.1 ?? 1 ?? 2}"]'),
         ('echo {channel.stats["best run"][-1]:len}', 'echo["{channel.stats[\\"best run\\"][-1]:len}"]'),
@@ -229,7 +249,7 @@ def test_expression_errors(text: str, code: ParseErrorCode) -> None:
 
 
 def test_check_and_calc_take_one_expression() -> None:
-    assert body("check 1 < channel.x < 3 && echo in") == "And(check{1 < channel.x < 3}, echo[\"in\"])"
+    assert body("check 1 < channel.x < 3 && echo in") == 'And(check{1 < channel.x < 3}, echo["in"])'
     assert body("calc (1 + 2) * 3 -> channel.x") == "Store(calc{(1 + 2) * 3}, channel.x)"
 
 

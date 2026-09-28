@@ -14,7 +14,10 @@ GOLDEN = [
     ("echo {_} {_.code} {_.x.y}", "echo {_} {_.code} {_[x][y]}"),
     # bot fields get `$`; variables don't
     ("echo {chatter.display} {channel.uptime}", "echo {$chatter.display} {$channel.uptime}"),
-    ("echo {publisher.display} {bot.version} {now.time}", "echo {$publisher.display} {$bot.version} {$now.time}"),
+    (
+        "echo {publisher.display} {bot.version} {now.time}",
+        "echo {$publisher.display} {$bot.version} {$now.time}",
+    ),
     ("echo {channel.deaths} {chatter.pts}", "echo {channel.deaths} {chatter.pts}"),
     # paths inside a value
     ("echo {channel.stats.kills} {channel.log.0}", "echo {channel.stats[kills]} {channel.log[0]}"),
@@ -42,4 +45,3 @@ GOLDEN = [
 def test_rewrite(v1: str, v2: str) -> None:
     assert migrate_v1(v1) == v2
     parse(v2, Context.BODY, ParserParams(prefix="!"))
-

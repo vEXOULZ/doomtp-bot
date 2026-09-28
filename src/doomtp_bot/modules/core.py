@@ -92,7 +92,7 @@ def _said(value: Any) -> Result:
         summary="Test a condition",
         description=(
             "Succeeds if the expression is true, fails with code 1 if it is false. The data is its value. "
-            "Falsy: false, 0, empty text, [] and {}."
+            "Falsy: false, 0, empty text, [] and {}. Text is read like an argument, so the text false is false."
         ),
         params=(
             Param("1+", "value", required=True, description="An expression, e.g. {channel.deaths} > 10"),
@@ -102,7 +102,7 @@ def _said(value: Any) -> Result:
 )
 async def check_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     value = args["value"]
-    return Result(Code.OK if ops.truthy(value) else Code.FAIL, None, value)
+    return Result(Code.OK if ops.holds(value) else Code.FAIL, None, value)
 
 
 @command(

@@ -257,7 +257,9 @@ async def test_fallbacks_and_types() -> None:
 
 async def test_context_fields() -> None:
     rt = make_runtime()
-    r = await run(rt, "!echo {$chatter.display} in {$channel.name} rank {$chatter.rank} sub={$chatter.is_sub}")
+    r = await run(
+        rt, "!echo {$chatter.display} in {$channel.name} rank {$chatter.rank} sub={$chatter.is_sub}"
+    )
     assert r.send == "Alice in doomtp rank 20 sub=true"
 
 

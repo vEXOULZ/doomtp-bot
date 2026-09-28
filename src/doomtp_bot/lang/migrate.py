@@ -25,9 +25,7 @@ _V1_FIELDS: dict[str, frozenset[str]] = {
     "channel": frozenset({"id", "name", "display", "prefix", "live", "title", "game", "viewers", "uptime"}),
     "publisher": frozenset({"id", "name", "display"}),
 }
-_V1_ROOTS = frozenset(
-    {"arg", "args", "chatter", "channel", "publisher", "cmd", "bot", "now", *PATH_ROOTS}
-)
+_V1_ROOTS = frozenset({"arg", "args", "chatter", "channel", "publisher", "cmd", "bot", "now", *PATH_ROOTS})
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SEGMENT = re.compile(r"\d+(\+raw|\+)?|[A-Za-z_][A-Za-z0-9_]*")
 _TYPE = re.compile(r":\s*(choice\([^)}]*\)|[a-z]+)")
