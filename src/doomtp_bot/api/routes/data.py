@@ -34,7 +34,7 @@ from doomtp_bot.api.access import (
     check_area,
 )
 from doomtp_bot.audit.log import read_audit
-from doomtp_bot.chatlog import queries
+from doomtp_bot.chatlog import queries, timeline
 from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.customcmds.params import to_params
@@ -806,6 +806,61 @@ async def search_messages(
     settings = _channel(request, login)
     rows = await queries.search_messages(_state(request, "chatlog_db"), settings.channel_id, q, limit=limit)
     return {"query": q, "messages": rows}
+
+
+# A list default must be a module-level singleton (ruff B008); repeat `kind=` for several, all by default.
+_KINDS_QUERY = Query(default=None, description="message, notification or moderation; repeat for several")
+
+
+@router.get("/channels/{login}/log")
+async def channel_log(
+    request: Request,
+    login: str,
+    since: int | None = Query(default=None, ge=0, description="ms since the epoch, inclusive"),
+    until: int | None = Query(default=None, ge=0, description="ms since the epoch, exclusive"),
+    order: timeline.Order = "desc",
+    kind: list[timeline.Kind] | None = _KINDS_QUERY,
+    user: str | None = Query(default=None, min_length=1, max_length=40, description="a login, old ones too"),
+    q: str | None = Query(default=None, min_length=1, max_length=queries.MAX_QUERY_CHARS),
+    hide_removed: bool = False,
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=100, ge=1, le=MAX_ROWS),
+    caller: Caller = ADMIN_READ,
+) -> dict[str, Any]:
+    """The channel's log as one timeline of messages, notifications and moderation, a page at a time
+    (ADR-0023). Pass `next` back as `cursor`, with the same filters, for the page after."""
+    settings = _channel(request, login)
+    conn = _state(request, "chatlog_db")
+    user_ids = None if user is None else await timeline.user_ids_for(conn, user)
+    try:
+        after = None if cursor is None else timeline.Cursor.decode(cursor)
+        entries, following = await timeline.read(
+            conn, settings.channel_id, kinds=kind or timeline.KINDS, since=since, until=until, cursor=after,
+            order=order, limit=limit, user_ids=user_ids, query=q, hide_removed=hide_removed,
+        )  # fmt: skip
+    except timeline.CursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "channel_id": settings.channel_id,
+        "order": order,
+        "entries": entries,
+        "next": None if following is None else following.encode(),
+    }
+
+
+@router.get("/channels/{login}/log/coverage")
+async def channel_log_coverage(
+    request: Request,
+    login: str,
+    since: int = Query(ge=0, description="ms since the epoch"),
+    until: int | None = Query(default=None, ge=0, description="ms since the epoch; now by default"),
+    caller: Caller = ADMIN_READ,
+) -> dict[str, Any]:
+    """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0023)."""
+    if until is not None and until <= since:
+        raise HTTPException(status_code=422, detail="until must be after since")
+    settings = _channel(request, login)
+    return await timeline.coverage(_state(request, "chatlog_db"), settings.channel_id, since, until)
 
 
 @router.get("/audit")

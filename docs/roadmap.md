@@ -34,10 +34,11 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 6/11 | Link rule, storage limits, moderation primitives, internal and system packs done; the readouts, automation, `customecho` and quotes are next |
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 1/5 | Accepted; not built yet |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 1/4 | CI and hooks done; the GitHub settings and first release are next |
+| [0023](adr/0023-chat-log-timeline-api.md) | The chat log as a paged timeline on the API | 1/3 | API built; the site's log viewer and the archive's enrichment are next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**106 of 122 ADR action items are closed.** Four are waiting on a person or a server, not on code. The
-other 12 are the rest of ADR-0019, ADR-0020 and ADR-0021, decided on 2026-09-28; ADR-0018 is complete. **All 9 architecture promises are closed**: six built,
+**107 of 125 ADR action items are closed.** Four are waiting on a person or a server, not on code. The
+other 14 are the rest of ADR-0019, ADR-0020, ADR-0021 and ADR-0023, decided on 2026-09-28; ADR-0018 is complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
