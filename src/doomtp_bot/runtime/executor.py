@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -38,7 +39,8 @@ from doomtp_bot.lang.ast import (
     render_expr,
     render_placeholder,
 )
-from doomtp_bot.lang.parser import Context
+from doomtp_bot.lang.errors import ParseError
+from doomtp_bot.lang.parser import Context, parse_template
 from doomtp_bot.runtime import ops
 from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, Publisher, RunCancelled
 from doomtp_bot.runtime.ops import ExprError
@@ -74,6 +76,11 @@ _WHOLE = re.compile(r"-?(0|[1-9][0-9]*)")
 STAGE_TIMEOUT_S = 3.0
 MAX_EXPR_OPS = 1000  # expression steps per run (ADR-0018 D8k)
 MAX_SUBST_DEPTH = 3  # `{!…}` inside `{!…}` (ADR-0018 D8d)
+
+
+@lru_cache(maxsize=256)
+def _template(text: str) -> tuple[Part, ...]:
+    return parse_template(text)
 
 
 class MissingValue(Exception):
@@ -445,6 +452,8 @@ class Executor:
                     return ops.keys(value)
                 if name == "values":
                     return ops.values(value)
+                if name == "template":
+                    return await self.template(value, ctx, scope, prev)
                 try:
                     return await convert(value, name, choices=choices, resolve_user=ctx.resolve_user)
                 except ConversionError:
@@ -484,6 +493,18 @@ class Executor:
                     return value
                 return await self.expand(fallback, ctx, scope, prev)
         raise TypeError(f"not an expression: {expr!r}")
+
+    async def template(self, value: Any, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+        """`:template` (ADR-0019): a stored string's placeholders, rendered here. A value the template needs
+        but can't find makes the whole template missing, so its `??` wording takes over."""
+        try:
+            parts = _template(ops.template_text(value))
+        except ParseError as exc:
+            raise ExprError(ErrorCode[exc.code.value], f"template: {exc.hint}") from exc
+        try:
+            return await self.expand(parts, ctx, scope, prev)
+        except MissingValue:
+            return MISSING
 
     async def _key(self, expr: Expr, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
         key = await self.evaluate(expr, ctx, scope, prev)

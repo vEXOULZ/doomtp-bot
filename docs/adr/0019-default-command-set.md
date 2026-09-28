@@ -153,7 +153,9 @@ Rejected again on 2026-09-28 in favour of the startup check.
 6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
    starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
-8. [ ] `customecho` and the `:template` accessor.
+8. [x] `customecho` and the `:template` accessor. *(2026-09-28: `!customecho` is moderator-only and
+   writes `channel.customecho[<command>]` itself, whatever `channel_var_write_role` says. A placeholder
+   in a template with no value makes the whole template missing, so the readout's own wording shows.)*
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
 10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
 11. [x] The reserved-name list in ADR-0010 and the access matrix, with a test against

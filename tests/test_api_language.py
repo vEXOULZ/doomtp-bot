@@ -85,7 +85,12 @@ async def test_language_describes_the_syntax_for_the_editor(client: httpx.AsyncC
     body = (await client.get("/api/v1/language")).json()
     assert body["syntax_version"] == "2.0"
     assert "||" in body["operators"] and "->" in body["operators"] and "$chatter" in body["roots"]
-    assert "display" in body["bot_fields"]["$chatter"] and body["accessors"] == ["len", "keys", "values"]
+    assert "display" in body["bot_fields"]["$chatter"] and body["accessors"] == [
+        "len",
+        "keys",
+        "values",
+        "template",
+    ]
     assert "channel.chatter" in body["variable_namespaces"]
     assert body["roots_by_context"]["body"].count("arg") == 1
     assert body["error_codes"]["E_UNBALANCED_GROUP"] == "unbalanced parentheses"
