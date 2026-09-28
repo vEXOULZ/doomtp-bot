@@ -108,6 +108,24 @@ async def test_a2_10_denied_is_silent_with_callback() -> None:
     )  # type: ignore[union-attr]
 
 
+async def test_a_refused_command_in_an_ifelse_branch_waits_for_its_branch() -> None:
+    runtime = make_runtime(policy=DenyAdd())
+    r = await run(runtime, "!ifelse {false} ( plus 1 2 ) ( echo fine )")
+    assert (r.result.code, r.send) == (0, "fine")
+    r = await run(runtime, "!ifelse {true} ( plus 1 2 || echo refused ) && echo after")
+    assert (r.result.code, r.send) == (0, "after")
+    r = await run(runtime, "!ifelse {true} ( plus 1 2 )")
+    assert (r.result.code, r.send, r.executed) == (126, None, [])
+
+
+async def test_outside_a_branch_a_refusal_still_stops_the_line_up_front() -> None:
+    runtime = make_runtime(policy=DenyAdd())
+    r = await run(runtime, "!plus 1 2 || echo refused")
+    assert (r.result.code, r.send, r.origin, r.executed) == (126, None, "preflight", [])
+    r = await run(runtime, "!ifelse {false} ( nosuch ) ( echo fine )")  # a typo is still a typo
+    assert (r.result.code, r.origin) == (127, "preflight")
+
+
 # ── cooldowns fail the invocation, at runtime (spec 1.1, ADR-0006 item 5) ────
 async def test_cooldown_is_silent_with_callback() -> None:
     r = await run(make_runtime(policy=DenyAdd()), "!ping")

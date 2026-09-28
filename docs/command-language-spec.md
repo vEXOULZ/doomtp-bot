@@ -461,6 +461,7 @@ Each block leaves gaps for related errors, and the rest of 100–1023 is free fo
 - **Pipe stdin into a group:** `L | ( A && B )` delivers stdin to the **first invocation evaluated** inside the group, which is `A`.
 - The whole expression is bounded by `EXPR_TIMEOUT (6 s)`. When it expires, the running invocation is cancelled and the expression returns code 124.
 - **`ifelse`** is checked up front like any other node: both branches go through preflight (§5), count toward `MAX_INVOCATIONS`, and appear in `!explain`, but only the chosen branch runs. The invocations of the other branch never execute, so their `_N` are missing.
+- **A branch's permissions wait for the branch.** Inside an `ifelse` branch, a command the invoker may not run (126, or 127 for a missing capability, §5.2 check 2) doesn't stop the line up front. It returns that refusal when, and only if, its branch is chosen, so a condition can guard it: `ifelse {$chatter.is_mod} ( shoutout {arg.1} || true )`. Unknown names, bad references and every other check still fail the whole line before anything runs.
 
 ### 6.4 Scopes, `_` and `_N`
 
@@ -688,6 +689,7 @@ The operator commands read each argument like a literal: a number, `true`/`false
 - A missing condition fails with 230 and runs neither branch, like `check`. Choose a default with `??`: `{channel.deaths ?? 0}`.
 - The branches are groups and hold whole expressions, including stores and nested `ifelse`.
 - Without an else branch, a false condition gives success with no output.
+- A command in a branch is refused only if its branch is chosen (§6.3), which is what lets the condition guard a command not everyone may run.
 
 ---
 

@@ -15,6 +15,7 @@ from doomtp_bot.runtime.spec import CommandSpec
 if TYPE_CHECKING:
     from doomtp_bot.lang.ast import Invocation, Node
     from doomtp_bot.runtime.context import ExecContext
+    from doomtp_bot.runtime.result import Result
 
 Source = Literal["builtin", "publication", "personal"]
 
@@ -38,6 +39,9 @@ class Resolved:
     handler: Handler | None = None  # built-ins run a handler…
     custom: CustomTarget | None = None  # …custom commands run a body
     source: Source = "builtin"
+    #: Set by preflight for a command in an `ifelse` branch the invoker may not run: the refusal it
+    #: returns if that branch is chosen (spec §6.3). A branch that isn't chosen is never refused.
+    refused: Result | None = None
 
 
 class Resolver(Protocol):

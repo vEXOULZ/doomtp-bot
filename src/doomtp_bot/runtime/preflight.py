@@ -159,6 +159,7 @@ def preflight(
         receives_stdin: set[int],
         stack: tuple[str, ...],
         holder_index: int | None = None,
+        branch: bool = False,
     ) -> Preflight | None:
         nonlocal counted
         counted += 1
@@ -176,7 +177,13 @@ def preflight(
         decision = policy.check(here, spec)
         if not decision.allowed:
             message = "permission denied" if decision.code == Code.DENIED else f"unknown command: {inv.name}"
-            return fail(inv.index, inv.name, Result.failure(decision.code, message, dict(decision.info)))
+            refusal = Result.failure(decision.code, message, dict(decision.info))
+            if not branch:
+                return fail(inv.index, inv.name, refusal)
+            # Inside an `ifelse` branch the condition decides whether it runs at all, so the refusal waits
+            # for the branch to be chosen: `ifelse {$chatter.is_mod} ( shoutout … )` (spec §6.3).
+            resolved_map[inv.index] = dataclasses.replace(resolved, refused=refusal)
+            return check_exprs(inv, exprs_of(inv), inv.index if holder_index is None else holder_index, here)
         if spec.input is InputMode.NONE and inv.index in receives_stdin:
             return fail(
                 inv.index,
@@ -190,11 +197,11 @@ def preflight(
         if failure is not None:
             return failure
         for inner in substitutions(iter(exprs_of(inv))):
-            failure = check_invocation(inner, here, resolved_map, receives_stdin, stack, holder)
+            failure = check_invocation(inner, here, resolved_map, receives_stdin, stack, holder, branch)
             if failure is not None:
                 return failure
         if resolved.custom is not None:
-            return check_body(inv, resolved, here, stack)
+            return check_body(inv, resolved, here, stack, branch)
         return None
 
     def check_exprs(
@@ -226,7 +233,7 @@ def preflight(
         return None
 
     def check_body(
-        inv: Invocation, resolved: Resolved, here: ExecContext, stack: tuple[str, ...]
+        inv: Invocation, resolved: Resolved, here: ExecContext, stack: tuple[str, ...], branch: bool
     ) -> Preflight | None:
         target = resolved.custom
         assert target is not None
@@ -259,7 +266,12 @@ def preflight(
         if resolved_map:  # already expanded through another invocation of the same command
             return None
         return walk(
-            target.body, body_ctx, resolved_map, stdin_receivers(target.body), (*stack, target.command_id)
+            target.body,
+            body_ctx,
+            resolved_map,
+            stdin_receivers(target.body),
+            (*stack, target.command_id),
+            branch,
         )
 
     def check_store(store: Store, here: ExecContext) -> Preflight | None:
@@ -296,13 +308,14 @@ def preflight(
         resolved_map: dict[int, Resolved],
         receives_stdin: set[int],
         stack: tuple[str, ...],
+        branch: bool = False,
     ) -> Preflight | None:
-        def sub(x: Node) -> Preflight | None:
-            return walk(x, here, resolved_map, receives_stdin, stack)
+        def sub(x: Node, in_branch: bool = branch) -> Preflight | None:
+            return walk(x, here, resolved_map, receives_stdin, stack, in_branch)
 
         match n:
             case Invocation():
-                return check_invocation(n, here, resolved_map, receives_stdin, stack)
+                return check_invocation(n, here, resolved_map, receives_stdin, stack, branch=branch)
             case And(left, right) | Or(left, right) | Pipe(left, right):
                 return sub(left) or sub(right)
             case Group(inner):
@@ -312,8 +325,8 @@ def preflight(
             case IfElse(_, then, else_):
                 return (
                     check_cond(n, here, resolved_map, stack)
-                    or sub(then)
-                    or (sub(else_) if else_ is not None else None)
+                    or sub(then, True)
+                    or (sub(else_, True) if else_ is not None else None)
                 )
         return None
 

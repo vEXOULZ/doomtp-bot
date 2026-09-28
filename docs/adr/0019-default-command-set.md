@@ -50,9 +50,10 @@ These stay as they are, plus:
 ### Derived commands
 
 - **`ping`** moves out of Python into the `starter` pack.
-- **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to call `shoutout` and then
-  echo a line, and adds the readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and
-  `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
+- **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to echo a line, calling
+  `shoutout` first when a moderator runs it (`ifelse {$chatter.is_mod} ( shoutout … || true ) && echo …`;
+  a command in an `ifelse` branch is refused only if its branch is chosen, spec §6.3). It adds the
+  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
 - **Quotes** become a derived pack. `quote` dispatches with `ifelse` to the internal members
   `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `channel.quotes` and
   `channel.quote_next`. `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the

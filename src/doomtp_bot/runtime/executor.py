@@ -223,6 +223,9 @@ class Executor:
         ctx.ensure_not_cancelled()
         resolved = scope.resolved[inv.index]
         spec = resolved.spec
+        if resolved.refused is not None:  # an `ifelse` branch the invoker may not run was chosen
+            scope.results[inv.index] = resolved.refused
+            return resolved.refused
         try:
             # Cooldowns are this invocation's own failure, not the line's (spec §6.3, 1.1), so `||` can
             # route around one and a branch that never runs never trips one. Looked at before the
