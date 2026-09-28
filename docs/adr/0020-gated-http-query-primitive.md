@@ -153,4 +153,7 @@ to reach that endpoint.
    `/api/v1/http-hosts` and `/api/v1/http-limits`, `tests/test_http_hosts.py`; secrets are set through
    the API only, see the amendment. The doomtp-web admin page is still to do.)*
 4. [x] Rate limits, the 60 s cache and the `E_HTTP_*` codes in `runtime/result.py` and spec §6.2. *(2026-09-28)*
-5. [ ] A `weather` derived command in the starter pack, off until a channel allows its host.
+5. [x] A `weather` derived command in the starter pack, off until a channel allows its host. *(2026-09-28:
+   `scripts/starter_pack.py`, reading wttr.in, which needs no key. With one global allow-list it is off
+   until a bot admin allows `wttr.in` and while the bot account isn't a bot admin; until then it fails
+   with `E_HTTP_NOT_ALLOWED` and fetches nothing.)*
