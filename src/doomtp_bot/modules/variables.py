@@ -19,7 +19,7 @@ from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
 from doomtp_bot.runtime.values import MISSING, descend, render
-from doomtp_bot.runtime.variables import ANY, Space, VarKey, WriteOp, key_for
+from doomtp_bot.runtime.variables import ANY, Space, VarKey, WriteOp, format_size, key_for, owner_of
 
 if TYPE_CHECKING:
     from doomtp_bot.variables.store import PostgresVariableStore
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 MODULE = "variables"
 USAGE = (
     "var get <ns.name> [user] | set <ns.name> <value> | incr <ns.name> [amount] | del <ns.name> [user]"
-    " | list <ns> [user] | top <ns.name> [count]"
+    " | list <ns> [user] | top <ns.name> [count] | usage [ns]"
 )
 _NS_LONGEST_FIRST = sorted(VAR_NAMESPACES, key=len, reverse=True)
 
@@ -117,6 +117,9 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
             {e.key.name: e.value for e in entries},
         )
 
+    if action == "usage":
+        return await _usage(ctx, v[1] if len(v) > 1 else "chatter")
+
     if len(v) < 2:
         raise CommandError(f"usage: {USAGE}")
 
@@ -202,6 +205,25 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         return Result.success(f"deleted {label}")
 
     raise CommandError(f"usage: {USAGE}")
+
+
+async def _usage(ctx: CommandContext, ns: str) -> Result:
+    """How much of its owner's quota a namespace's owner uses: `channel` and `channel.chatter` both count
+    against the channel (ADR-0019)."""
+    if ns not in VAR_NAMESPACES:
+        raise CommandError("usage: var usage [" + "|".join(VAR_NAMESPACES) + "]")
+    kind, owner_id = owner_of(key_for(ctx.exec, ns, "probe"))
+    store = _store(ctx)
+    used = await store.usage(kind, owner_id)
+    quota = (await store.limits_for(kind, owner_id)).quota_bytes
+    total = sum(used.values())
+    percent = f" ({total * 100 // quota}%)" if quota else ""
+    detail = ", ".join(f"{name} {format_size(size)}" for name, size in sorted(used.items()))
+    return Result.success(
+        f"{kind} storage: {format_size(total)} of {format_size(quota)}{percent}"
+        + (f" — {detail}" if len(used) > 1 else ""),
+        {"owner": kind, "used": total, "quota": quota, "namespaces": used},
+    )
 
 
 COMMANDS: tuple[Command, ...] = (var_cmd,)
