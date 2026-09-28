@@ -15,7 +15,7 @@ from doomtp_bot.core.capabilities import MODERATE
 from doomtp_bot.modules._common import policy_of, rank
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
-from doomtp_bot.runtime.result import CommandError, Result
+from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
 
 MODULE = "moderation"
@@ -90,11 +90,12 @@ async def timeout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
     CommandSpec(
         name="shoutout",
         module=MODULE,
-        summary="Point chat at another streamer",
+        summary="Send Twitch's shoutout card for another streamer",
         description=(
-            "shoutout <user> — says where to find them and what they last streamed, and, while this"
-            " channel is live, sends Twitch's own shoutout card too. Twitch allows that card once every"
-            " 2 minutes, and to the same streamer once an hour; the chat line goes out either way."
+            "shoutout <user> — sends Twitch's own shoutout card, and says nothing in chat when it works."
+            " It fails with Twitch's reason when the channel is offline or Twitch refuses: Twitch allows"
+            " one card every 2 minutes, and to the same streamer once an hour. For a chat line as well,"
+            " use the starter pack's `so` (ADR-0019)."
         ),
         params=(Param("1", "user", type="user", required=True, description="Who to shout out"),),
         required_role="moderator",
@@ -102,26 +103,22 @@ async def timeout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         side_effects=True,
         default_cooldowns={"everyone": Cooldown(tier_s=10, user_s=30)},
         log_level=LogLevel.INVOCATIONS,
-        examples=(Example("{sign}shoutout @friend", "Go check out Friend at twitch.tv/friend — last seen…"),),
+        examples=(Example("{sign}shoutout @friend", "(the shoutout card, no chat line)"),),
     )
 )
 async def shoutout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     user: dict[str, str] = args["user"]
     if user["id"] == ctx.channel.id:
         raise CommandError("that's this channel")
-    twitch = _twitch(ctx)
-    game = await twitch.last_game(user["id"])
-    name = user["display"] or user["name"]
-    text = f"Go check out {name} at twitch.tv/{user['name']}" + (
-        f" — last seen playing {game}" if game else ""
-    )
-
-    card, why_not = False, "the channel isn't live"
-    if ctx.channel.live:
-        ctx.ensure_not_cancelled()  # the last look before Twitch acts (architecture §4.3)
-        refused = await twitch.shoutout(ctx.channel.id, user["id"])
-        card, why_not = refused is None, refused or ""
-    return Result.success(text, {"user": user["name"], "game": game, "card": card, "card_skipped": why_not})
+    if not ctx.channel.live:
+        raise CommandError(
+            "the channel isn't live, and Twitch only sends shoutouts during a stream", Code.FAIL
+        )
+    ctx.ensure_not_cancelled()  # the last look before Twitch acts (architecture §4.3)
+    refused = await _twitch(ctx).shoutout(ctx.channel.id, user["id"])
+    if refused is not None:
+        raise CommandError(refused, Code.FAIL)
+    return Result.success(None, {"user": user["name"]})
 
 
 def _span(seconds: int) -> str:

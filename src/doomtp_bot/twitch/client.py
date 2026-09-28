@@ -373,17 +373,6 @@ class TwitchService:
             return SHOUTOUT_REFUSALS.get(exc.status, f"Twitch answered {exc.status}")
         return None
 
-    async def last_game(self, user_id: str) -> str | None:
-        """What a channel last streamed (Helix Get Channel Information), or None if unknown."""
-        if self.client is None:
-            return None
-        try:
-            found = await self.client.fetch_channels([user_id], token_for=self.bot_id)
-        except Exception as exc:
-            log.warning("twitch.channel_info_failed", user=user_id, error=repr(exc))
-            return None
-        return (found[0].game_name or None) if found else None
-
     async def fetch_live(self, channel_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
         """Helix `Get Streams` for up to 100 channels (ADR-0007). Raises if the request fails."""
         if self.client is None:

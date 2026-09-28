@@ -56,11 +56,6 @@ class FakeTwitch:
         self.timeouts.append((channel_id, user_id, seconds, reason))
         return True
 
-    async def last_game(self, user_id: str) -> str | None:
-        if self.during_lookup is not None:
-            self.during_lookup()
-        return "Doom" if user_id == "600" else None
-
     async def shoutout(self, channel_id: str, to_user_id: str) -> str | None:
         if self.refuse_shoutout is None:
             self.shoutouts.append((channel_id, to_user_id))
@@ -161,38 +156,30 @@ async def test_explain_run_never_acts_on_twitch(h: Harness) -> None:
 
 
 # ── shoutout ───────────────────────────────────────────────────────────────
-async def test_a_shoutout_says_where_to_look_and_sends_the_card_only_when_live(h: Harness) -> None:
+async def test_a_shoutout_is_the_card_alone_and_fails_while_offline(h: Harness) -> None:
     offline = await h.run("mod", "!shoutout @friend")
-    assert offline.send == "Go check out Friend at twitch.tv/friend — last seen playing Doom"
-    assert offline.result.data["card"] is False and h.twitch.shoutouts == []
+    assert offline.result.code == Code.FAIL and "isn't live" in (offline.result.message or "")
+    assert h.twitch.shoutouts == []
 
     h.live = True
     live = await h.run("mod", "!shoutout alice")
-    assert live.send == "Go check out Alice at twitch.tv/alice"
-    assert live.result.data["card"] is True and h.twitch.shoutouts == [(CHANNEL_ID, "400")]
+    assert (live.result.code, live.send, live.result.data) == (0, None, {"user": "alice"})
+    assert h.twitch.shoutouts == [(CHANNEL_ID, "400")]
 
 
-async def test_a_refused_card_still_says_the_line_and_why(h: Harness) -> None:
+async def test_a_refused_card_fails_with_twitchs_reason(h: Harness) -> None:
     h.live = True
     h.twitch.refuse_shoutout = (
         "Twitch allows one shoutout every 2 minutes, and the same streamer once an hour"
     )
     report = await h.run("mod", "!shoutout @friend")
-    assert report.send is not None and report.send.startswith("Go check out Friend")
-    assert report.result.data["card"] is False and "2 minutes" in report.result.data["card_skipped"]
+    assert report.result.code == Code.FAIL and "2 minutes" in (report.result.message or "")
     assert (await h.run("mod", "!shoutout @doomtp")).result.message == "that's this channel"
 
 
 async def test_the_card_waits_on_the_moderation_index_too(h: Harness) -> None:
     h.live = True
-    looked_up = {"n": 0}
-
-    def removed_during_game_lookup() -> None:
-        looked_up["n"] += 1
-        if looked_up["n"] > 1:  # the first call is the argument's user lookup, the second the game
-            h.removed = True
-
-    h.twitch.during_lookup = removed_during_game_lookup
+    h.twitch.during_lookup = lambda: setattr(h, "removed", True)  # removed while @friend is looked up
     report = await h.run("mod", "!shoutout @friend")
     assert report.result.code == Code.CANCELLED and h.twitch.shoutouts == []
 
