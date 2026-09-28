@@ -69,6 +69,7 @@ class ErrorCode(enum.IntEnum):
     E_NOT_A_NUMBER = 255
     # 300–399: storage
     E_LIST_FULL = 300
+    E_QUOTA = 301
     E_VALUE_TOO_BIG = 302
     E_BAD_NAMESPACE = 303
     E_BAD_VAR_NAME = 304

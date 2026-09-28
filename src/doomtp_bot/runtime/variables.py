@@ -19,7 +19,14 @@ from doomtp_bot.runtime.values import MISSING
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
 
-MAX_VALUE_BYTES = 2048
+# Storage limits (ADR-0019). The quota and the per-value cap are per owner and live in `variable_limits`;
+# these are the defaults, and MAX_VALUE_BYTES is the ceiling no cap may exceed, checked when a write is
+# buffered so no run builds a value bigger than any store would take.
+DEFAULT_QUOTA_BYTES = 1024 * 1024
+DEFAULT_VALUE_CAP_BYTES = 256 * 1024
+MAX_VALUE_BYTES = 1024 * 1024
+MAX_QUOTA_BYTES = 1024 * 1024 * 1024
+OWNER_KINDS = ("channel", "publisher", "chatter")
 MAX_LIST_ITEMS = 100
 MAX_NAMES_PER_SPACE = 200
 VAR_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -44,6 +51,53 @@ class VarKey:
 
     def label(self) -> str:
         return f"{self.ns}.{self.name}"
+
+
+_SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(b|k|kb|m|mb|g|gb)?$", re.IGNORECASE)
+_SIZE_UNITS = {"b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
+
+
+def parse_size(text: str) -> int | None:
+    """`4096`, `256KB`, `1.5mb` → bytes, counting in 1024s. None if it isn't a size."""
+    match = _SIZE_RE.match(text.strip())
+    if match is None:
+        return None
+    unit = (match.group(2) or "b")[0].lower()
+    return int(float(match.group(1)) * _SIZE_UNITS[unit])
+
+
+def format_size(size: int) -> str:
+    for unit, factor in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if size >= factor:
+            return f"{size / factor:.1f}".removesuffix(".0") + " " + unit
+    return f"{size} B"
+
+
+def owner_of(key: VarKey | Space) -> tuple[str, str]:
+    """The quota owner of a key: its namespace's first segment and key1 (`channel.chatter` → the channel)."""
+    return key.ns.split(".", 1)[0], key.key1
+
+
+@dataclass(frozen=True, slots=True)
+class Limits:
+    quota_bytes: int = DEFAULT_QUOTA_BYTES
+    value_cap_bytes: int = DEFAULT_VALUE_CAP_BYTES
+
+
+def check_value_cap(key: VarKey, size: int, limits: Limits) -> None:
+    if size > limits.value_cap_bytes:
+        raise VariableError(
+            f"{key.label()} is too large ({size} bytes, max {limits.value_cap_bytes})",
+            ErrorCode.E_VALUE_TOO_BIG,
+        )
+
+
+def check_quota(owner: tuple[str, str], used: int, grew: bool, limits: Limits) -> None:
+    """A commit that leaves its owner over quota fails, unless it only shrank what was stored."""
+    if grew and used > limits.quota_bytes:
+        raise VariableError(
+            f"{owner[0]} storage is full ({used} of {limits.quota_bytes} bytes)", ErrorCode.E_QUOTA
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,10 +291,11 @@ class DeclaredVariables:
 
 
 class InMemoryVariableStore:
-    """Process-local store for tests and for running without a database."""
+    """Process-local store for tests and for running without a database. Every owner gets `limits`."""
 
-    def __init__(self) -> None:
+    def __init__(self, limits: Limits | None = None) -> None:
         self.data: dict[VarKey, Any] = {}
+        self.limits = limits or Limits()
 
     async def get(self, key: VarKey) -> Any:
         return self.data.get(key, MISSING)
@@ -250,10 +305,20 @@ class InMemoryVariableStore:
 
     async def commit(self, ops: Iterable[WriteOp], ctx: ExecContext) -> None:
         staged = dict(self.data)
+        grown: dict[tuple[str, str], int] = {}
         for op in ops:
-            value = apply_op(staged.get(op.key, MISSING), op)
+            current = staged.get(op.key, MISSING)
+            value = apply_op(current, op)
+            before = 0 if current is MISSING else json_size(current)
+            after = 0 if value is MISSING else json_size(value)
             if value is MISSING:
                 staged.pop(op.key, None)
             else:
+                check_value_cap(op.key, after, self.limits)
                 staged[op.key] = value
+            owner = owner_of(op.key)
+            grown[owner] = grown.get(owner, 0) + after - before
+        for owner, delta in grown.items():
+            used = sum(json_size(v) for k, v in staged.items() if owner_of(k) == owner)
+            check_quota(owner, used, delta > 0, self.limits)
         self.data = staged

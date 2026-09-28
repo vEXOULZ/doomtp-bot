@@ -475,6 +475,43 @@ async def test_channel_variables_are_readable(
     ]
 
 
+async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient, write_key: str) -> None:
+    headers = auth(write_key)
+    body = (await client.get("/api/v1/variable-limits", headers=headers)).json()
+    assert body == {"defaults": {"quota_bytes": 1048576, "value_cap_bytes": 262144}, "overrides": []}
+
+    changed = await client.patch(
+        "/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 4096}
+    )
+    assert changed.json() == {"quota_bytes": 1048576, "value_cap_bytes": 4096}
+    null = await client.patch("/api/v1/variable-limits/default", headers=headers, json={"quota_bytes": None})
+    assert null.status_code == 422
+
+    owner = await client.patch(
+        f"/api/v1/variable-limits/channel/{CHANNEL_LOGIN}", headers=headers, json={"quota_bytes": 2048}
+    )
+    assert owner.json() == {
+        "owner_kind": "channel",
+        "owner_id": CHANNEL_ID,
+        "override": {"quota_bytes": 2048, "value_cap_bytes": None},
+        "effective": {"quota_bytes": 2048, "value_cap_bytes": 4096},
+    }
+    usage = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/storage", headers=headers)).json()
+    assert usage == {"used_bytes": 0, "namespaces": {}, "quota_bytes": 2048, "value_cap_bytes": 4096}
+
+    reset = await client.patch(
+        f"/api/v1/variable-limits/channel/{CHANNEL_LOGIN}", headers=headers, json={"quota_bytes": None}
+    )
+    assert reset.json()["override"] is None
+    assert (await client.get("/api/v1/variable-limits", headers=headers)).json()["overrides"] == []
+    too_big = await client.patch(
+        "/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 2**21}
+    )
+    assert too_big.status_code == 422
+    unknown = await client.patch("/api/v1/variable-limits/viewer/alice", headers=headers, json={})
+    assert unknown.status_code == 404
+
+
 # ── packs as modules, explain, and the ignore list ─────────────────────────
 async def _publish_pack_and_command(app: Any) -> None:
     """A global `games` pack holding `coin`, and `hype` published here on its own (under `custom`)."""
