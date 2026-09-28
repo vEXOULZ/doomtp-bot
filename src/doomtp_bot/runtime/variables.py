@@ -19,16 +19,18 @@ from doomtp_bot.runtime.values import MISSING
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
 
-# Storage limits (ADR-0019). The quota and the per-value cap are per owner and live in `variable_limits`;
-# these are the defaults, and MAX_VALUE_BYTES is the ceiling no cap may exceed, checked when a write is
-# buffered so no run builds a value bigger than any store would take.
+# Storage limits (ADR-0019). Every limit is per owner and lives in `variable_limits`: a global default, and
+# an override for one owner where an admin set one. These are the defaults the migration seeds, and the
+# MAX_* ceilings are what no setting may exceed.
 DEFAULT_QUOTA_BYTES = 1024 * 1024
 DEFAULT_VALUE_CAP_BYTES = 256 * 1024
+DEFAULT_LIST_ITEMS = 100
+DEFAULT_NAMES_PER_SPACE = 200
 MAX_VALUE_BYTES = 1024 * 1024
 MAX_QUOTA_BYTES = 1024 * 1024 * 1024
+MAX_LIST_ITEMS = 10_000
+MAX_NAMES_PER_SPACE = 10_000
 OWNER_KINDS = ("channel", "publisher", "chatter")
-MAX_LIST_ITEMS = 100
-MAX_NAMES_PER_SPACE = 200
 VAR_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
@@ -82,6 +84,28 @@ def owner_of(key: VarKey | Space) -> tuple[str, str]:
 class Limits:
     quota_bytes: int = DEFAULT_QUOTA_BYTES
     value_cap_bytes: int = DEFAULT_VALUE_CAP_BYTES
+    list_items: int = DEFAULT_LIST_ITEMS
+    names_per_space: int = DEFAULT_NAMES_PER_SPACE
+
+
+@dataclass(frozen=True, slots=True)
+class LimitField:
+    """One setting in `variable_limits`: its column, its `!admin` word, and what it counts."""
+
+    column: str
+    command: str
+    label: str
+    ceiling: int
+    bytes: bool  # a size (512KB, 1MB) rather than a count
+
+
+LIMIT_FIELDS = (
+    LimitField("quota_bytes", "quota", "quota", MAX_QUOTA_BYTES, bytes=True),
+    LimitField("value_cap_bytes", "valuecap", "value cap", MAX_VALUE_BYTES, bytes=True),
+    LimitField("list_items", "listitems", "list limit", MAX_LIST_ITEMS, bytes=False),
+    LimitField("names_per_space", "names", "variable limit", MAX_NAMES_PER_SPACE, bytes=False),
+)
+LIMIT_COLUMNS = tuple(f.column for f in LIMIT_FIELDS)
 
 
 def check_value_cap(key: VarKey, size: int, limits: Limits) -> None:
@@ -142,14 +166,6 @@ def key_for(ctx: ExecContext, namespace: str, name: str) -> VarKey:
             return VarKey(namespace, owner or "", channel, chatter or "", name=name)
 
 
-def check_value_size(value: Any) -> None:
-    size = json_size(value)
-    if size > MAX_VALUE_BYTES:
-        raise VariableError(
-            f"value too large ({size} bytes, max {MAX_VALUE_BYTES})", ErrorCode.E_VALUE_TOO_BIG
-        )
-
-
 # ── operations and buffer ───────────────────────────────────────────────────
 OpKind = Literal["set", "append", "incr", "delete"]
 
@@ -161,7 +177,7 @@ class WriteOp:
     value: Any = None  # set: value; append: item; incr: number
 
 
-def apply_op(current: Any, op: WriteOp) -> Any:
+def apply_op(current: Any, op: WriteOp, limits: Limits) -> Any:
     """Pure application of one op to a current value (MISSING if absent). Raises VariableError."""
     if op.kind == "set":
         return op.value
@@ -172,9 +188,9 @@ def apply_op(current: Any, op: WriteOp) -> Any:
             return [op.value]
         if not isinstance(current, list):
             raise VariableError(f"{op.key.label()} is not a list", ErrorCode.E_NOT_A_LIST)
-        if len(current) >= MAX_LIST_ITEMS:
+        if len(current) >= limits.list_items:
             raise VariableError(
-                f"{op.key.label()} is full (max {MAX_LIST_ITEMS} items)", ErrorCode.E_LIST_FULL
+                f"{op.key.label()} is full (max {limits.list_items} items)", ErrorCode.E_LIST_FULL
             )
         return [*current, op.value]
     # incr
@@ -190,6 +206,9 @@ class VariableStore(Protocol):
 
     async def names_in(self, space: Space) -> set[str]:
         """Names currently stored in a space (for the per-space limit)."""
+
+    async def limits_for(self, kind: str, owner_id: str) -> Limits:
+        """The owner's limits: its override where one is set, the default otherwise."""
 
     async def commit(self, ops: Iterable[WriteOp], ctx: ExecContext) -> None:
         """Apply ops atomically, in order."""
@@ -212,6 +231,13 @@ class VariableSession:
     access: VariableAccess = field(default_factory=AllowAllAccess)
     ops: list[WriteOp] = field(default_factory=list)
     _overlay: dict[VarKey, Any] = field(default_factory=dict)
+    _limits: dict[tuple[str, str], Limits] = field(default_factory=dict)
+
+    async def limits(self, key: VarKey) -> Limits:
+        owner = owner_of(key)
+        if owner not in self._limits:
+            self._limits[owner] = await self.store.limits_for(*owner)
+        return self._limits[owner]
 
     async def get(self, key: VarKey) -> Any:
         if key in self._overlay:
@@ -220,9 +246,11 @@ class VariableSession:
 
     async def buffer(self, op: WriteOp) -> Any:
         current = await self.get(op.key)
-        new_value = apply_op(current, op)
+        limits = await self.limits(op.key)
+        new_value = apply_op(current, op, limits)
         if new_value is not MISSING:
-            check_value_size(new_value)
+            # The store checks the cap again at commit; checking here fails the run at the write.
+            check_value_cap(op.key, json_size(new_value), limits)
             if current is MISSING:
                 space = Space(op.key.ns, op.key.key1, op.key.key2, op.key.key3)
                 names = await self.store.names_in(space) | {
@@ -230,9 +258,9 @@ class VariableSession:
                     for k, v in self._overlay.items()
                     if v is not MISSING and Space(k.ns, k.key1, k.key2, k.key3) == space
                 }
-                if op.key.name not in names and len(names) >= MAX_NAMES_PER_SPACE:
+                if op.key.name not in names and len(names) >= limits.names_per_space:
                     raise VariableError(
-                        f"too many variables in {op.key.ns} (max {MAX_NAMES_PER_SPACE})",
+                        f"too many variables in {op.key.ns} (max {limits.names_per_space})",
                         ErrorCode.E_TOO_MANY_NAMES,
                     )
         self._overlay[op.key] = new_value
@@ -303,12 +331,15 @@ class InMemoryVariableStore:
     async def names_in(self, space: Space) -> set[str]:
         return {k.name for k in self.data if Space(k.ns, k.key1, k.key2, k.key3) == space}
 
+    async def limits_for(self, kind: str, owner_id: str) -> Limits:
+        return self.limits
+
     async def commit(self, ops: Iterable[WriteOp], ctx: ExecContext) -> None:
         staged = dict(self.data)
         grown: dict[tuple[str, str], int] = {}
         for op in ops:
             current = staged.get(op.key, MISSING)
-            value = apply_op(current, op)
+            value = apply_op(current, op, self.limits)
             before = 0 if current is MISSING else json_size(current)
             after = 0 if value is MISSING else json_size(value)
             if value is MISSING:

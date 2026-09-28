@@ -14,6 +14,7 @@ from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
+from doomtp_bot.core.links import BotBadges
 from doomtp_bot.core.outbox import BANNED, Outbox, SendResult
 from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
@@ -142,7 +143,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     streams = StreamStatus()
     dispatcher = Dispatcher(
         runtime=runtime, policy=policy, writer=writer, outbox=outbox, moderation=moderation,
-        channels=channels, streams=streams, customcmds=commands,
+        channels=channels, streams=streams, customcmds=commands, bot_badges=BotBadges(),
     )  # fmt: skip
     await channels.ensure_home(BOT_ID, BOT_LOGIN)
     await channels.subscribe_all()
@@ -172,9 +173,10 @@ async def test_ignored_users_bots_and_self_are_logged_but_never_run(h: Harness) 
     await h.policy.mutate(lambda r: r.set_ignored(CHANNEL_ID, "401", "bob", True, Actor("1")))
     await h.say("bob", "!ping")
     await h.say("other", "!ping", badges=("bot-badge",))
-    await h.say(BOT_LOGIN, "!ping", is_self=True)
+    await h.say(BOT_LOGIN, "!ping", is_self=True, badges=("vip",))
     await h.settle()
     assert h.twitch.sent == []
+    assert h.dispatcher.bot_badges is not None and h.dispatcher.bot_badges.may_link(CHANNEL_ID)
     assert len(await h.rows("SELECT 1 FROM messages")) == 3
 
 

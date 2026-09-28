@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.channels import ChannelManager
+    from doomtp_bot.core.links import BotBadges
     from doomtp_bot.core.outbox import Outbox
     from doomtp_bot.core.streams import StreamStatus
     from doomtp_bot.customcmds.service import CustomCommandService
@@ -94,6 +95,7 @@ class Dispatcher:
         streams: StreamStatus | None = None,
         automod: AutoMod | None = None,
         customcmds: CustomCommandService | None = None,
+        bot_badges: BotBadges | None = None,
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -108,6 +110,7 @@ class Dispatcher:
         self.streams = streams
         self.automod = automod
         self.customcmds = customcmds
+        self.bot_badges = bot_badges
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -140,6 +143,8 @@ class Dispatcher:
         if self.activity is not None and not msg.is_self:
             self.activity.saw_message(msg.channel_id)
         if msg.is_self:
+            if self.bot_badges is not None:  # whether the bot may post links here (ADR-0019)
+                self.bot_badges.saw(msg.channel_id, msg.badges)
             return
         if BOT_BADGE_SET_IDS & {b.set_id for b in msg.badges}:
             return

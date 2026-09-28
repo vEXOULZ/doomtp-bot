@@ -1,4 +1,5 @@
-"""`help` module: lists only the commands the caller can run here (architecture §8, F9).
+"""`help` module: lists only the commands the caller can run here (architecture §8, F9), and links the
+channel's command page on the web site when WEB_SITE_URL is set.
 
 Custom commands appear alongside built-ins: what this channel publishes, plus the caller's own
 aliases (ADR-0009). Each is checked against the same policy gate as a built-in.
@@ -23,6 +24,12 @@ if TYPE_CHECKING:
 
 MODULE = "help"
 HIDDEN_MODULES = frozenset({"core"})
+
+
+def site_link(ctx: CommandContext) -> str | None:
+    """The channel's page on the web site, which lists every command with its usage."""
+    site: str | None = ctx.exec.services.get("site_url")
+    return f"{site.rstrip('/')}/channels/{ctx.channel.login}" if site else None
 
 
 def _custom(ctx: CommandContext) -> CustomCommandService | None:
@@ -96,7 +103,10 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     text = "commands: " + ", ".join(builtins)
     if custom:
         text += " — custom: " + ", ".join(custom)
-    return Result.success(text, {"builtin": builtins, "custom": custom})
+    link = site_link(ctx)
+    if link:
+        text += f" — more at {link}"
+    return Result.success(text, {"builtin": builtins, "custom": custom, "link": link})
 
 
 COMMANDS: tuple[Command, ...] = (help_cmd,)

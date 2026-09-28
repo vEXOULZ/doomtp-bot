@@ -478,29 +478,44 @@ async def test_channel_variables_are_readable(
 async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient, write_key: str) -> None:
     headers = auth(write_key)
     body = (await client.get("/api/v1/variable-limits", headers=headers)).json()
-    assert body == {"defaults": {"quota_bytes": 1048576, "value_cap_bytes": 262144}, "overrides": []}
+    counts = {"list_items": 100, "names_per_space": 200}
+    assert body == {
+        "defaults": {"quota_bytes": 1048576, "value_cap_bytes": 262144, **counts},
+        "overrides": [],
+    }
 
     changed = await client.patch(
         "/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 4096}
     )
-    assert changed.json() == {"quota_bytes": 1048576, "value_cap_bytes": 4096}
+    assert changed.json() == {"quota_bytes": 1048576, "value_cap_bytes": 4096, **counts}
     null = await client.patch("/api/v1/variable-limits/default", headers=headers, json={"quota_bytes": None})
     assert null.status_code == 422
 
     owner = await client.patch(
-        f"/api/v1/variable-limits/channel/{CHANNEL_LOGIN}", headers=headers, json={"quota_bytes": 2048}
+        f"/api/v1/variable-limits/channel/{CHANNEL_LOGIN}",
+        headers=headers,
+        json={"quota_bytes": 2048, "list_items": 5},
     )
     assert owner.json() == {
         "owner_kind": "channel",
         "owner_id": CHANNEL_ID,
-        "override": {"quota_bytes": 2048, "value_cap_bytes": None},
-        "effective": {"quota_bytes": 2048, "value_cap_bytes": 4096},
+        "override": {"quota_bytes": 2048, "value_cap_bytes": None, "list_items": 5, "names_per_space": None},
+        "effective": {"quota_bytes": 2048, "value_cap_bytes": 4096, "list_items": 5, "names_per_space": 200},
     }
     usage = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/storage", headers=headers)).json()
-    assert usage == {"used_bytes": 0, "namespaces": {}, "quota_bytes": 2048, "value_cap_bytes": 4096}
+    assert usage == {
+        "used_bytes": 0,
+        "namespaces": {},
+        "quota_bytes": 2048,
+        "value_cap_bytes": 4096,
+        "list_items": 5,
+        "names_per_space": 200,
+    }
 
     reset = await client.patch(
-        f"/api/v1/variable-limits/channel/{CHANNEL_LOGIN}", headers=headers, json={"quota_bytes": None}
+        f"/api/v1/variable-limits/channel/{CHANNEL_LOGIN}",
+        headers=headers,
+        json={"quota_bytes": None, "list_items": None},
     )
     assert reset.json()["override"] is None
     assert (await client.get("/api/v1/variable-limits", headers=headers)).json()["overrides"] == []
@@ -508,6 +523,10 @@ async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient
         "/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 2**21}
     )
     assert too_big.status_code == 422
+    too_many = await client.patch(
+        "/api/v1/variable-limits/default", headers=headers, json={"list_items": 10_001}
+    )
+    assert too_many.status_code == 422
     unknown = await client.patch("/api/v1/variable-limits/viewer/alice", headers=headers, json={})
     assert unknown.status_code == 404
 

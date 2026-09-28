@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.audit.log import write_audit
@@ -13,6 +13,7 @@ from doomtp_bot.runtime.namespaces import CHATTER_KEY, VAR_NAMESPACES
 from doomtp_bot.runtime.result import json_size, to_json
 from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import (
+    LIMIT_COLUMNS,
     Limits,
     Space,
     VarKey,
@@ -40,8 +41,13 @@ class Entry:
 class LimitOverride:
     """One owner's row in `variable_limits`; None means the default applies."""
 
-    quota_bytes: int | None
-    value_cap_bytes: int | None
+    quota_bytes: int | None = None
+    value_cap_bytes: int | None = None
+    list_items: int | None = None
+    names_per_space: int | None = None
+
+
+_COLUMNS = ", ".join(LIMIT_COLUMNS)
 
 
 def _namespaces_of(kind: str) -> list[str]:
@@ -110,39 +116,38 @@ class PostgresVariableStore:
 
     # ── storage limits (ADR-0019) ───────────────────────────────────────────
     async def defaults(self) -> Limits:
-        row = await fetch_one(
-            self.conn, "SELECT quota_bytes, value_cap_bytes FROM variable_limits WHERE owner_kind = '*'"
-        )
+        row = await fetch_one(self.conn, f"SELECT {_COLUMNS} FROM variable_limits WHERE owner_kind = '*'")
         if row is None:
             return Limits()
-        return Limits(row["quota_bytes"], row["value_cap_bytes"])
+        # A column the default row leaves NULL keeps the built-in default.
+        return replace(Limits(), **{c: row[c] for c in LIMIT_COLUMNS if row[c] is not None})
 
     async def override(self, kind: str, owner_id: str) -> LimitOverride | None:
         row = await fetch_one(
             self.conn,
-            "SELECT quota_bytes, value_cap_bytes FROM variable_limits WHERE owner_kind = %s AND owner_id = %s",
+            f"SELECT {_COLUMNS} FROM variable_limits WHERE owner_kind = %s AND owner_id = %s",
             (kind, owner_id),
         )
-        return None if row is None else LimitOverride(row["quota_bytes"], row["value_cap_bytes"])
+        return None if row is None else LimitOverride(**{c: row[c] for c in LIMIT_COLUMNS})
 
     async def overrides(self) -> list[tuple[str, str, LimitOverride]]:
         rows = await fetch_all(
             self.conn,
-            "SELECT owner_kind, owner_id, quota_bytes, value_cap_bytes FROM variable_limits"
+            f"SELECT owner_kind, owner_id, {_COLUMNS} FROM variable_limits"
             " WHERE owner_kind <> '*' ORDER BY owner_kind, owner_id",
         )
         return [
-            (r["owner_kind"], r["owner_id"], LimitOverride(r["quota_bytes"], r["value_cap_bytes"]))
-            for r in rows
+            (r["owner_kind"], r["owner_id"], LimitOverride(**{c: r[c] for c in LIMIT_COLUMNS})) for r in rows
         ]
 
     async def limits_for(self, kind: str, owner_id: str) -> Limits:
+        """Field by field: the owner's override where it has one, the default otherwise."""
         defaults, own = await self.defaults(), await self.override(kind, owner_id)
         if own is None:
             return defaults
-        return Limits(
-            defaults.quota_bytes if own.quota_bytes is None else own.quota_bytes,
-            defaults.value_cap_bytes if own.value_cap_bytes is None else own.value_cap_bytes,
+        return replace(
+            defaults,
+            **{f.name: getattr(own, f.name) for f in fields(own) if getattr(own, f.name) is not None},
         )
 
     async def usage(self, kind: str, owner_id: str) -> dict[str, int]:
@@ -165,9 +170,9 @@ class PostgresVariableStore:
         actor: str | None,
         via: str,
     ) -> None:
-        """Set or clear (`None`) one owner's quota or value cap; kind '*' changes the default, which
-        can't be cleared. Audited as `variable_limits.<field>`."""
-        if field not in ("quota_bytes", "value_cap_bytes"):
+        """Set or clear (`None`) one of an owner's limits; kind '*' changes the default, which can't be
+        cleared. Audited as `variable_limits.<field>`."""
+        if field not in LIMIT_COLUMNS:
             raise ValueError(field)
         if kind == "*" and value is None:
             raise ValueError("the default can't be cleared")
@@ -183,7 +188,7 @@ class PostgresVariableStore:
             # An override with nothing left in it is no override at all.
             await self.conn.execute(
                 "DELETE FROM variable_limits WHERE owner_kind <> '*' AND owner_kind = %s AND owner_id = %s"
-                " AND quota_bytes IS NULL AND value_cap_bytes IS NULL",
+                + "".join(f" AND {c} IS NULL" for c in LIMIT_COLUMNS),
                 (kind, owner_id),
             )
             await write_audit(
@@ -210,11 +215,11 @@ class PostgresVariableStore:
             for op in ops:
                 current = await self.get(op.key)
                 before = current
-                value = apply_op(current, op)
                 k = op.key
                 owner = owner_of(k)
                 if owner not in limits:
                     limits[owner] = await self.limits_for(*owner)
+                value = apply_op(current, op, limits[owner])
                 size = 0 if value is MISSING else json_size(value)
                 if value is not MISSING:
                     check_value_cap(k, size, limits[owner])
