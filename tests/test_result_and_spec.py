@@ -2,8 +2,9 @@ import re
 
 import pytest
 
+from doomtp_bot.lang.errors import ParseErrorCode
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.runtime.result import MAX_MESSAGE_CHARS, Code, Result
+from doomtp_bot.runtime.result import MAX_CODE, MAX_MESSAGE_CHARS, Code, ErrorCode, Result, error_result
 from doomtp_bot.runtime.spec import CommandSpec, Example, Param, with_sign
 
 
@@ -19,9 +20,23 @@ def test_result_truncates_long_messages() -> None:
 
 def test_result_rejects_bad_codes() -> None:
     with pytest.raises(ValueError):
-        Result(code=300)
+        Result(code=1024)
+    with pytest.raises(ValueError):
+        Result(code=-1)
+    assert Result(code=1023).code == 1023
     with pytest.raises(ValueError):
         Result.failure(Code.OK)
+
+
+def test_every_parse_error_has_an_exit_code_of_its_own() -> None:
+    assert {code.value for code in ParseErrorCode} <= set(ErrorCode.__members__)
+    assert len({int(e) for e in ErrorCode}) == len(ErrorCode)
+    assert all(100 <= e <= MAX_CODE and not 124 <= e <= 130 for e in ErrorCode)
+
+
+def test_error_result_uses_the_identifiers_code() -> None:
+    assert error_result("E_TOO_MANY", "too many").code == 220
+    assert error_result("E_TOO_MANY", "too many", Code.USAGE).code == Code.USAGE
 
 
 def test_spec_usage_text() -> None:

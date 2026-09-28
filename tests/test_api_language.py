@@ -40,6 +40,7 @@ async def test_parse_reports_the_error_with_its_column(client: httpx.AsyncClient
     body = response.json()
     assert body["ok"] is False
     assert body["error"]["code"] == "E_RESERVED_OPERATOR"
+    assert body["error"]["exit_code"] == 202
     assert body["error"]["column"] == 8 and "reserved" in body["error"]["hint"]
 
 
@@ -87,6 +88,7 @@ async def test_language_describes_the_syntax_for_the_editor(client: httpx.AsyncC
     assert "channel.chatter" in body["variable_namespaces"]
     assert body["roots_by_context"]["body"].count("arg") == 1
     assert body["error_codes"]["E_UNBALANCED_GROUP"] == "unbalanced parentheses"
+    assert body["exit_codes"]["E_UNBALANCED_GROUP"] == 205 and body["exit_codes"]["E_LIST_FULL"] == 300
     assert body["limits"]["MAX_INVOCATIONS"] == 8
     assert body["raw_tail_commands"]["explain"] == 1 and body["raw_tail_commands"]["cc add"] == 3
 

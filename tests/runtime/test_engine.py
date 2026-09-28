@@ -11,9 +11,9 @@ from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.context import Publisher
 from doomtp_bot.runtime.executor import ScopeArgs
 from doomtp_bot.runtime.policy import AllowAllPolicy, Decision
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, ErrorCode, Result
 from doomtp_bot.runtime.spec import CommandSpec
-from doomtp_bot.runtime.variables import InMemoryVariableStore, VarKey
+from doomtp_bot.runtime.variables import MAX_LIST_ITEMS, InMemoryVariableStore, VarKey
 from tests.runtime.helpers import ALICE, CHANNEL, EMOJI_SIGNS, make_runtime, run
 
 
@@ -48,7 +48,7 @@ async def test_a2_5_store_skipped_on_failure() -> None:
 
 async def test_a2_6_reference_to_skipped_command_is_missing() -> None:
     r = await run(make_runtime(), "!ping || !random 1-6 && echo {2}")
-    assert r.result.code == Code.USAGE and r.send == "missing value: {2}"
+    assert r.result.code == ErrorCode.E_MISSING_VALUE and r.send == "missing value: {2}"
 
 
 async def test_a2_7_true_makes_optional_and_sends_nothing() -> None:
@@ -184,7 +184,7 @@ async def test_a2_11_denied_store_blocks_whole_line() -> None:
 
 async def test_a2_12_forward_reference_rejected() -> None:
     r = await run(make_runtime(), "!echo {1}")
-    assert r.result.code == Code.USAGE and "runs later" in (r.send or "")
+    assert r.result.code == ErrorCode.E_BAD_REFERENCE and "runs later" in (r.send or "")
 
 
 # ── operators and stdin ────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ async def test_pipe_delivers_stdin_and_and_does_not() -> None:
 
 async def test_input_none_command_rejected_after_pipe() -> None:
     r = await run(make_runtime(), "!echo hi | weather Lisbon")
-    assert r.result.code == Code.USAGE and r.send == "weather does not accept piped input"
+    assert r.result.code == ErrorCode.E_INPUT_NOT_ACCEPTED and r.send == "weather does not accept piped input"
 
 
 async def test_pipe_into_group_reaches_first_invocation() -> None:
@@ -272,7 +272,7 @@ async def test_placeholder_expansion_is_not_re_lexed() -> None:
 
 async def test_root_not_available_in_line_context() -> None:
     r = await run(make_runtime(), "!echo {arg.1}")
-    assert r.result.code == Code.USAGE and "not available" in (r.send or "")
+    assert r.result.code == ErrorCode.E_BAD_REFERENCE and "not available" in (r.send or "")
 
 
 async def test_arg_captures_in_body_context() -> None:
@@ -315,8 +315,19 @@ async def test_append_to_non_list_fails_and_nothing_is_committed_for_that_op() -
     rt = make_runtime(store=store)
     await run(rt, "!echo x > chatter.v")
     r = await run(rt, "!echo y >> chatter.v")
-    assert r.result.code == Code.USAGE and r.send == "chatter.v is not a list"
+    assert r.result.code == ErrorCode.E_NOT_A_LIST and r.send == "chatter.v is not a list"
     assert store.data[VarKey("chatter", "u1", name="v")] == "x"
+
+
+async def test_append_to_a_full_list_fails_instead_of_dropping_the_oldest_item() -> None:
+    store = InMemoryVariableStore()
+    rt = make_runtime(store=store)
+    key = VarKey("chatter", "u1", name="log")
+    store.data[key] = [str(n) for n in range(MAX_LIST_ITEMS)]
+    r = await run(rt, "!echo new >> chatter.log")
+    assert r.result.code == ErrorCode.E_LIST_FULL
+    assert r.result.data == {"error": "E_LIST_FULL"}
+    assert store.data[key][0] == "0" and len(store.data[key]) == MAX_LIST_ITEMS
 
 
 async def test_writes_commit_even_when_final_code_fails() -> None:
@@ -328,7 +339,9 @@ async def test_writes_commit_even_when_final_code_fails() -> None:
 async def test_publisher_namespaces_only_in_custom_commands() -> None:
     rt = make_runtime()
     r = await run(rt, "!echo x > publisher.y")
-    assert r.result.code == Code.USAGE and "only available inside custom commands" in (r.send or "")
+    assert r.result.code == ErrorCode.E_BAD_REFERENCE and "only available inside custom commands" in (
+        r.send or ""
+    )
     pub = Publisher(id="p9", login="bob")
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
@@ -338,7 +351,7 @@ async def test_publisher_namespaces_only_in_custom_commands() -> None:
 
 async def test_chatter_namespace_without_invoker() -> None:
     r = await run(make_runtime(), "echo x > chatter.y", invoker=None, context=Context.TRIGGER)
-    assert r.result.code == Code.USAGE and "needs a chatter" in (r.send or "")
+    assert r.result.code == ErrorCode.E_BAD_REFERENCE and "needs a chatter" in (r.send or "")
 
 
 # ── failures, limits, cancellation ─────────────────────────────────────────
@@ -369,7 +382,7 @@ async def test_crashing_command_is_contained() -> None:
 async def test_too_many_invocations() -> None:
     expr = "!" + " | ".join(["echo x"] * 9)
     r = await run(make_runtime(), expr)
-    assert r.result.code == Code.USAGE and r.send == "too many commands (max 8)"
+    assert r.result.code == ErrorCode.E_TOO_MANY and r.send == "too many commands (max 8)"
 
 
 async def test_moderation_cancellation_discards_writes() -> None:
@@ -387,7 +400,7 @@ async def test_moderation_cancellation_discards_writes() -> None:
 async def test_failures_carry_the_specs_error_identifier() -> None:
     rt = make_runtime()
     bad_ref = await run(rt, "!echo {2}")
-    assert bad_ref.result.code == Code.USAGE
+    assert bad_ref.result.code == ErrorCode.E_BAD_REFERENCE
     assert bad_ref.result.data == {
         "error": "E_BAD_REFERENCE",
         "reference": "{2}",
