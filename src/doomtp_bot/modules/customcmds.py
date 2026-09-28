@@ -579,8 +579,9 @@ async def _run(ctx: CommandContext, v: list[str], args: Args) -> Result:
     )
     if report is None:  # Body context parses everything, or fails loudly
         raise CommandError(f"{command.id} has an empty body")
-    if report.result.code >= 100:  # timed out, denied, cancelled: the runtime owns those codes
-        raise CommandError(report.result.message or f"{command.id} didn't finish", report.result.code)
+    if report.result.code >= 100:  # timed out, denied, an E_* error: the runtime owns those codes
+        result = report.result
+        raise CommandError(result.message or f"{command.id} didn't finish", result.code, result.data)
     return report.result
 
 

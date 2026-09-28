@@ -32,6 +32,7 @@ from doomtp_bot.lang.parser import (
 from doomtp_bot.runtime.explain import explain
 from doomtp_bot.runtime.namespaces import CONTEXT_ROOTS, RESERVED_EVERYWHERE
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH, MAX_INVOCATIONS
+from doomtp_bot.runtime.result import ErrorCode
 from doomtp_bot.runtime.spec import with_sign
 
 router = APIRouter(prefix="/api/v1", tags=["language"])
@@ -77,6 +78,7 @@ def _channel(request: Request, login: str | None) -> Any:
 def _error(exc: ParseError) -> dict[str, Any]:
     return {
         "code": exc.code.value,
+        "exit_code": int(ErrorCode[exc.code.value]),
         "column": exc.column,
         "offset": exc.offset,
         "hint": exc.hint,
@@ -169,6 +171,7 @@ async def language(request: Request) -> dict[str, Any]:
         "reserved_variable_names": sorted(RESERVED_EVERYWHERE),
         "raw_tail_commands": raw_tail,
         "error_codes": {code.value: HINTS[code] for code in ParseErrorCode},
+        "exit_codes": {error.name: int(error) for error in ErrorCode},
         "limits": {
             "MAX_EXPR_CHARS": MAX_EXPR_CHARS,
             "MAX_NAME_CHARS": MAX_NAME_CHARS,

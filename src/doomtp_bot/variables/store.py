@@ -9,11 +9,20 @@ from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
-from doomtp_bot.runtime.namespaces import CHATTER_KEY
-from doomtp_bot.runtime.result import to_json
+from doomtp_bot.runtime.namespaces import CHATTER_KEY, VAR_NAMESPACES
+from doomtp_bot.runtime.result import json_size, to_json
 from doomtp_bot.runtime.values import MISSING
-from doomtp_bot.runtime.variables import Space, VarKey, WriteOp, apply_op
-from doomtp_bot.storage.db import Connection, fetch_all, transaction
+from doomtp_bot.runtime.variables import (
+    Limits,
+    Space,
+    VarKey,
+    WriteOp,
+    apply_op,
+    check_quota,
+    check_value_cap,
+    owner_of,
+)
+from doomtp_bot.storage.db import Connection, fetch_all, fetch_one, transaction
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.context import ExecContext
@@ -25,6 +34,18 @@ class Entry:
     value: Any
     updated_at: int
     updated_by: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LimitOverride:
+    """One owner's row in `variable_limits`; None means the default applies."""
+
+    quota_bytes: int | None
+    value_cap_bytes: int | None
+
+
+def _namespaces_of(kind: str) -> list[str]:
+    return [ns for ns in VAR_NAMESPACES if ns.split(".", 1)[0] == kind]
 
 
 def _chatter_of(key: VarKey) -> str | None:
@@ -87,6 +108,94 @@ class PostgresVariableStore:
         rows = await fetch_all(self.conn, sql, (*params, limit))
         return [(r["member"], json.loads(r["value"])) for r in rows]
 
+    # ── storage limits (ADR-0019) ───────────────────────────────────────────
+    async def defaults(self) -> Limits:
+        row = await fetch_one(
+            self.conn, "SELECT quota_bytes, value_cap_bytes FROM variable_limits WHERE owner_kind = '*'"
+        )
+        if row is None:
+            return Limits()
+        return Limits(row["quota_bytes"], row["value_cap_bytes"])
+
+    async def override(self, kind: str, owner_id: str) -> LimitOverride | None:
+        row = await fetch_one(
+            self.conn,
+            "SELECT quota_bytes, value_cap_bytes FROM variable_limits WHERE owner_kind = %s AND owner_id = %s",
+            (kind, owner_id),
+        )
+        return None if row is None else LimitOverride(row["quota_bytes"], row["value_cap_bytes"])
+
+    async def overrides(self) -> list[tuple[str, str, LimitOverride]]:
+        rows = await fetch_all(
+            self.conn,
+            "SELECT owner_kind, owner_id, quota_bytes, value_cap_bytes FROM variable_limits"
+            " WHERE owner_kind <> '*' ORDER BY owner_kind, owner_id",
+        )
+        return [
+            (r["owner_kind"], r["owner_id"], LimitOverride(r["quota_bytes"], r["value_cap_bytes"]))
+            for r in rows
+        ]
+
+    async def limits_for(self, kind: str, owner_id: str) -> Limits:
+        defaults, own = await self.defaults(), await self.override(kind, owner_id)
+        if own is None:
+            return defaults
+        return Limits(
+            defaults.quota_bytes if own.quota_bytes is None else own.quota_bytes,
+            defaults.value_cap_bytes if own.value_cap_bytes is None else own.value_cap_bytes,
+        )
+
+    async def usage(self, kind: str, owner_id: str) -> dict[str, int]:
+        """Bytes stored per namespace for one owner. Namespaces with nothing stored are left out."""
+        rows = await fetch_all(
+            self.conn,
+            "SELECT ns, coalesce(sum(size_bytes), 0) AS used FROM variables"
+            " WHERE ns = ANY(%s) AND key1 = %s GROUP BY ns",
+            (_namespaces_of(kind), owner_id),
+        )
+        return {r["ns"]: int(r["used"]) for r in rows}
+
+    async def set_limit(
+        self,
+        kind: str,
+        owner_id: str,
+        field: str,
+        value: int | None,
+        *,
+        actor: str | None,
+        via: str,
+    ) -> None:
+        """Set or clear (`None`) one owner's quota or value cap; kind '*' changes the default, which
+        can't be cleared. Audited as `variable_limits.<field>`."""
+        if field not in ("quota_bytes", "value_cap_bytes"):
+            raise ValueError(field)
+        if kind == "*" and value is None:
+            raise ValueError("the default can't be cleared")
+        async with transaction(self.conn):
+            before = await self.override(kind, owner_id)
+            await self.conn.execute(
+                "INSERT INTO variable_limits (owner_kind, owner_id, " + field + ", updated_at, updated_by)"
+                " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (owner_kind, owner_id) DO UPDATE SET "
+                + field + " = excluded." + field + ", updated_at = excluded.updated_at,"
+                " updated_by = excluded.updated_by",
+                (kind, owner_id, value, now_ms(), actor),
+            )  # fmt: skip
+            # An override with nothing left in it is no override at all.
+            await self.conn.execute(
+                "DELETE FROM variable_limits WHERE owner_kind <> '*' AND owner_kind = %s AND owner_id = %s"
+                " AND quota_bytes IS NULL AND value_cap_bytes IS NULL",
+                (kind, owner_id),
+            )
+            await write_audit(
+                self.conn,
+                action=f"variable_limits.{field}",
+                actor_user_id=actor,
+                via=via,
+                target=f"{kind}:{owner_id}",
+                before=None if before is None else getattr(before, field),
+                after=value,
+            )
+
     async def commit(self, ops: Iterable[WriteOp], ctx: ExecContext) -> None:
         ops = list(ops)
         if not ops:
@@ -96,11 +205,20 @@ class PostgresVariableStore:
         # One process, one connection, and write_lock serializes us, so read-then-write is safe here.
         # When the web UI becomes a second writer (ADR-0014) this needs SELECT ... FOR UPDATE.
         async with transaction(self.conn):
+            limits: dict[tuple[str, str], Limits] = {}
+            grown: dict[tuple[str, str], int] = {}
             for op in ops:
                 current = await self.get(op.key)
                 before = current
                 value = apply_op(current, op)
                 k = op.key
+                owner = owner_of(k)
+                if owner not in limits:
+                    limits[owner] = await self.limits_for(*owner)
+                size = 0 if value is MISSING else json_size(value)
+                if value is not MISSING:
+                    check_value_cap(k, size, limits[owner])
+                grown[owner] = grown.get(owner, 0) + size - (0 if current is MISSING else json_size(current))
                 if value is MISSING:
                     await self.conn.execute(
                         "DELETE FROM variables WHERE ns = %s AND key1 = %s AND key2 = %s AND key3 = %s AND name = %s",
@@ -116,15 +234,19 @@ class PostgresVariableStore:
                         (k.ns, k.key1, k.key2, k.key3, k.name, to_json(value),
                          now, actor, ctx.run_id),
                     )  # fmt: skip
-                owner = _chatter_of(k)
-                if k.ns == "channel" or (owner is not None and owner != actor):
+                chatter = _chatter_of(k)
+                if k.ns == "channel" or (chatter is not None and chatter != actor):
                     await write_audit(
                         self.conn,
                         action=f"variable.{op.kind}",
                         actor_user_id=actor,
                         via="chat" if ctx.trigger_type == "chat" else ctx.trigger_type,
                         channel_id=ctx.channel.id,
-                        target=f"{k.ns}.{k.name}" + (f"@{owner}" if owner else ""),
+                        target=f"{k.ns}.{k.name}" + (f"@{chatter}" if chatter else ""),
                         before=None if before is MISSING else before,
                         after=None if value is MISSING else value,
                     )
+            # Checked after the writes, inside the transaction: a failure rolls every write back.
+            for owner, delta in grown.items():
+                used = sum((await self.usage(*owner)).values())
+                check_quota(owner, used, delta > 0, limits[owner])

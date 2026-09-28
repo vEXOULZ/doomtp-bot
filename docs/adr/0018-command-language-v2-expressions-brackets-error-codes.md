@@ -61,13 +61,13 @@ version bump** with one rewrite of stored bodies, not as a series of breaking ch
 - **Comparisons** are case-sensitive. They compare numerically when both sides parse as numbers, and as
   text otherwise.
 - **Truthiness** follows Python: `false`, `0`, `0.0`, `""`, `[]` and `{}` are false. **Missing is not
-  false:** it fails with `E_MISSING`, unless `??` gives a fallback.
+  false:** it fails with `E_MISSING_VALUE`, unless `??` gives a fallback.
 - **`{!cmd args}`** runs one invocation and gives its data, or its message when the data is null. The
   `!` is fixed whatever the channel prefix is. Permissions, cooldowns and budgets apply as for a stage,
   with a depth limit of 3.
 - **`check expr`** succeeds when the value is truthy and fails with 1 when it is falsy. **`ifelse cond
   ( then ) [ ( else ) ]`** is a special form: both branches are parsed and checked up front, but only
-  the chosen one runs. A missing condition fails with `E_MISSING` and runs neither branch.
+  the chosen one runs. A missing condition fails with `E_MISSING_VALUE` and runs neither branch.
 - **Bare expression lines:** `🏜1 + 3` runs the implicit command `calc`. This applies when the first
   chunk is a number, `{`, `(` or `-` and the line has an operator. Purely numeric command names become
   illegal.
@@ -81,27 +81,31 @@ The code range widens from 0–255 to **0–1023**. Commands keep **1–99**, an
 |---|---|
 | 1–99 | commands and `fail`; 2 stays "bad arguments" for a command's own parameters |
 | 124–130 | unchanged: timeout, upstream limited, denied, unknown, cooldown, cancelled |
-| 200–299 | language errors |
+| 200–219 | parse errors |
+| 220–229 | preflight errors |
+| 230–249 | evaluation errors |
+| 250–269 | value and collection errors |
+| 299 | `E_INTERNAL`, a parser bug |
 | 300–399 | storage errors |
 | the rest of 100–1023 | free, for example 400–499 for an HTTP primitive (ADR-0019) |
 
-| Error | Code | Error | Code |
-|---|---|---|---|
-| `E_EXPR_SYNTAX` | 200 | `E_INDEX` | 220 |
-| `E_UNKNOWN_OP` | 201 | `E_KEY` | 221 |
-| `E_EXPR_TOO_LONG` | 202 | `E_NOT_A_LIST` | 222 |
-| `E_EXPR_TOO_DEEP` | 203 | `E_NOT_A_MAP` | 223 |
-| `E_EXPR_BUDGET` | 204 | `E_EMPTY` | 224 |
-| `E_SUBST_DEPTH` | 205 | `E_LIST_FULL` | 300 |
-| `E_MISSING` | 210 | `E_QUOTA` | 301 |
-| `E_TYPE` | 211 | `E_VALUE_TOO_BIG` | 302 |
-| `E_DIV_ZERO` | 212 | | |
-| `E_OVERFLOW` | 213 | | |
+Every existing `E_…` identifier was code 2 until now. They all get numbers too, under their existing
+names: `E_MISSING_VALUE` is the "missing" error, and `E_TOO_LONG` covers over-long expressions. Codes
+marked *new* arrive with the items that raise them.
+
+| Block | Errors |
+|---|---|
+| parse | 200 `E_UNTERMINATED_QUOTE`, 201 `E_BAD_PLACEHOLDER`, 202 `E_RESERVED_OPERATOR`, 203 `E_UNEXPECTED_OPERATOR`, 204 `E_MISSING_OPERAND`, 205 `E_UNBALANCED_GROUP`, 206 `E_BAD_NAME`, 207 `E_DYNAMIC_NAME`, 208 `E_DYNAMIC_VARREF`, 209 `E_BAD_VARREF`, 210 `E_RAW_TAIL_POSITION`, 211 `E_TOO_LONG`; *new:* 212 `E_EXPR_SYNTAX`, 213 `E_UNKNOWN_OP`, 214 `E_EXPR_TOO_DEEP` |
+| preflight | 220 `E_TOO_MANY`, 221 `E_INPUT_NOT_ACCEPTED`, 222 `E_BAD_REFERENCE`, 223 `E_CC_CYCLE`, 224 `E_CC_DEPTH` |
+| evaluation | 230 `E_MISSING_VALUE`, 231 `E_DATA_TOO_LARGE`; *new:* 232 `E_TYPE`, 233 `E_DIV_ZERO`, 234 `E_OVERFLOW`, 235 `E_EXPR_BUDGET`, 236 `E_SUBST_DEPTH` |
+| values | 252 `E_NOT_A_LIST`, 255 `E_NOT_A_NUMBER`; *new:* 250 `E_INDEX`, 251 `E_KEY`, 253 `E_NOT_A_MAP`, 254 `E_EMPTY` |
+| storage | 300 `E_LIST_FULL`, 302 `E_VALUE_TOO_BIG`, 303 `E_BAD_NAMESPACE`, 304 `E_BAD_VAR_NAME`, 305 `E_TOO_MANY_NAMES`; *new:* 301 `E_QUOTA` |
 
 The name appears in the message and in `explain`, so a script can branch on the number:
-`var pop channel.queue || ifelse {_.code == 224} ( echo queue is empty ) ( echo {_.message} )`. The new
+`var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty ) ( echo {_.message} )`. The new
 codes have no special behaviour: they are not silent and fire no callback. A missing placeholder becomes
-210 instead of 2, which `||` does not notice.
+230 instead of 2, which `||` does not notice. A custom command's body that ends in one of these errors
+passes its code to the caller unchanged.
 
 ### Migration
 
@@ -134,7 +138,7 @@ parser, and doomtp-web's highlighter has to follow in the same window.
 
 ## Action Items
 
-1. [ ] Codes: widen `Result` to 0–1023, add the `E_*` enum beside `Code` in `runtime/result.py`, free
+1. [x] Codes: widen `Result` to 0–1023, add the `E_*` enum beside `Code` in `runtime/result.py`, free
    code 4 in `fail`, and rewrite spec §6.2. Raise `E_LIST_FULL` where `-->` silently drops items today.
 2. [ ] `$` fields and the closed reserved list (`runtime/namespaces.py`, `docs/namespaces.md`,
    `GET /api/v1/namespaces`).

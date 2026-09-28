@@ -28,6 +28,13 @@ from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 from doomtp_bot.runtime.values import ConversionError, convert
+from doomtp_bot.runtime.variables import (
+    MAX_QUOTA_BYTES,
+    MAX_VALUE_BYTES,
+    OWNER_KINDS,
+    format_size,
+    parse_size,
+)
 
 if TYPE_CHECKING:
     pass
@@ -418,14 +425,56 @@ async def _prefix(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"prefix is now {v[0]}")
 
 
-ADMIN_USAGE = "admin add|remove <user>"
+ADMIN_USAGE = (
+    "admin add|remove <user> | quota|valuecap default [size]"
+    " | quota|valuecap <channel|publisher|chatter> <name> [size|reset]"
+)
+_LIMITS = {"quota": ("quota_bytes", MAX_QUOTA_BYTES), "valuecap": ("value_cap_bytes", MAX_VALUE_BYTES)}
+
+
+async def _admin_limit(ctx: CommandContext, v: list[str]) -> Result:
+    """`!admin quota|valuecap`: storage limits per namespace owner, or the default (ADR-0019)."""
+    field, ceiling = _LIMITS[v[0].lower()]
+    what = "quota" if field == "quota_bytes" else "value cap"
+    need(v, 2, ADMIN_USAGE)
+    store = ctx.service("variable_store")
+    target = v[1].lower()
+    if target == "default":
+        kind, owner_id, label, rest = "*", "*", "default", v[2:]
+    else:
+        if target not in OWNER_KINDS:
+            raise CommandError(f"usage: {ADMIN_USAGE}")
+        need(v, 3, ADMIN_USAGE)
+        user = await user_arg(ctx, v[2])
+        kind, owner_id, label, rest = target, user["id"], f"{target} {user['display']}", v[3:]
+    if not rest:
+        limits = await store.limits_for(kind, owner_id)
+        size = getattr(limits, field)
+        own = None if kind == "*" else await store.override(kind, owner_id)
+        source = "" if kind == "*" or (own is not None and getattr(own, field) is not None) else " (default)"
+        return Result.success(f"{label} {what}: {format_size(size)}{source}", size)
+    if rest[0].lower() == "reset":
+        if kind == "*":
+            raise CommandError("the default can't be reset, only changed")
+        size = None
+    else:
+        size = parse_size(rest[0])
+        if size is None or size > ceiling:
+            raise CommandError(f"{what} must be a size like 512KB or 1MB, at most {format_size(ceiling)}")
+    await store.set_limit(kind, owner_id, field, size, actor=actor(ctx).user_id, via="chat")
+    if size is None:
+        return Result.success(f"{label} {what} is back to the default")
+    return Result.success(f"{label} {what} is now {format_size(size)}", size)
 
 
 @_handler
 async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
-    need(v, 2, ADMIN_USAGE)
+    need(v, 1, ADMIN_USAGE)
     action = v[0].lower()
+    if action in _LIMITS:
+        return await _admin_limit(ctx, v)
+    need(v, 2, ADMIN_USAGE)
     if action not in ("add", "remove"):
         raise CommandError(f"usage: {ADMIN_USAGE}")
     user = await user_arg(ctx, v[1])
