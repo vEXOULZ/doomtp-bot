@@ -139,6 +139,12 @@ Rejected again on 2026-09-28 in favour of the startup check.
 2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
    `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
 3. [ ] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
+   `shoutout` is done, and so are the rest (2026-09-28): `ban`, `unban`/`untimeout`, `warn`,
+   `announce`, `chatmode`, `clear`, `shield`, and `delete`, `pin` and `unpin` on the replied-to message,
+   on the bot's token; `settitle`, `setgame`, `marker` and `raid` on the broadcaster's, behind the new
+   `broadcast` and `raids` capabilities (ADR-0007). `so` still only echoes: a body that calls `shoutout` fails preflight with 127
+   wherever the bot lacks `moderate`, even behind `|| true`. `so` will check first with `ifelse`
+   (ADR-0018), as reviewed on 2026-09-28.
 4. [x] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
    endpoint, and `!var usage`. *(The admin UI is a doomtp-web PR. The list and name limits
    joined as `list_items` and `names_per_space`, `!admin listitems|names`, in migration 0004.)*

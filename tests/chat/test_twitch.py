@@ -159,6 +159,64 @@ async def test_a_refused_shoutout_says_why_in_words_a_moderator_can_act_on() -> 
     assert await service.shoutout("100", "600") == "Twitch answered 418"
 
 
+async def test_a_refused_action_says_why_for_whose_token_it_went_out_on() -> None:
+    import twitchio
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+    answer: list[Exception | None] = [None]
+
+    class Channel:
+        def __getattr__(self, method: str) -> Any:
+            async def call(*args: Any, **kwargs: Any) -> None:
+                calls.append((method, kwargs))
+                if answer[0] is not None:
+                    raise answer[0]
+
+            return call
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=None)  # type: ignore[arg-type]
+    assert await service.ban_user("100", "500", "mod") == "not connected to Twitch"
+    service.bot_id = "999"
+    service.client = NS(create_partialuser=lambda channel_id: Channel())  # type: ignore[assignment]
+
+    assert await service.ban_user("100", "500", "mod: spam") is None
+    assert calls[-1] == (
+        "ban_user",
+        {"moderator": "999", "user": "500", "reason": "mod: spam", "token_for": "999"},
+    )
+    assert await service.start_raid("100", "600") is None
+    assert calls[-1] == ("start_raid", {"to_broadcaster": "600"})
+
+    answer[0] = twitchio.HTTPException("no", status=401, extra="no")
+    assert "sign the bot in again" in (await service.warn_user("100", "500", "hey") or "")
+    assert "/auth/connect" in (await service.update_channel("100", title="hi") or "")
+    answer[0] = twitchio.HTTPException("no", status=400, extra={"message": "The user is already banned"})
+    assert await service.ban_user("100", "500", "") == "Twitch said: The user is already banned"
+    answer[0] = RuntimeError("no token for 100")
+    assert "connected at /auth/connect" in (await service.stream_marker("100", None) or "")
+
+
+async def test_unpin_falls_back_to_the_last_message_the_bot_pinned() -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class Channel:
+        async def pin_message(self, **kwargs: Any) -> None:
+            calls.append(("pin", kwargs))
+
+        async def unpin_message(self, **kwargs: Any) -> None:
+            calls.append(("unpin", kwargs))
+
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=None)  # type: ignore[arg-type]
+    service.bot_id = "999"
+    service.client = NS(create_partialuser=lambda channel_id: Channel())  # type: ignore[assignment]
+    assert await service.unpin_message("100", None) == "reply to the pinned message to unpin it"
+    assert await service.pin_message("100", "m1", 60) is None
+    assert calls[-1] == ("pin", {"message_id": "m1", "moderator": "999", "duration": 60, "token_for": "999"})
+    assert await service.unpin_message("100", None) is None
+    assert calls[-1][1]["message_id"] == "m1"
+    assert await service.unpin_message("100", None) == "reply to the pinned message to unpin it"
+
+
 # ── OAuth ──────────────────────────────────────────────────────────────────
 class FakeOAuthHttp:
     def __init__(self, scopes: list[str] | None = None) -> None:
@@ -301,7 +359,7 @@ async def test_a_broadcaster_who_grants_nothing_changes_nothing(dbs: Databases) 
 
 
 def test_scopes_become_capabilities() -> None:
-    assert granted_by(BROADCASTER_SCOPES) == frozenset({"redemptions", "subs", "bits"})
+    assert granted_by(BROADCASTER_SCOPES) == frozenset({"redemptions", "subs", "bits", "broadcast", "raids"})
     assert granted_by(["bits:read"]) == frozenset({"bits"})
     assert granted_by(["channel:manage:redemptions"]) == frozenset({"redemptions"})
     assert granted_by(["channel:bot"]) == frozenset()  # the badge buys no events by itself
