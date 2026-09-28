@@ -16,7 +16,7 @@ from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Part, Pipe, Pl
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, Publisher, RunCancelled
 from doomtp_bot.runtime.namespaces import FieldPath, VarPath, classify
-from doomtp_bot.runtime.result import MAX_DATA_BYTES, Code, CommandError, Result, error_result
+from doomtp_bot.runtime.result import ERROR_CODES, MAX_DATA_BYTES, Code, CommandError, Result, error_result
 from doomtp_bot.runtime.values import (
     MISSING,
     ConversionError,
@@ -202,9 +202,11 @@ class Executor:
                             # gets a last say after the arguments were expanded (architecture §4.3).
                             ctx.ensure_not_cancelled()
                         result = await resolved.handler(cmd_ctx, args, stdin)
-                # 100–255 are runtime-reserved (spec §6.2); commands must not *return* them. A handler can
-                # still raise CommandError(code=126/128) for a denial the runtime owns.
-                if result.code >= 100:
+                # 100–1023 are runtime-reserved (spec §6.2); commands must not *return* them. A handler can
+                # still raise CommandError for a code the runtime owns: 126/128, or an E_* error. A body's
+                # E_* error came from the runtime itself, so it reaches the caller unchanged (ADR-0018).
+                from_body = resolved.custom is not None and result.code in ERROR_CODES
+                if result.code >= 100 and not from_body:
                     log.warning("command.reserved_code", command=spec.name, code=result.code)
                     result = Result(Code.FAIL, result.message, result.data)
             except CommandError as exc:

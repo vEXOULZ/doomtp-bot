@@ -45,7 +45,7 @@ from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
 from doomtp_bot.runtime.spec import CommandSpec, LogLevel
-from doomtp_bot.runtime.variables import Space
+from doomtp_bot.runtime.variables import MAX_QUOTA_BYTES, MAX_VALUE_BYTES, OWNER_KINDS, Space
 from doomtp_bot.triggers.service import TRIGGER_TYPES, TriggerError, TriggerService
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
@@ -683,6 +683,86 @@ async def channel_variables(request: Request, login: str, caller: Caller = READ)
             {"name": e.key.name, "value": e.value, "updated_at": e.updated_at, "updated_by": e.updated_by}
             for e in entries
         ]
+    }
+
+
+@router.get("/channels/{login}/storage")
+async def channel_storage(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
+    """How much of its quota the channel uses, per namespace (ADR-0019), like `!var usage channel`."""
+    settings = _channel(request, login)
+    store = _state(request, "variable_store")
+    used = await store.usage("channel", settings.channel_id)
+    limits = await store.limits_for("channel", settings.channel_id)
+    return {
+        "used_bytes": sum(used.values()),
+        "namespaces": used,
+        "quota_bytes": limits.quota_bytes,
+        "value_cap_bytes": limits.value_cap_bytes,
+    }
+
+
+# ── storage limits (ADR-0019): the same writes as `!admin quota|valuecap` ────
+class LimitsBody(BaseModel):
+    """Only the fields sent change. On an owner, `null` goes back to the default."""
+
+    quota_bytes: int | None = Field(default=None, ge=0, le=MAX_QUOTA_BYTES)
+    value_cap_bytes: int | None = Field(default=None, ge=0, le=MAX_VALUE_BYTES)
+
+
+def _limits_json(quota: int | None, cap: int | None) -> dict[str, int | None]:
+    return {"quota_bytes": quota, "value_cap_bytes": cap}
+
+
+async def _apply_limits(request: Request, kind: str, owner_id: str, body: LimitsBody, caller: Caller) -> None:
+    store = _state(request, "variable_store")
+    for field in sorted(body.model_fields_set):
+        value = getattr(body, field)
+        if kind == "*" and value is None:
+            raise HTTPException(status_code=422, detail=f"the default {field} can't be null")
+        await store.set_limit(kind, owner_id, field, value, actor=caller.actor.user_id, via=caller.actor.via)
+
+
+@router.get("/variable-limits")
+async def variable_limits(request: Request, caller: Caller = ADMIN_READ) -> dict[str, Any]:
+    store = _state(request, "variable_store")
+    defaults = await store.defaults()
+    return {
+        "defaults": _limits_json(defaults.quota_bytes, defaults.value_cap_bytes),
+        "overrides": [
+            {"owner_kind": kind, "owner_id": owner_id, **_limits_json(o.quota_bytes, o.value_cap_bytes)}
+            for kind, owner_id, o in await store.overrides()
+        ],
+    }
+
+
+@router.patch("/variable-limits/default")
+async def set_default_limits(
+    request: Request, body: LimitsBody, caller: Caller = ADMIN_WRITE
+) -> dict[str, Any]:
+    await _apply_limits(request, "*", "*", body, caller)
+    defaults = await _state(request, "variable_store").defaults()
+    return _limits_json(defaults.quota_bytes, defaults.value_cap_bytes)
+
+
+@router.patch("/variable-limits/{kind}/{user}")
+async def set_owner_limits(
+    request: Request, kind: str, user: str, body: LimitsBody, caller: Caller = ADMIN_WRITE
+) -> dict[str, Any]:
+    """One channel's, publisher's or chatter's override, by Twitch login."""
+    if kind not in OWNER_KINDS:
+        raise HTTPException(status_code=404, detail=f"owner kind must be one of {', '.join(OWNER_KINDS)}")
+    found = await _state(request, "twitch").resolve_user(user)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"no Twitch user named {user}")
+    await _apply_limits(request, kind, found["id"], body, caller)
+    store = _state(request, "variable_store")
+    own = await store.override(kind, found["id"])
+    limits = await store.limits_for(kind, found["id"])
+    return {
+        "owner_kind": kind,
+        "owner_id": found["id"],
+        "override": None if own is None else _limits_json(own.quota_bytes, own.value_cap_bytes),
+        "effective": _limits_json(limits.quota_bytes, limits.value_cap_bytes),
     }
 
 

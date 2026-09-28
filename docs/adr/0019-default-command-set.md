@@ -135,8 +135,9 @@ Rejected again on 2026-09-28 in favour of the startup check.
    rule and the cache are done (`core/links.py`); the `help` link waits for a web site URL setting.
 2. [ ] `random` with a seed, and picking from a list or map.
 3. [ ] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
-4. [ ] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
-   endpoint, and `!var usage`.
+4. [x] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
+   endpoint, and `!var usage`. *(The admin UI is a doomtp-web PR. `MAX_LIST_ITEMS` and
+   `MAX_NAMES_PER_SPACE` are still constants.)*
 5. [ ] Internal pack members and system packs, with `false` and `default` moved into `core`
    (amends ADR-0012).
 6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new

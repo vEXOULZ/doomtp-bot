@@ -42,7 +42,7 @@ Only inside **custom command bodies**, trigger expressions (where the arguments 
 
 ### Types (`:type`)
 
-A type is either **declared once** in the command's parameter definition, or given **inline** as `{arg.1:int}`. It validates the value and converts it. If validation fails, the command returns **code 2**, with a usage message generated from the parameter docs.
+A type is either **declared once** in the command's parameter definition, or given **inline** as `{arg.1:int}`. It validates the value and converts it. If a declared parameter fails validation, the command returns **code 2**, with a usage message generated from the parameter docs. A failed inline cast counts as missing: the `??` fallback is used, or the invocation fails with 230 (`E_MISSING_VALUE`).
 
 | Type | Accepts | Converted value / paths |
 |------|---------|-------------------------|

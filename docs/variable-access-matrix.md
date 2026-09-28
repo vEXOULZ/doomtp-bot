@@ -55,7 +55,7 @@ Access for a foreign custom command applies to the command owner's own `publishe
 | `publisher.channel.chatter.x` | — | R W (here, own) | — | R W (here, own) | R W (here, own) | — | — |
 
 Notes:
-- **`publisher.*` in Typed code:** there is no publisher when the invoker types an expression directly, so these namespaces are invalid there (preflight code 2).
+- **`publisher.*` in Typed code:** there is no publisher when the invoker types an expression directly, so these namespaces are invalid there (preflight code 222, `E_BAD_REFERENCE`).
 - **Foreign CC (link) and `publisher.channel.*`** *(decided)*: a personally linked command can use channel-game state **in any channel**, even where it isn't published. The data stays inside the owner's space for that channel.
 - **Trigger and `publisher.*`** *(decided)*: denied in the trigger's own expression. A trigger that calls a published custom command runs *that command* as a Foreign CC (pub), with that command's access.
 - **Trigger and `chatter.x` writes** *(decided)*: denied. A redemption can't change a viewer's global preferences. `channel.chatter.x` is the place for per-viewer state from events.
