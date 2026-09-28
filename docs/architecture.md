@@ -41,7 +41,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | F1 | **Log every chat message** into a queryable database. **Never delete log rows.** Deletions, timeouts, bans and clears are recorded as events and flagged on the affected messages. |
 | F2 | **Fill log gaps** caused by crashes, updates or disconnects from a third-party history service (recent-messages) |
 | F3 | **Command language** with pipes and chain operators (`\|`, `&&`, `\|\|`, grouping, `>`/`>>` variable writes) and sentinel commands (`true`, `false`, `default`, `fail`). A pipe stops on failure, and `\|\|` handles failures. Details are in the language proposal. |
-| F4 | **Commands return three things:** an exit code (0 = success), a formatted message (shown when it's the final result) and structured data (usable by later commands, e.g. `{1.celsius}`) |
+| F4 | **Commands return three things:** an exit code (0 = success), a formatted message (shown when it's the final result) and structured data (usable by later commands, e.g. `{_1[celsius]}`) |
 | F5 | **Permission tiers:** Twitch built-ins (broadcaster, lead mod, mod, VIP, sub), custom roles (e.g. ambassador) at any rank including above moderator, and **global bot owners and bot admins** above everything |
 | F6 | **Cooldowns:** a global cooldown per tier **and** a per-user cooldown. **Both must have expired** for the command to run. Rejections are silent, with an optional **callback** that can customize the response. |
 | F7 | **Toggles** for modules and individual commands, **globally and per channel** |
@@ -272,7 +272,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 class Result:
     code: int = 0                 # 0 ok; non-zero = error (see table)
     message: str | None = None    # human text; sent to chat only if this is the final result
-    data: JsonValue = None        # structured; addressable as {N.path} / {_.path}
+    data: JsonValue = None        # structured; addressable as {_N[key]} / {_[key]}
 ```
 
 | Code | Meaning (shell-inspired) |
@@ -309,7 +309,7 @@ it stays here as the example. Adding it means an ADR for the source first.)*
     data_schema={"celsius": float, "fahrenheit": float, "condition": str, "location": str},
     examples=[                                 # {sign} = the reader's own command sign
         Example("{sign}weather Lisbon", "Lisbon: 21°C, clear"),
-        Example('{sign}weather Lisbon | echo "it\'s {1.celsius}C now!"', "it's 21C now!"),
+        Example('{sign}weather Lisbon | echo "it\'s {_1[celsius]}C now!"', "it's 21C now!"),
     ],
     required_role="everyone",
     default_cooldowns={"everyone": Cooldown(tier_s=10, user_s=30), "moderator": Cooldown(0, 0)},

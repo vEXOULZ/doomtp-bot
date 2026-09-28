@@ -1,7 +1,7 @@
 # doomtp-bot
 
 A self-hosted, multi-channel Twitch chat bot with a composable command language
-(`!random 1-100 | echo you rolled {1}`), user-published custom commands, a complete chat log, and a JSON API
+(`!random 1-100 | echo you rolled {_1}`), user-published custom commands, a complete chat log, and a JSON API
 that its web site, [doomtp-web](https://github.com/vEXOULZ/doomtp-web), is built on.
 
 **Status:** feature-complete for v1 and not yet run in anger. The command language and its runtime,

@@ -614,7 +614,7 @@ _SUBCOMMANDS = {
         description=USAGE,
         params=(Param("1+", "arguments", description=USAGE),),
         examples=(
-            Example("{sign}cc add hype echo {chatter.display} is hyped!", "created {sign}hype (cc_7f3k2)"),
+            Example("{sign}cc add hype echo {$chatter.display} is hyped!", "created {sign}hype (cc_7f3k2)"),
             Example("{sign}cc publish hype", 'published "hype" as {sign}hype'),
             Example(
                 "{sign}cc run cc_7f3k2 world",

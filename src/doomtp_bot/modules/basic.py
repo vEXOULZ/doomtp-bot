@@ -35,7 +35,7 @@ async def ping(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
         data_schema={"value": "int"},
         examples=(
             Example("{sign}random", "42"),
-            Example("{sign}random 1-6 | echo you rolled {1}", "you rolled 4"),
+            Example("{sign}random 1-6 | echo you rolled {_1}", "you rolled 4"),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=2, user_s=5)},
     )

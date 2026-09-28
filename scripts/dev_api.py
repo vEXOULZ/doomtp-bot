@@ -111,10 +111,10 @@ async def seed(
     alice = USERS["alice"]
     made = {}
     for name, body, summary, scope in (
-        ("dice", "random 1-6 | echo {chatter.display} rolled {1}", "Roll a six-sided die", GLOBAL),
-        ("coin", "random 1-2 | echo coin says {1}", "Flip a coin", GLOBAL),
+        ("dice", "random 1-6 | echo {$chatter.display} rolled {_1}", "Roll a six-sided die", GLOBAL),
+        ("coin", "random 1-2 | echo coin says {_1}", "Flip a coin", GLOBAL),
         ("hype", "echo HYPE HYPE HYPE", "Get chat going", vex),
-        ("lurk", "echo thanks for the lurk, {chatter.display}", "Say you're lurking", vex),
+        ("lurk", "echo thanks for the lurk, {$chatter.display}", "Say you're lurking", vex),
     ):
         command = await customcmds.create(
             owner_user_id=alice, owner_login="alice", name=name, body=body, channel_id=scope, prefix="!"
@@ -135,7 +135,7 @@ async def seed(
     await packs.publish(channel_id=vex, pack=chill, published_by=vex)
 
     await svc["triggers"].add(
-        channel_id=vex, type_="listener", expr="echo hi {chatter.display}", match={"regex": "^hello"}, run_as_rank=80,
+        channel_id=vex, type_="listener", expr="echo hi {$chatter.display}", match={"regex": "^hello"}, run_as_rank=80,
         created_by=vex, prefix="!", via="chat",
     )  # fmt: skip
     await svc["filters"].add(channel_id=vex, pattern="badword", actor_user_id=vex, via="chat")

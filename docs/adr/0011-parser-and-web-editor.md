@@ -68,7 +68,7 @@ POST /api/v1/parse
 }
 ```
 
-- **Token classes:** `prefix`, `personal`, `command`, `word`, `string`, `escape`, `operator`, `store.target`, `ph.open`, `ph.close`, `ph.root`, `ph.path`, `ph.type`, `ph.fallback`, `raw`, `error`. The Lezer grammar uses the same class names.
+- **Token classes:** `prefix`, `personal`, `command`, `word`, `string`, `escape`, `operator`, `store.target`, `ph.open`, `ph.close`, `ph.root`, `ph.path`, `ph.type`, `ph.fallback`, `ph.op`, `ph.num`, `raw`, `error`. The Lezer grammar uses the same class names. (`ph.op` and `ph.num`, for operators and literals inside an expression, came with syntax 2.0, ADR-0018.)
 - **Errors:** `{code, message, hint, s, e}`, where `s`/`e` are 0-based character offsets for the editor. Chat messages show the 1-based column from the spec.
 - **Warnings** come from a light resolution pass (unknown names, context-unavailable roots) when `channel` is given. They're advisory. Full preflight is the job of `/explain`.
 - **Auth and limits:**

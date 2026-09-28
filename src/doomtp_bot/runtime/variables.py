@@ -355,7 +355,7 @@ class DeclaredVariables:
 
     Declarations are `namespace.name`, e.g. `chatter.location`. Anything else fails the command with 126,
     so what the docs and `!explain` say a command touches is all it can touch (architecture §4.2).
-    Expression stores (`> channel.x`) and placeholders are not a command's own reads and writes: the
+    Expression stores (`-> channel.x`) and placeholders are not a command's own reads and writes: the
     access policy governs those.
     """
 
