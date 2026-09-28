@@ -87,6 +87,9 @@ class ExecContext:
     trigger_type: str = "chat"
     trigger_id: str | None = None
     message_id: str | None = None
+    # The message the asking one replied to, for commands that act on it (`delete`, `pin`): its
+    # `message_id` and its sender's `id`, `name` and `display`.
+    reply_to: dict[str, str] | None = None
     publisher: Publisher | None = None
     event: dict[str, Any] = field(default_factory=dict)
     match: dict[str, Any] = field(default_factory=dict)
