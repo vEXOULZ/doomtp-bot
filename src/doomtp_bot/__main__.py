@@ -120,6 +120,7 @@ async def run(settings: Settings) -> None:
         "variable_access": access,
         "history": history,  # the backfill command names the service before anything is sent to it
         "explain_reports": explain_reports,
+        "site_url": settings.web_site_url,  # `!help` links the channel's command page there
         "quotes": QuoteService(dbs.bot),
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
     }

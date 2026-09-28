@@ -324,7 +324,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 - `reads` and `writes` are **enforced**. A handler reaches variables only through `ctx.variables`, which lets it read and write the `namespace.name` keys its spec declares (a declared write is also a read) and fails anything else with code 126. `!var` declares `*`, because the variable is its argument: it is the documented exception (variable-access-matrix.md §2), and a test fails if any other built-in declares `*` or reaches round `ctx.variables`. Expression stores (`> channel.x`) and placeholders are the expression's, not the command's, and the access policy governs those. *(Changed in revision 5: these used to be declarations only.)*
 - `side_effects=True` marks a command that acts on Twitch (§4.3). The runtime checks the moderation index once more right before running it, after its arguments were expanded, and `!explain --run` never runs it.
 - Custom commands carry the same metadata (summary, params, examples), written by their owner.
-- `!help` filters by the **effective policy** for the caller in that channel. `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
+- `!help` filters by the **effective policy** for the caller in that channel, and ends with a link to the channel's page on the web site when `WEB_SITE_URL` is set (ADR-0019). `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
 
 ### 4.3 Execution rules
 

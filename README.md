@@ -351,8 +351,12 @@ Then point the bot at the public address. In `.env`:
 ```
 PUBLIC_BASE_URL=https://bot.example.com
 PUBLIC_WEB_UI=true
+WEB_SITE_URL=https://bot.example.com
 WEB_FORWARDED_ALLOW_IPS=172.18.0.1
 ```
+
+`WEB_SITE_URL` is where the site's pages open. `!help` ends with a link to the channel's page there
+(`/channels/<login>`). It is the same address as `PUBLIC_BASE_URL` when one proxy serves both.
 
 `WEB_FORWARDED_ALLOW_IPS` is the address the bot sees the proxy connect from. The failed-login limit
 trusts `X-Forwarded-For` from that address only. A proxy on the guest reaching `127.0.0.1:8080` arrives
