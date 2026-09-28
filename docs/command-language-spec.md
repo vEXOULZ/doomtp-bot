@@ -707,7 +707,7 @@ The operator commands read each argument like a literal: a number, `true`/`false
 
 ## 9. `!explain`
 
-`explain` is a raw-tail command (§3.3). It parses its raw argument as an expression in the context being explained: the Line context by default, or Body with `--as-body`.
+`explain` is a raw-tail command (§3.3). It parses its raw argument as an expression in the context being explained: the Line context by default, or Body with `--as-body`. In the Line context the chat command adds the channel's sign when the argument doesn't start with one, so `!explain echo hi` and `!explain !echo hi` explain the same line. `POST /api/v1/explain` takes its text exactly as given.
 
 It MUST report:
 - the AST, with operator precedence made visible and invocation indexes

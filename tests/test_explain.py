@@ -180,6 +180,13 @@ def test_kept_reports_expire_and_the_oldest_go_first() -> None:
     assert ReportStore().link(third) is None
 
 
-async def test_a_line_without_the_command_sign_is_reported_as_chat(h: Harness) -> None:
-    reply = await h.say("alice", "!explain ping")
-    assert reply == "parse error: not a command: a line starts with the command sign !"
+async def test_the_chat_command_adds_a_missing_command_sign(h: Harness) -> None:
+    signed = await h.say("alice", "!explain !random 1-6 | echo {_1}")
+    assert await h.say("alice", "!explain random 1-6 | echo {_1}") == signed
+    ran = await h.say("alice", "!explain --run ping")
+    assert ran is not None and "would send: pong" in ran
+
+
+async def test_the_explainer_itself_still_reports_a_line_without_the_sign_as_chat(h: Harness) -> None:
+    report = await h.explain("alice", "ping")
+    assert report.parse_error == "not a command: a line starts with the command sign !"
