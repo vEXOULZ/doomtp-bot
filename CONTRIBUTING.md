@@ -11,11 +11,18 @@ branch rules below are only enforced in CI, which is a slower way to hear about 
 
 ## Branches
 
-**`main` is merge-only.** The `pre-commit` hook refuses a commit made on `main`, `master` or `develop`.
-Work on a branch and merge it:
+Two long-lived branches, both merge-only (ADR-0021):
+
+- **`dev`** is where work integrates, and the default branch. Every feature, bugfix and chore pull
+  request goes here.
+- **`main`** is what production runs. It takes pull requests only from `dev` (a release), `release/*` or
+  `hotfix/*`.
+
+The `pre-commit` hook refuses a commit made on `main`, `dev`, `master` or `develop`. Work on a branch
+cut from `dev` and merge it:
 
 ```bash
-git switch -c feature/what-you-are-doing
+git switch -c feature/what-you-are-doing origin/dev
 ```
 
 Branch names follow [Conventional Branch](https://conventional-branch.github.io/): `<type>/<description>`,
@@ -37,13 +44,13 @@ rule is about where work starts, not where it lands. `git commit --no-verify` sk
 It exists for the day you need it, not for the day you are in a hurry.
 
 GitHub enforces the same rule on the server, because a local hook protects only the person who
-installed it. `main` on [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot) accepts
-changes only through a pull request, and a pull request merges only when all four CI jobs are green on a
-branch that is up to date with `main`:
+installed it. `dev` and `main` on [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot)
+accept changes only through a pull request, and a pull request merges only when all four CI jobs are
+green on a branch that is up to date with its base:
 
 | Check | What it guards |
 |-------|----------------|
-| `branch-name` | the Conventional Branch rule above, the same script the hook runs |
+| `branch-name` | the Conventional Branch rule above, and which branches may merge into `main` (`.githooks/check-pr-branches.sh`) |
 | `python (3.12)` | lint, types, the suite against Postgres 17, grammar and railroad checks |
 | `web-editor` | vitest, and that the committed editor bundle matches its source |
 | `docker` | the image builds and the server compose files parse together |
@@ -53,7 +60,8 @@ request, and requiring one would only mean switching the rule off to merge. Revi
 resolved. The rule applies to administrators too, so there is no quiet way around it; changing that is a
 visible settings change, which is the point. Force-pushes and deleting `main` are refused.
 
-The day-to-day flow is therefore: branch, push the branch, open a pull request, merge when it is green.
+The day-to-day flow is therefore: branch from `dev`, push the branch, open a pull request against `dev`,
+merge when it is green. `dev` is the default branch, so `gh pr create` targets it already.
 
 ```bash
 gh pr create --fill
@@ -64,6 +72,34 @@ gh pr merge --merge --delete-branch
 ```
 
 Merge commits, not squashes: the history reads as branches landing, which is how it was written.
+
+## Releases
+
+Merging into `dev` deploys nothing. Production changes only when a release reaches `main`:
+
+1. Bump the version on `dev` through a `release/x-y-z` pull request: `version` in `pyproject.toml` and
+   `__version__` in `src/doomtp_bot/__init__.py`.
+2. Open the release pull request from `dev` into `main` and merge it with a merge commit.
+
+   ```bash
+   gh pr create --base main --head dev --title "Release vX.Y.Z"
+   ```
+
+3. Tag it. CI builds the tag again, checks that it matches the package version and publishes
+   `:vX.Y.Z` beside `:main`.
+
+   ```bash
+   gh release create vX.Y.Z --target main --generate-notes
+   ```
+
+To roll back, set `BOT_IMAGE` on the server to the previous `:vX.Y.Z` and run the update unit (README).
+
+**A hotfix** branches from `main` (`hotfix/…`), merges into `main`, and then `main` merges back into
+`dev` in a pull request of its own, so `dev` never loses the fix:
+
+```bash
+gh pr create --base dev --head main --title "Bring hotfix back into dev"
+```
 
 ## Before you push
 

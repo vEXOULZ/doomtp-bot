@@ -30,6 +30,8 @@ guest, and what is allowed to reach into the homelab to put it there.
   bind-mounted from a checkout, so `coverage`, `backup` and `starter-pack` are the versions that were
   built, not whatever the tree beside them says today.
 - **Rolling back is pinning `BOT_IMAGE` to a `:<sha>` tag**, not a rebuild.
+- *(2026-09-28, ADR-0021)* `main` now moves only when a release from `dev` is merged, and each release
+  also publishes `:vX.Y.Z`, the tag to roll back to. `dev` publishes `:dev`.
 
 ## Options Considered
 
