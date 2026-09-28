@@ -13,7 +13,7 @@ from doomtp_bot.runtime.executor import ScopeArgs
 from doomtp_bot.runtime.policy import AllowAllPolicy, Decision
 from doomtp_bot.runtime.result import Code, ErrorCode, Result
 from doomtp_bot.runtime.spec import CommandSpec
-from doomtp_bot.runtime.variables import MAX_LIST_ITEMS, InMemoryVariableStore, VarKey
+from doomtp_bot.runtime.variables import DEFAULT_LIST_ITEMS, InMemoryVariableStore, VarKey
 from tests.runtime.helpers import ALICE, CHANNEL, EMOJI_SIGNS, make_runtime, run
 
 
@@ -323,11 +323,11 @@ async def test_append_to_a_full_list_fails_instead_of_dropping_the_oldest_item()
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
     key = VarKey("chatter", "u1", name="log")
-    store.data[key] = [str(n) for n in range(MAX_LIST_ITEMS)]
+    store.data[key] = [str(n) for n in range(DEFAULT_LIST_ITEMS)]
     r = await run(rt, "!echo new >> chatter.log")
     assert r.result.code == ErrorCode.E_LIST_FULL
     assert r.result.data == {"error": "E_LIST_FULL"}
-    assert store.data[key][0] == "0" and len(store.data[key]) == MAX_LIST_ITEMS
+    assert store.data[key][0] == "0" and len(store.data[key]) == DEFAULT_LIST_ITEMS
 
 
 async def test_writes_commit_even_when_final_code_fails() -> None:
