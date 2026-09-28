@@ -23,6 +23,10 @@ services:
     image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
     pull_policy: always
 
+  migrate-v2:
+    image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
+    pull_policy: always
+
   backup:
     image: ${BOT_IMAGE:?set BOT_IMAGE in .env}
     pull_policy: always

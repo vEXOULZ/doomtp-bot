@@ -290,6 +290,16 @@ async def test_quota_and_duplicate_names(h: Harness) -> None:
         await h.add("alice", "three", "echo 3")
 
 
+async def test_a_name_is_not_only_digits(h: Harness) -> None:
+    """`!100` is a number and `!1 + 2` an expression line (ADR-0018), so no command can be named `100`."""
+    from doomtp_bot.customcmds.service import CustomCommandError
+
+    with pytest.raises(CustomCommandError, match="not only digits"):
+        await h.add("alice", "100", "echo 1")
+    await h.add("alice", "8ball", "echo yes")
+    assert await h.say("alice", "!8ball") == "yes"
+
+
 async def test_bodies_are_parsed_in_body_context(h: Harness) -> None:
     """`{arg.*}` is only available inside a body, so a body may use it and a typed line may not."""
     await h.add("alice", "args", "echo you said {arg.1+ ?? nothing}")

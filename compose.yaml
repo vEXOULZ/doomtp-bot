@@ -113,6 +113,24 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # One-shot rewrite of stored bodies to syntax 2.0 (ADR-0018):
+  # docker compose --profile tools run --rm migrate-v2 [--dry-run]
+  migrate-v2:
+    profiles: ["tools"]
+    build: .
+    image: doomtp-bot:dev
+    entrypoint: ["python", "/app/scripts/migrate_v2.py"]
+    env_file: .env
+    secrets: [postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
   # One-shot backup (ADR-0014). Run from host cron: docker compose --profile tools run --rm backup
   # It writes pg_dump archives into ./data/backups; getting them off this host is still your job.
   backup:
