@@ -586,7 +586,7 @@ Placeholders are expanded **immediately before their invocation executes** (§6.
 |---------|-------|
 | `{arg.N}` | the Nth argument after the invoking command's own lexing (quotes removed, escapes applied) |
 | `{arg.N+}` | arguments N..end joined with a single U+0020. *Test item: language proposal §6.* |
-| `{arg.N+raw}` | the invocation's original source text from the start of argument N to the end of its arguments, byte-for-byte |
+| `{arg.N+raw}` | the invocation's original source text from the start of argument N to the end of its arguments, byte-for-byte: quotes, escapes and the whitespace between arguments are kept. A placeholder in those arguments is replaced by the text it expanded to (it is not evaluated again), so a body that passes `{arg.2+raw}` on gives the next command exactly the text it received. For `cc run <id> …` the arguments start after the id; for a trigger, it is the input text |
 | `{arg.count}` | the number of arguments, as an int |
 | `{args}` | same as `{arg.1+}` |
 | `{arg.<name>}` | the declared parameter's **validated, converted** value (§5.3) |

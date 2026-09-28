@@ -599,7 +599,7 @@ async def _run(ctx: CommandContext, v: list[str], args: Args) -> Result:
     report = await runtime.run(
         command.body,
         body_ctx,
-        scope_args=ScopeArgs.of(values, params),
+        scope_args=ScopeArgs.rest_of(args, 2, params),
         publisher=Publisher(
             id=command.owner_user_id,
             login=command.owner_login,

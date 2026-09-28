@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 type Span = tuple[int, int]
@@ -100,6 +100,16 @@ type Arg = tuple[Part, ...]
 
 
 @dataclass(frozen=True, slots=True)
+class ArgSource:
+    """An argument as it was typed, for `{arg.N+raw}` (spec §7.3): the whitespace before it and its
+    source text, quotes and escapes intact. Its placeholders stay unexpanded, as the same `Placeholder`
+    nodes the argument holds, so the runtime splices in the values it already computed for them."""
+
+    gap: str
+    parts: tuple[str | Placeholder, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Invocation:
     index: int  # 1-based pre-order index within its scope (spec §6.4); negative inside `{!…}`
     name: str
@@ -108,6 +118,8 @@ class Invocation:
     raw_tail: str | None
     span: Span
     expr: Expr | None = None  # `check` and `calc`: the rest of the stage, parsed as one expression
+    # One per argument, for `+raw`. Left out of equality: it restates the arguments, spacing aside.
+    sources: tuple[ArgSource, ...] = field(default=(), compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

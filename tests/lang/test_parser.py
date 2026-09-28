@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 
 import pytest
@@ -74,6 +75,44 @@ def test_spans_cover_source() -> None:
     assert text[second.span[0] : second.span[1]] == "echo {_1}!"
     ph = second.args[0][0]
     assert isinstance(ph, Placeholder) and text[ph.span[0] : ph.span[1]] == "{_1}"
+
+
+def _typed(inv: Invocation) -> list[tuple[str, str]]:
+    """Each argument's source as (gap, text), placeholders shown by their own source."""
+    return [
+        (s.gap, "".join(p if isinstance(p, str) else f"<{p.span}>" for p in s.parts)) for s in inv.sources
+    ]
+
+
+def test_arguments_keep_their_source_for_raw() -> None:
+    """`{arg.N+raw}` needs each argument as typed: its quotes, escapes and the spacing before it."""
+    text = 'say  "a  b"   c\\"d  e'
+    inv = parse(text, Context.BODY, PARAMS)
+    assert isinstance(inv, Invocation)
+    assert _typed(inv) == [("  ", '"a  b"'), ("   ", 'c\\"d'), ("  ", "e")]
+
+
+def test_argument_sources_cut_around_their_placeholders() -> None:
+    text = 'say x{arg.1}y  "q {arg.2 ?? {arg.3}} r"'
+    inv = parse(text, Context.BODY, PARAMS)
+    assert isinstance(inv, Invocation)
+    (a, b) = inv.sources
+    assert a.parts[0] == "x" and a.parts[2] == "y" and a.parts[1] is inv.args[0][1]
+    ph = b.parts[1]
+    assert b.gap == "  " and isinstance(ph, Placeholder) and b.parts[0] == '"q ' and b.parts[2] == ' r"'
+    assert text[ph.span[0] : ph.span[1]] == "{arg.2 ?? {arg.3}}"  # the fallback goes with its placeholder
+
+
+def test_raw_tail_lead_arguments_keep_their_source_too() -> None:
+    inv = parse(preprocess_line('!cc  add   "x"  echo  hi'), Context.LINE, PARAMS)
+    assert isinstance(inv, Invocation) and inv.raw_tail == "echo  hi"
+    assert _typed(inv) == [("  ", "add"), ("   ", '"x"')]
+
+
+def test_argument_sources_do_not_change_equality() -> None:
+    inv = parse("say  a", Context.BODY, PARAMS)
+    assert isinstance(inv, Invocation) and inv.sources
+    assert dataclasses.replace(inv, sources=()) == inv
 
 
 def test_names_are_case_folded() -> None:
