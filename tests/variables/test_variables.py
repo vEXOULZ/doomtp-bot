@@ -215,20 +215,20 @@ async def test_grants_do_not_follow_the_published_name(h: Harness) -> None:
 
 # ── store operator through the runtime ─────────────────────────────────────
 async def test_store_operator_denied_for_viewer_on_channel(h: Harness) -> None:
-    report = await h.run("alice", "!echo 1 > channel.deaths")
+    report = await h.run("alice", "!echo 1 -> channel.deaths")
     assert (report.result.code, report.send) == (Code.DENIED, None)
     assert await h.value("channel", CHANNEL_ID, name="deaths") is MISSING
-    report = await h.run("mod", "!echo 1 > channel.deaths")
+    report = await h.run("mod", "!echo 1 -> channel.deaths")
     assert report.result.ok and await h.value("channel", CHANNEL_ID, name="deaths") == "1"
 
 
 async def test_foreign_command_cannot_touch_invokers_chatter_vars(h: Harness) -> None:
     report = await h.run(
-        "alice", "echo evil > chatter.location", Context.BODY, publisher=Publisher("999", "mallory")
+        "alice", "echo evil -> chatter.location", Context.BODY, publisher=Publisher("999", "mallory")
     )
     assert report.result.code == Code.DENIED
     ok = await h.run(
-        "alice", "echo 3 > publisher.chatter.save", Context.BODY, publisher=Publisher("999", "mallory")
+        "alice", "echo 3 -> publisher.chatter.save", Context.BODY, publisher=Publisher("999", "mallory")
     )
     assert ok.result.ok and await h.value("publisher.chatter", "999", "400", name="save") == "3"
 
@@ -244,7 +244,35 @@ async def test_var_set_get_incr_and_typed_values(h: Harness) -> None:
     # `{` would start a placeholder in chat, so JSON lists are the practical typed-collection input.
     assert await h.reply("mod", "!var set channel.info [1, 2, 3]") == "channel.info = 1, 2, 3"
     assert await h.value("channel", CHANNEL_ID, name="info") == [1, 2, 3]
-    assert await h.reply("mod", "!var get channel.info.1") == "channel.info.1 = 2"
+    assert await h.reply("mod", "!var get channel.info[1]") == "channel.info[1] = 2"
+
+
+async def test_var_paths_del_and_pop(h: Harness) -> None:
+    """Paths into a value, removal and pop (ADR-0019 D4b/c): writes create the maps on the way."""
+    assert await h.reply("mod", "!var set channel.stats[kills] 3") == "channel.stats[kills] = 3"
+    assert await h.reply("mod", "!var incr channel.stats[runs][best] 2") == "channel.stats[runs][best] = 2"
+    assert await h.value("channel", CHANNEL_ID, name="stats") == {"kills": 3, "runs": {"best": 2}}
+    assert await h.reply("mod", "!echo {channel.stats[runs][best] + channel.stats[kills]}") == "5"
+    assert await h.reply("mod", "!var del channel.stats[kills]") == "deleted channel.stats[kills]"
+    assert await h.value("channel", CHANNEL_ID, name="stats") == {"runs": {"best": 2}}
+    missing = await h.run("mod", "!var del channel.stats[nope]")
+    assert missing.result.code == ErrorCode.E_KEY
+
+    await h.reply("mod", "!var set channel.queue [1, 2, 3]")
+    assert await h.reply("mod", "!var pop channel.queue") == "3"
+    assert await h.reply("mod", "!var pop channel.queue 0") == "1"
+    assert await h.value("channel", CHANNEL_ID, name="queue") == [2]
+    assert (await h.run("mod", "!var pop channel.queue 5")).result.code == ErrorCode.E_INDEX
+    assert await h.reply("mod", "!var del channel.queue[-1]") == "deleted channel.queue[-1]"
+    empty = await h.run("mod", "!var pop channel.queue")
+    assert (empty.result.code, empty.send) == (ErrorCode.E_EMPTY, "channel.queue is empty")
+    # A branch on the error's own code (ADR-0018 D8j).
+    assert (
+        await h.reply("mod", "!var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty )")
+        == "queue is empty"
+    )
+    assert (await h.run("mod", "!var pop channel.stats")).result.code == ErrorCode.E_NOT_A_LIST
+    assert (await h.run("alice", "!var pop channel.queue")).result.code == Code.DENIED
 
 
 async def test_var_writes_respect_matrix(h: Harness) -> None:
@@ -252,9 +280,11 @@ async def test_var_writes_respect_matrix(h: Harness) -> None:
     assert (denied.result.code, denied.send) == (Code.DENIED, None)
     assert denied.result.message == "you can't change channel.goal"
     assert await h.reply("alice", "!var incr channel.chatter.points") == "channel.chatter.points = 1"
-    assert await h.reply("alice", "!var set chatter.name x") is not None  # reserved name → usage error
-    report = await h.run("alice", "!var set chatter.name x")
+    assert await h.reply("alice", "!var set chatter.data x") is not None  # reserved name → usage error
+    report = await h.run("alice", "!var set chatter.data x")
     assert report.result.code == ErrorCode.E_BAD_VAR_NAME
+    # Bot fields have `$` now, so their names are free for variables (ADR-0018 D11).
+    assert await h.reply("alice", "!var set chatter.name x") == "chatter.name = x"
 
 
 async def test_everything_is_readable_including_other_users(h: Harness) -> None:
@@ -289,7 +319,7 @@ async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
 
 
 async def test_var_writes_are_part_of_the_run(h: Harness) -> None:
-    report = await h.run("mod", "!var set channel.a 1 && var get channel.a && false")
+    report = await h.run("mod", "!var set channel.a 1 && var get channel.a && fail")
     assert report.result.code == Code.FAIL
     assert await h.value("channel", CHANNEL_ID, name="a") == 1  # committed even though the line failed
 

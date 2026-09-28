@@ -1,20 +1,39 @@
-Line        ::= Prefix Gap? Expr
+Line        ::= Prefix Gap? ( Expr | Expression )
 Expr        ::= Pipeline ( ( '&&' | '||' ) Pipeline )*
 Pipeline    ::= Stage ( '|' Stage )*
-Stage       ::= ( Group | Invocation ) ( ( '>' | '>>' ) VarRef )?
+Stage       ::= ( Group | IfElse | Invocation ) ( ( '->' | '-->' ) VarRef )?
 Group       ::= '(' Expr ')'
+IfElse      ::= Prefix? 'ifelse' Argument Group Group?
 Invocation  ::= Prefix? Gap? '@'? Name Argument*
+              | Prefix? Gap? ( 'check' | 'calc' ) Expression
 Argument    ::= ( Text | Quoted | Escape | Placeholder )+
 Quoted      ::= '"' ( [^"\{] | Escape | Placeholder )* '"'
 Escape      ::= '\' Char
-Placeholder ::= '{' Reference ( ':' Type )? ( '??' Fallback )? '}'
-Reference   ::= ( '_' | Index | Root ) ( '.' Segment )*
-Root        ::= 'arg' | 'args' | 'chatter' | 'channel' | 'publisher' | 'cmd'
-              | 'bot' | 'now' | 'event' | 'match' | 'cooldown' | 'denied' | 'run'
-Segment     ::= Identifier | Digits ( '+' | '+raw' )?
+Placeholder ::= '{' ( '!' Invocation | Or ( '??' Fallback )? ) '}'
+Expression  ::= Or ( '??' Expression )?
+Or          ::= And ( 'or' And )*
+And         ::= Not ( 'and' Not )*
+Not         ::= 'not' Not | Comparison
+Comparison  ::= Sum ( ( '==' | '!=' | '<' | '<=' | '>' | '>=' | 'in' | 'not in' ) Sum )*
+Sum         ::= Product ( ( '+' | '-' ) Product )*
+Product     ::= Unary ( ( '*' | '/' | '//' | '%' ) Unary )*
+Unary       ::= '-' Unary | Postfix
+Postfix     ::= Atom ( ':' Accessor | '[' Key ']' )*
+Accessor    ::= 'len' | 'keys' | 'values' | Type
+Key         ::= Identifier | Expression
+Atom        ::= Number | String | 'true' | 'false' | '(' Expression ')' | Placeholder | Reference
+Reference   ::= '$' BotRoot '.' Identifier
+              | '_' Digits? ( '.' ( 'code' | 'message' | 'data' ) )?
+              | 'arg' '.' ( Digits ( '+' | '+raw' )? | Identifier )
+              | 'args'
+              | Root ( '.' Identifier )*
+              | Variable
+BotRoot     ::= 'chatter' | 'channel' | 'publisher' | 'bot' | 'now'
+Root        ::= 'event' | 'match' | 'cooldown' | 'denied' | 'run' | 'cmd'
 Type        ::= 'str' | 'int' | 'float' | 'bool' | 'range' | 'duration' | 'user' | 'url'
-              | 'choice(' Item ( ',' Item )* ')'
-VarRef      ::= ( 'chatter' | 'channel' | 'channel.chatter' | 'publisher' | 'publisher.chatter'
+              | 'list' | 'map' | 'choice(' Item ( ',' Item )* ')'
+Variable    ::= ( 'chatter' | 'channel' | 'channel.chatter' | 'publisher' | 'publisher.chatter'
               | 'publisher.channel' | 'publisher.channel.chatter' ) '.' VarName
+VarRef      ::= Variable ( '[' Key ']' )*
 Gap         ::= WS            /* only after a non-ASCII (emoji) prefix */
 Name        ::= [a-z0-9] [a-z0-9_-]*

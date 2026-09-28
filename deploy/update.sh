@@ -23,6 +23,15 @@ if [ "$before" = "$after" ]; then
 fi
 
 echo "updating: ${before:0:19} -> ${after:0:19}"
+# The new bot refuses to start without its `core` pack (ADR-0019), so install it first, from the new image.
+# That leaves the old bot running if it fails. Exit 2 means the bot was never signed in: nothing to install
+# yet, and the bot starts anyway and says so.
+status=0
+"${compose[@]}" --profile tools run --rm starter-pack || status=$?
+if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+    echo "starter pack failed (exit $status): not updating" >&2
+    exit 1
+fi
 # Only the bot. Postgres is named as a dependency so it gets started if it is down, but an unchanged,
 # healthy one is left exactly as it is: its image never moves, and restarting it would drop the bot's
 # connections to no purpose (ADR-0014).

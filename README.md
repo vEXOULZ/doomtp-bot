@@ -1,7 +1,7 @@
 # doomtp-bot
 
 A self-hosted, multi-channel Twitch chat bot with a composable command language
-(`!random 1-100 | echo you rolled {1}`), user-published custom commands, a complete chat log, and a JSON API
+(`!random 1-100 | echo you rolled {_1}`), user-published custom commands, a complete chat log, and a JSON API
 that its web site, [doomtp-web](https://github.com/vEXOULZ/doomtp-web), is built on.
 
 **Status:** feature-complete for v1 and not yet run in anger. The command language and its runtime,
@@ -148,9 +148,13 @@ uv lock
 
 ## Starter commands
 
-The bot ships a small set of commands written in its own language rather than Python — `hug`, `lurk`,
-`roll`, `so` and `deaths` — published globally as the `starter` pack. They are not installed
-automatically; the database stays the only source of truth for what the bot offers:
+The bot ships commands written in its own language rather than Python: the sentinels `false` and
+`default` in the `core` system pack, and `hug`, `lurk`, `roll`, `so` and `deaths`, published globally as
+the `starter` pack. They are not installed automatically; the database stays the only source of truth for
+what the bot offers. **The bot refuses to start until `core` is installed at the version it expects**, so
+run this after every upgrade (`deploy/update.sh` does it for you) and restart the bot if `core` changed. On
+a brand-new database the bot starts anyway and warns, because the script installs under the bot's account:
+sign the bot in at `/auth/login`, run the script, then restart:
 
 ```bash
 docker compose --profile tools run --rm starter-pack
@@ -351,8 +355,12 @@ Then point the bot at the public address. In `.env`:
 ```
 PUBLIC_BASE_URL=https://bot.example.com
 PUBLIC_WEB_UI=true
+WEB_SITE_URL=https://bot.example.com
 WEB_FORWARDED_ALLOW_IPS=172.18.0.1
 ```
+
+`WEB_SITE_URL` is where the site's pages open. `!help` ends with a link to the channel's page there
+(`/channels/<login>`). It is the same address as `PUBLIC_BASE_URL` when one proxy serves both.
 
 `WEB_FORWARDED_ALLOW_IPS` is the address the bot sees the proxy connect from. The failed-login limit
 trusts `X-Forwarded-For` from that address only. A proxy on the guest reaching `127.0.0.1:8080` arrives
@@ -415,9 +423,10 @@ not drive failures.
 | What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
 | Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
-| Install the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
+| Install `core` and the starter commands (before starting) | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
 
-To **roll back**, point `BOT_IMAGE` at a `:<sha>` tag and run the update unit again. Mind that migrations
+To **roll back**, point `BOT_IMAGE` at the previous release, `:vX.Y.Z` (or any `:<sha>` tag), and run the
+update unit again. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR-0021). Mind that migrations
 run at startup and only go forward: roll back within a schema, or restore a backup taken before the
 deploy.
 

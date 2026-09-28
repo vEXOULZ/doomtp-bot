@@ -14,6 +14,7 @@ from doomtp_bot.runtime.values import ConversionError, convert
 
 if TYPE_CHECKING:
     from doomtp_bot.policy.service import PolicyService
+    from doomtp_bot.runtime.resolver import Resolver
 
 
 def rank(ctx: CommandContext) -> int:
@@ -66,8 +67,14 @@ async def user_arg(ctx: CommandContext, raw: str) -> dict[str, Any]:
 
 def command_spec(ctx: CommandContext, name: str) -> CommandSpec:
     """Look up a command by name or alias, with or without the channel prefix."""
+    wanted = strip_prefix(name, ctx.channel.prefix).lower()
     registry: CommandRegistry = ctx.service("registry")
-    found = registry.get(strip_prefix(name, ctx.channel.prefix).lower())
-    if found is None:
+    found = registry.get(wanted)
+    if found is not None:
+        return found.spec
+    # A system pack's member (`false`, `default`) is a sentinel too, so `!cmd disable false` says so.
+    resolver: Resolver = ctx.service("runtime").resolver
+    system = resolver.resolve_name(ctx.exec, wanted)
+    if system is None or system.source != "system":
         raise CommandError(f"unknown command: {name}")
-    return found.spec
+    return system.spec

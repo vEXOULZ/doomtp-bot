@@ -33,6 +33,8 @@ BROADCASTER_SCOPES: tuple[str, ...] = (
     "channel:read:redemptions",
     "channel:read:subscriptions",
     "bits:read",
+    "channel:manage:broadcast",
+    "channel:manage:raids",
 )
 
 # Basic tier plus moderator actions (ADR-0007). Moderator scopes only take effect where the bot is a mod.
@@ -44,6 +46,10 @@ BOT_SCOPES: tuple[str, ...] = (
     "moderator:manage:banned_users",
     "moderator:manage:chat_messages",
     "moderator:manage:shoutouts",
+    "moderator:manage:warnings",
+    "moderator:manage:announcements",
+    "moderator:manage:chat_settings",
+    "moderator:manage:shield_mode",
 )
 STATE_TTL_S = 600
 

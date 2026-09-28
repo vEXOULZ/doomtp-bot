@@ -70,6 +70,7 @@ class Publisher:
     alias: str = ""
     version: int = 0
     publication: str | None = None  # set when running through a channel publication (vs. a personal link)
+    pack_id: str | None = None  # the pack the command was reached through, whose internal members it sees
 
 
 class RunCancelled(Exception):
@@ -87,6 +88,9 @@ class ExecContext:
     trigger_type: str = "chat"
     trigger_id: str | None = None
     message_id: str | None = None
+    # The message the asking one replied to, for commands that act on it (`delete`, `pin`): its
+    # `message_id` and its sender's `id`, `name` and `display`.
+    reply_to: dict[str, str] | None = None
     publisher: Publisher | None = None
     event: dict[str, Any] = field(default_factory=dict)
     match: dict[str, Any] = field(default_factory=dict)
@@ -105,6 +109,8 @@ class ExecContext:
     rng: random.Random = field(default_factory=random.Random)
     clock: Callable[[], float] = time.time
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    expr_ops: int = 0  # expression steps so far this run (ADR-0018 D8k)
+    subst_depth: int = 0  # `{!...}` invocations currently open
 
     def ensure_not_cancelled(self) -> None:
         if self.is_cancelled():

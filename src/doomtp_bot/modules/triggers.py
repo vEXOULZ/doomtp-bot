@@ -25,16 +25,35 @@ if TYPE_CHECKING:
     from doomtp_bot.triggers.service import Trigger, TriggerService
 
 MODULE = "triggers"
-# `listen` takes everything after it raw, so a regex keeps its backslashes; this splits the two halves.
-LISTEN_SEPARATOR = "=>"
 TRIGGER_USAGE = (
     "trigger list | add <" + "|".join(TRIGGER_TYPES[:9]) + "> <expression> |"
-    " listen <regex> => <expression> | rm <id> | on|off <id>"
+    ' listen <regex|"regex with spaces"> <expression> | rm <id> | on|off <id>'
 )
 TIMER_USAGE = (
     "timer list | add <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression>"
-    " | cron <m h dom mon dow> => <expression> | rm <id> | on|off <id>"
+    ' | cron "<m h dom mon dow>" <expression> | rm <id> | on|off <id>'
 )
+
+
+def _leading_arg(raw: str, usage: str) -> tuple[str, str]:
+    """Split a raw tail into its first argument and the expression after it (ADR-0018: no `=>`).
+
+    The argument is one word, or `"…"` when it has spaces. Nothing inside is unescaped, so a regex
+    keeps its backslashes; it ends at the first `"` followed by a space.
+    """
+    raw = raw.strip()
+    if raw.startswith('"'):
+        end = raw.find('" ', 1)
+        if end < 0:
+            raise CommandError(f"usage: {usage}")
+        arg, rest = raw[1:end], raw[end + 2 :]
+    else:
+        if " => " in f" {raw} ":
+            raise CommandError(f"=> is gone: quote the first argument instead, e.g. {usage.split(' | ')[-3]}")
+        arg, _, rest = raw.partition(" ")
+    if not arg or not rest.strip():
+        raise CommandError(f"usage: {usage}")
+    return arg, rest.strip()
 
 
 def _service(ctx: CommandContext) -> TriggerService:
@@ -96,7 +115,7 @@ async def _remove_or_toggle(ctx: CommandContext, action: str, values: list[str],
         log_level=LogLevel.INVOCATIONS,
         examples=(
             Example("{sign}trigger add raid echo welcome {event.user.name} and {event.viewers} raiders!", ""),
-            Example(r"{sign}trigger listen \bhello\b => echo hi {chatter.display}", ""),
+            Example(r"{sign}trigger listen \bhello\b echo hi {$chatter.display}", ""),
         ),
     ),
     raw_tail_subcommands=(("add", 3), ("listen", 2)),
@@ -117,10 +136,8 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         raise CommandError(f"usage: {TRIGGER_USAGE}")
     match: dict[str, Any] = {}
     if action == "listen":
-        pattern, separator, body = expr.partition(f" {LISTEN_SEPARATOR} ")
-        if not separator or not body.strip():
-            raise CommandError(f"usage: {TRIGGER_USAGE}")
-        type_, match["regex"], expr = "listener", pattern.strip(), body.strip()
+        type_ = "listener"
+        match["regex"], expr = _leading_arg(expr, TRIGGER_USAGE)
     elif action == "add":
         need(values, 2, TRIGGER_USAGE)
         type_ = values[1].lower()
@@ -165,7 +182,7 @@ def _warning(ctx: CommandContext, type_: str) -> str:
         log_level=LogLevel.INVOCATIONS,
         examples=(
             Example("{sign}timer add 15m min_lines=10 echo remember to hydrate", ""),
-            Example("{sign}timer cron 0 18 * * fri => echo the stream starts now", ""),
+            Example('{sign}timer cron "0 18 * * fri" echo the stream starts now', ""),
         ),
     ),
     raw_tail_subcommands=(("add", 3), ("cron", 2)),
@@ -224,12 +241,8 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
 
 
 async def _add_cron(ctx: CommandContext, args: Args, values: list[str]) -> Result:
-    """`timer cron 0 18 * * fri => echo we live at six`, in the channel's timezone."""
-    raw = (args.raw_tail or " ".join(values[1:])).strip()
-    schedule_text, separator, expr = raw.partition(f" {LISTEN_SEPARATOR} ")
-    if not separator or not expr.strip():
-        raise CommandError(f"usage: {TIMER_USAGE}")
-    expr = expr.strip()
+    """`timer cron "0 18 * * fri" echo we live at six`, in the channel's timezone."""
+    schedule_text, expr = _leading_arg(args.raw_tail or " ".join(values[1:]), TIMER_USAGE)
     try:
         created = await _service(ctx).add(
             channel_id=ctx.channel.id,

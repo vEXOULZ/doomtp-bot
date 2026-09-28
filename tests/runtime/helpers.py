@@ -8,11 +8,14 @@ from typing import Any
 
 import pytest
 
+from doomtp_bot.customcmds.resolution import SystemResolver
+from doomtp_bot.customcmds.system import CORE, CORE_COMMANDS
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, VARIATION_SELECTOR, Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.runtime.context import Args, ChannelInfo, Chatter, CommandContext
 from doomtp_bot.runtime.engine import RunReport, Runtime
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
+from doomtp_bot.runtime.resolver import BuiltinResolver
 from doomtp_bot.runtime.result import Code, Result
 from doomtp_bot.runtime.spec import CommandSpec, InputMode, Param
 
@@ -76,13 +79,13 @@ async def boom(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
 
 @command(
     CommandSpec(
-        name="add",
+        name="plus",
         module="test",
         summary="adds ints",
         params=(Param("1", "a", type="int", required=True), Param("2", "b", type="int", required=True)),
     )
 )
-async def add(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+async def plus(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     total = args["a"] + args["b"]
     return Result.success(str(total), total)
 
@@ -103,7 +106,7 @@ async def fakedeny(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     return Result.failure(Code.DENIED, "nope")
 
 
-TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, add, rawecho, cancelme, fakedeny)
+TEST_COMMANDS: tuple[Command, ...] = (weather, upper, slow, boom, plus, rawecho, cancelme, fakedeny)
 
 
 def registry() -> CommandRegistry:
@@ -112,8 +115,15 @@ def registry() -> CommandRegistry:
     return reg
 
 
+def with_core(reg: CommandRegistry) -> SystemResolver:
+    """The built-ins plus the `core` system pack, straight from its definitions: no database needed."""
+    return SystemResolver.from_derived(BuiltinResolver(reg), CORE, CORE_COMMANDS)
+
+
 def make_runtime(**kwargs: Any) -> Runtime:
-    return Runtime(registry(), **kwargs)
+    reg = registry()
+    kwargs.setdefault("resolver", with_core(reg))
+    return Runtime(reg, **kwargs)
 
 
 async def run(

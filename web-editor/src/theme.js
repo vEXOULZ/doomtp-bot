@@ -28,7 +28,8 @@ export const theme = EditorView.theme({
     color: "var(--bg)",
   },
   // Commands gold, strings green, operators pink, variables blue whether read or written (a written one is
-  // italic), fallbacks and escapes yellow. The --dtb-* colours can be set by the host page (light mode, a site).
+  // italic), fallbacks and escapes yellow. Inside an expression, operators are pink and numbers green like
+  // strings. The --dtb-* colours can be set by the host page (light mode, a site).
   ".dtb-prefix": { color: "var(--accent)", fontWeight: "600" },
   ".dtb-personal": { color: "var(--accent)" },
   ".dtb-command": { color: "var(--accent)", fontWeight: "600" },
@@ -42,6 +43,8 @@ export const theme = EditorView.theme({
   ".dtb-ph-path": { color: "var(--dtb-path, #b7cffb)" },
   ".dtb-ph-type": { color: "var(--muted)", fontStyle: "italic" },
   ".dtb-ph-fallback": { color: "var(--dtb-soft, #e8c35a)" },
+  ".dtb-ph-op": { color: "var(--dtb-op, #ff7ab2)" },
+  ".dtb-ph-num": { color: "var(--ok)" },
   ".dtb-raw": { color: "var(--ink)", opacity: ".8" },
   ".dtb-error": { textDecoration: "underline wavy var(--bad)" },
 });

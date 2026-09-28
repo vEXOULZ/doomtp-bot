@@ -29,7 +29,7 @@ and published by the bot account.
 
 These stay as they are, plus:
 - `!admin quota` and `!admin valuecap`, each taking `default <size>` or `<channel|publisher|chatter>
-  <name> <size|reset>`.
+  <name> <size|reset>`. `!admin listitems` and `!admin names` work the same way with a count.
 - `!customecho show|set|clear <cmd>` (below).
 
 ### Other primitives
@@ -50,9 +50,10 @@ These stay as they are, plus:
 ### Derived commands
 
 - **`ping`** moves out of Python into the `starter` pack.
-- **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to call `shoutout` and then
-  echo a line, and adds the readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and
-  `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
+- **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to echo a line, calling
+  `shoutout` first when a moderator runs it (`ifelse {$chatter.is_mod} ( shoutout … || true ) && echo …`;
+  a command in an `ifelse` branch is refused only if its branch is chosen, spec §6.3). It adds the
+  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
 - **Quotes** become a derived pack. `quote` dispatches with `ifelse` to the internal members
   `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `channel.quotes` and
   `channel.quote_next`. `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
@@ -97,8 +98,8 @@ moderator.
   checked in the write buffer's commit.
 - **Errors:** a write over the quota fails with `E_QUOTA`, and a value over the cap with
   `E_VALUE_TOO_BIG`.
-- **Other limits:** `MAX_LIST_ITEMS` and `MAX_NAMES_PER_SPACE` become admin settings too. A full list
-  fails with `E_LIST_FULL` instead of silently dropping its oldest item.
+- **Other limits:** `MAX_LIST_ITEMS` and `MAX_NAMES_PER_SPACE` become admin settings too, with the same
+  default-plus-override logic (defaults 100 and 200, ceilings 10,000 each). A full list fails with `E_LIST_FULL` instead of silently dropping its oldest item.
 - **Usage:** `!var usage [ns]` shows how much of the quota is used.
 
 ### An HTTP primitive, later
@@ -106,6 +107,8 @@ moderator.
 `weather` and similar commands wait for a gated HTTP query primitive. It would be off by default, with
 per-channel domain allow-lists, GET only, timeouts, size caps and SSRF protection. It gets its own ADR
 before any code.
+*(2026-09-28: ADR-0020 decided it. The allow-list became one global list, and `http` runs only from
+derived commands a bot admin published, with API keys kept as write-only admin secrets.)*
 
 ## Options Considered
 
@@ -131,19 +134,27 @@ Rejected again on 2026-09-28 in favour of the startup check.
 
 ## Action Items
 
-1. [ ] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`.
-2. [ ] `random` with a seed, and picking from a list or map.
-3. [ ] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
+1. [x] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`. *(The link
+   rule and the cache are in `core/links.py`. The `help` link is one global `WEB_SITE_URL`, the same for
+   every channel, set on the deploy side.)*
+2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
+   `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
+3. [x] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
+   `shoutout` is done, and so are the rest (2026-09-28): `ban`, `unban`/`untimeout`, `warn`,
+   `announce`, `chatmode`, `clear`, `shield`, and `delete`, `pin` and `unpin` on the replied-to message,
+   on the bot's token; `settitle`, `setgame`, `marker` and `raid` on the broadcaster's, behind the new
+   `broadcast` and `raids` capabilities (ADR-0007). `so` checks with `ifelse` (ADR-0018) before
+   calling `shoutout`, so it still echoes wherever the bot lacks `moderate`.
 4. [x] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
-   endpoint, and `!var usage`. *(The admin UI is a doomtp-web PR. `MAX_LIST_ITEMS` and
-   `MAX_NAMES_PER_SPACE` are still constants.)*
-5. [ ] Internal pack members and system packs, with `false` and `default` moved into `core`
+   endpoint, and `!var usage`. *(The admin UI is a doomtp-web PR. The list and name limits
+   joined as `list_items` and `names_per_space`, `!admin listitems|names`, in migration 0004.)*
+5. [x] Internal pack members and system packs, with `false` and `default` moved into `core`
    (amends ADR-0012).
 6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
-   starter readouts, and `$channel.next_stream`.
+   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
-10. [ ] An ADR for the HTTP query primitive.
-11. [ ] The reserved-name list in ADR-0010 and the access matrix, with a test against
+10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
+11. [x] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.

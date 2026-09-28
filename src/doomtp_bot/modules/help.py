@@ -1,4 +1,5 @@
-"""`help` module: lists only the commands the caller can run here (architecture §8, F9).
+"""`help` module: lists only the commands the caller can run here (architecture §8, F9), and links the
+channel's command page on the web site when WEB_SITE_URL is set.
 
 Custom commands appear alongside built-ins: what this channel publishes, plus the caller's own
 aliases (ADR-0009). Each is checked against the same policy gate as a built-in.
@@ -25,6 +26,12 @@ MODULE = "help"
 HIDDEN_MODULES = frozenset({"core"})
 
 
+def site_link(ctx: CommandContext) -> str | None:
+    """The channel's page on the web site, which lists every command with its usage."""
+    site: str | None = ctx.exec.services.get("site_url")
+    return f"{site.rstrip('/')}/channels/{ctx.channel.login}" if site else None
+
+
 def _custom(ctx: CommandContext) -> CustomCommandService | None:
     service: CustomCommandService | None = ctx.exec.services.get("customcmds")
     return service
@@ -45,7 +52,7 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
         for pack_publication, pack in await packs.publications_in(ctx.channel.id, include_global=True):
             if pack_publication.status != "active":
                 continue
-            for member in await packs.members(pack.id):
+            for member in await packs.members(pack.id, internal=False):  # helpers aren't typed
                 specs.setdefault(member.name, spec_for(member.name, member, None, pack))
     if ctx.invoker is not None:
         for alias, command_ in await service.linked_by(ctx.invoker.id):
@@ -74,7 +81,8 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     name = args.get("command")
     if name:
         wanted = strip_prefix(name, prefix).lower().removeprefix("@")
-        found = registry.get(wanted)
+        # The runtime's own resolver: the built-ins and the system packs' sentinels (ADR-0019).
+        found = ctx.service("runtime").resolver.resolve_name(ctx.exec, wanted)
         spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
         if spec is None or not policy.is_permitted(ctx.exec, spec):
             return Result.failure(Code.NOT_FOUND, f"no command named {name}")
@@ -96,7 +104,10 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     text = "commands: " + ", ".join(builtins)
     if custom:
         text += " — custom: " + ", ".join(custom)
-    return Result.success(text, {"builtin": builtins, "custom": custom})
+    link = site_link(ctx)
+    if link:
+        text += f" — more at {link}"
+    return Result.success(text, {"builtin": builtins, "custom": custom, "link": link})
 
 
 COMMANDS: tuple[Command, ...] = (help_cmd,)

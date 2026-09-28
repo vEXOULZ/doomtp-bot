@@ -14,11 +14,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from doomtp_bot.lang.ast import Node, invocations, stores, to_canonical
+from doomtp_bot.lang.ast import Node, invocations, render_placeholder, stores, to_canonical
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, NotACommand, parse
 from doomtp_bot.runtime.namespaces import root_available
-from doomtp_bot.runtime.preflight import placeholders_in, preflight
+from doomtp_bot.runtime.preflight import placeholders_in, preflight, refs_in
 from doomtp_bot.runtime.result import Result
 
 if TYPE_CHECKING:
@@ -238,8 +238,8 @@ def _describe(inv: Any, ctx: ExecContext, runtime: Runtime, resolver: Any, resol
         input_mode=str(spec.input),
         placeholders=tuple(
             {
-                "reference": "{" + ".".join((ph.root, *ph.path)) + "}",
-                "available": root_available(ph.root, ctx.context),
+                "reference": render_placeholder(ph),
+                "available": all(root_available(ref.root, ctx.context) for ref in refs_in(ph)),
                 "has_fallback": ph.fallback is not None,
             }
             for ph in placeholders_in(inv)

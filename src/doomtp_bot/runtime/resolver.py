@@ -15,8 +15,9 @@ from doomtp_bot.runtime.spec import CommandSpec
 if TYPE_CHECKING:
     from doomtp_bot.lang.ast import Invocation, Node
     from doomtp_bot.runtime.context import ExecContext
+    from doomtp_bot.runtime.result import Result
 
-Source = Literal["builtin", "publication", "personal"]
+Source = Literal["builtin", "system", "publication", "personal"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,10 @@ class CustomTarget:
     version: int
     body: Node
     publication: str | None = None  # set when reached through a channel publication, not a personal link
+    #: The pack it was reached through. Its body can call that pack's internal members (ADR-0019).
+    pack_id: str | None = None
+    #: A system pack member: a sentinel, so it doesn't count toward the custom command depth.
+    system: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +43,9 @@ class Resolved:
     handler: Handler | None = None  # built-ins run a handler…
     custom: CustomTarget | None = None  # …custom commands run a body
     source: Source = "builtin"
+    #: Set by preflight for a command in an `ifelse` branch the invoker may not run: the refusal it
+    #: returns if that branch is chosen (spec §6.3). A branch that isn't chosen is never refused.
+    refused: Result | None = None
 
 
 class Resolver(Protocol):

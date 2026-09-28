@@ -122,7 +122,7 @@ def test_a_catastrophic_listener_gives_up_instead_of_stalling() -> None:
 
 # ── managing them from chat ────────────────────────────────────────────────
 async def test_add_list_and_remove_a_listener(h: Harness) -> None:
-    added = await h.say("mod", r"!trigger listen \bhello\b => echo hi {chatter.display}")
+    added = await h.say("mod", r"!trigger listen \bhello\b echo hi {$chatter.display}")
     assert added is not None and added.startswith("added listener trigger ")
     listing = await h.say("mod", "!trigger list")
     assert listing is not None and "hello" in listing and "echo hi" in listing
@@ -136,7 +136,7 @@ async def test_add_list_and_remove_a_listener(h: Harness) -> None:
 
 
 async def test_a_broken_expression_is_never_stored(h: Harness) -> None:
-    refused = await h.say("mod", "!trigger listen hello => echo a ; b")
+    refused = await h.say("mod", "!trigger listen hello echo a ; b")
     assert refused is not None and "E_RESERVED_OPERATOR" in refused
     assert h.triggers.in_channel(CHANNEL_ID) == []
 
@@ -147,7 +147,7 @@ async def test_unsupported_types_are_stored_with_a_warning(h: Harness) -> None:
 
 
 async def test_triggers_run_at_the_creators_rank(h: Harness) -> None:
-    await h.say("mod", r"!trigger listen \bhello\b => echo hi")
+    await h.say("mod", r"!trigger listen \bhello\b echo hi")
     trigger = h.triggers.in_channel(CHANNEL_ID)[0]
     assert trigger.run_as_rank == 80  # the moderator who created it, never higher
 
@@ -175,7 +175,7 @@ async def test_a_trigger_made_by_a_trigger_never_outranks_it(h: Harness) -> None
 
 # ── running them ───────────────────────────────────────────────────────────
 async def test_a_listener_runs_with_its_captures(h: Harness) -> None:
-    await h.say("mod", r"!trigger listen my name is (?P<name>\w+) => echo nice to meet you {match.name}")
+    await h.say("mod", r'!trigger listen "my name is (?P<name>\w+)" echo nice to meet you {match.name}')
     hits = h.triggers.listeners_matching(CHANNEL_ID, "hi, my name is alice")
     assert len(hits) == 1
     trigger, fields = hits[0]
@@ -195,9 +195,9 @@ async def test_chat_gets_the_checks_the_service_makes(h: Harness) -> None:
     for typed, why in (
         ("!trigger add raid echo {", "placeholder"),
         ("!trigger add raid echo you badword", "filter rejects"),
-        ("!trigger listen hello => echo {", "placeholder"),
+        ("!trigger listen hello echo {", "placeholder"),
         ("!timer add 15m echo badword", "filter rejects"),
-        ("!timer cron 0 18 * * fri => echo {", "placeholder"),
+        ('!timer cron "0 18 * * fri" echo {', "placeholder"),
     ):
         reply = await h.say("mod", typed)
         assert reply is not None and why in reply, typed
@@ -404,7 +404,7 @@ async def test_a_timer_can_require_the_stream_to_be_live(h: Harness) -> None:
 
 # ── crons ──────────────────────────────────────────────────────────────────
 async def test_a_cron_fires_at_the_minute_it_names(h: Harness) -> None:
-    reply = await h.say("mod", "!timer cron 0 18 * * fri => echo the stream starts now")
+    reply = await h.say("mod", '!timer cron "0 18 * * fri" echo the stream starts now')
     assert reply is not None and "fri at 18:00" in reply and "UTC" in reply
 
     early = await timer_scheduler(h, wall="2026-09-18T17:59")
@@ -423,7 +423,7 @@ async def test_a_cron_uses_the_channels_timezone(h: Harness) -> None:
     await h.policy.mutate(
         lambda repo: repo.set_channel_field(CHANNEL_ID, "timezone", "America/Sao_Paulo", Actor(None, "x"))
     )
-    await h.say("mod", "!timer cron 0 18 * * * => echo boa noite")
+    await h.say("mod", '!timer cron "0 18 * * *" echo boa noite')
 
     # 18:00 in São Paulo is 21:00 UTC, so the UTC evening is still the local afternoon.
     afternoon = await timer_scheduler(h, wall="2026-09-18T18:00")
@@ -433,21 +433,28 @@ async def test_a_cron_uses_the_channels_timezone(h: Harness) -> None:
 
 
 async def test_a_bad_cron_is_refused_with_a_usable_message(h: Harness) -> None:
-    reply = await h.say("mod", "!timer cron 0 18 * * => echo nope")
+    reply = await h.say("mod", '!timer cron "0 18 * *" echo nope')
     assert reply is not None and "5 fields" in reply
-    assert await h.say("mod", "!timer cron 0 18 * * xyz => echo nope") is not None
+    assert await h.say("mod", '!timer cron "0 18 * * xyz" echo nope') is not None
     assert h.triggers.crons() == []
 
 
+@pytest.mark.parametrize("text", ["!timer cron 0 18 * * fri => echo hi", r"!trigger listen hi => echo hi"])
+async def test_the_old_arrow_is_refused_with_a_hint(h: Harness, text: str) -> None:
+    reply = await h.say("mod", text)
+    assert reply is not None and reply.startswith("=> is gone")
+    assert h.triggers.in_channel(CHANNEL_ID) == []
+
+
 async def test_crons_are_listed_with_the_timers(h: Harness) -> None:
-    await h.say("mod", "!timer cron 30 9 * * mon-fri => echo good morning")
+    await h.say("mod", '!timer cron "30 9 * * mon-fri" echo good morning')
     listing = await h.say("mod", "!timer list")
     assert listing is not None and "good morning" in listing
 
 
 async def test_timers_are_listed_and_removed_separately_from_triggers(h: Harness) -> None:
     await h.say("mod", "!timer add 60s echo tick")
-    await h.say("mod", r"!trigger listen \bhi\b => echo hello")
+    await h.say("mod", r"!trigger listen \bhi\b echo hello")
     timers = await h.say("mod", "!timer list")
     assert timers is not None and "every 60s" in timers and "hello" not in timers
     listeners = await h.say("mod", "!trigger list")

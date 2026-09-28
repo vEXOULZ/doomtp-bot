@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -12,11 +13,44 @@ import structlog
 
 from doomtp_bot import __version__
 from doomtp_bot.core import metrics
-from doomtp_bot.lang.ast import And, Group, Invocation, Node, Or, Part, Pipe, Placeholder, Store, Text
+from doomtp_bot.lang.ast import (
+    Access,
+    And,
+    Binary,
+    Compare,
+    Expr,
+    Group,
+    IfElse,
+    Index,
+    Invocation,
+    Lit,
+    Node,
+    Or,
+    Part,
+    Pipe,
+    Placeholder,
+    Ref,
+    Store,
+    Subst,
+    Text,
+    Unary,
+    VarRef,
+    render_expr,
+    render_placeholder,
+)
 from doomtp_bot.lang.parser import Context
+from doomtp_bot.runtime import ops
 from doomtp_bot.runtime.context import Args, CommandContext, ExecContext, Publisher, RunCancelled
-from doomtp_bot.runtime.namespaces import FieldPath, VarPath, classify
-from doomtp_bot.runtime.result import ERROR_CODES, MAX_DATA_BYTES, Code, CommandError, Result, error_result
+from doomtp_bot.runtime.ops import ExprError
+from doomtp_bot.runtime.result import (
+    ERROR_CODES,
+    MAX_DATA_BYTES,
+    Code,
+    CommandError,
+    ErrorCode,
+    Result,
+    error_result,
+)
 from doomtp_bot.runtime.values import (
     MISSING,
     ConversionError,
@@ -35,13 +69,28 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+_WHOLE = re.compile(r"-?(0|[1-9][0-9]*)")
+
 STAGE_TIMEOUT_S = 3.0
+MAX_EXPR_OPS = 1000  # expression steps per run (ADR-0018 D8k)
+MAX_SUBST_DEPTH = 3  # `{!…}` inside `{!…}` (ADR-0018 D8d)
 
 
 class MissingValue(Exception):
     def __init__(self, reference: str) -> None:
         super().__init__(reference)
         self.reference = reference
+
+
+class SubstFailed(Exception):
+    """A `{!…}` invocation failed; the invocation holding it ends with the same Result."""
+
+    def __init__(self, result: Result) -> None:
+        super().__init__(result.message)
+        self.inner = result
+
+    def result(self) -> Result:
+        return self.inner
 
 
 class OnCooldown(Exception):
@@ -141,6 +190,15 @@ class Executor:
                 return r if r.ok else await self._eval(right, ctx, scope, r, None)
             case Group(inner):
                 return await self._eval(inner, ctx, scope, prev, stdin)
+            case IfElse(cond, then, else_):
+                try:
+                    chosen = ops.holds(await self.condition(cond, ctx, scope, prev))
+                except (MissingValue, ExprError, SubstFailed) as exc:
+                    return expression_failure(exc)
+                branch = then if chosen else else_
+                if branch is None:
+                    return Result.success()
+                return await self._eval(branch, ctx, scope, prev, stdin)
             case Store(inner, target, append):
                 r = await self._eval(inner, ctx, scope, prev, stdin)
                 if not r.ok:
@@ -149,8 +207,11 @@ class Executor:
                 if value is None:
                     return r
                 try:
+                    path = tuple([store_key(await self._key(k, ctx, scope, r)) for k in target.path])
                     key = key_for(ctx, target.namespace, target.name)
-                    await ctx.variables.buffer(WriteOp("append" if append else "set", key, value))
+                    await ctx.variables.buffer(WriteOp("append" if append else "set", key, value, path))
+                except (MissingValue, ExprError, SubstFailed) as exc:
+                    return expression_failure(exc)
                 except VariableError as exc:
                     return exc.result()
                 return r
@@ -162,14 +223,27 @@ class Executor:
         ctx.ensure_not_cancelled()
         resolved = scope.resolved[inv.index]
         spec = resolved.spec
+        if resolved.refused is not None:  # an `ifelse` branch the invoker may not run was chosen
+            scope.results[inv.index] = resolved.refused
+            return resolved.refused
         try:
             # Cooldowns are this invocation's own failure, not the line's (spec §6.3, 1.1), so `||` can
             # route around one and a branch that never runs never trips one. Looked at before the
             # arguments, so a command on cooldown stays silent even when it is typed wrong — the cooldown
             # is still what keeps a spammed command quiet.
             OnCooldown.unless_allowed(self.policy.check_cooldown(ctx, spec))
-            values = tuple([await self.expand(arg, ctx, scope, prev) for arg in inv.args])
-            params = await self.bind(spec, values, ctx)
+            values: tuple[str, ...]
+            params: dict[str, Any]
+            if inv.expr is not None:
+                # `check` and `calc` take one expression; its value is the argument (ADR-0018 D8e/g).
+                value = await self.evaluate(inv.expr, ctx, scope, prev)
+                if is_missing(value):
+                    raise MissingValue(render_expr(inv.expr))
+                values, params = (render(value),), {"value": value}
+            else:
+                raws = [await self.argument(arg, ctx, scope, prev) for arg in inv.args]
+                values = tuple(render(raw) for raw in raws)
+                params = await self.bind(spec, values, ctx, tuple(raws))
             # And claimed with no await before it runs: expanding the arguments can wait on the database,
             # and a burst of the same command must not all get through a shared bucket in that gap.
             # !explain --run starts none, so the look above already said everything (spec §9).
@@ -179,10 +253,8 @@ class Executor:
             result = Result.failure(exc.decision.code, "on cooldown", dict(exc.decision.info))
             if not ctx.dry_run:
                 metrics.COOLDOWN_REJECTIONS.inc(tier=exc.decision.info.get("tier", ""))
-        except MissingValue as exc:
-            result = error_result(
-                "E_MISSING_VALUE", f"missing value: {exc.reference}", reference=exc.reference
-            )
+        except (MissingValue, ExprError, SubstFailed) as exc:
+            result = expression_failure(exc)
         except UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
@@ -209,7 +281,7 @@ class Executor:
                 if result.code >= 100 and not from_body:
                     log.warning("command.reserved_code", command=spec.name, code=result.code)
                     result = Result(Code.FAIL, result.message, result.data)
-            except CommandError as exc:
+            except (CommandError, ExprError) as exc:
                 result = exc.result()
             except TimeoutError:
                 result = Result.failure(Code.TIMEOUT, f"{inv.name} timed out")
@@ -255,6 +327,7 @@ class Executor:
                 alias=inv.name,
                 version=target.version,
                 publication=target.publication,
+                pack_id=target.pack_id,
             ),
             Context.BODY,
         )
@@ -264,18 +337,28 @@ class Executor:
             ctx.publisher, ctx.context = publisher, context
 
     # ── §5.3 argument binding ───────────────────────────────────────────────
-    async def bind(self, spec: CommandSpec, values: tuple[str, ...], ctx: ExecContext) -> dict[str, Any]:
+    async def bind(
+        self,
+        spec: CommandSpec,
+        values: tuple[str, ...],
+        ctx: ExecContext,
+        raws: tuple[Any, ...] | None = None,
+    ) -> dict[str, Any]:
+        """Convert arguments to the spec's params. `raws` are the values before rendering, so a list or
+        map from a single placeholder reaches a `list`/`map` param untouched (ADR-0018 D4f)."""
         bound: dict[str, Any] = {}
         has_variadic = any(p.variadic for p in spec.params)
         if not has_variadic and len(values) > len(spec.params):
             raise UsageError("too many arguments" if spec.params else "takes no arguments")
         for p in spec.params:
             i = p.index - 1
-            raw: str | None
+            raw: Any
             if p.variadic:
                 raw = " ".join(values[i:]) if len(values) > i else None
+            elif i < len(values):
+                raw = raws[i] if raws is not None else values[i]
             else:
-                raw = values[i] if i < len(values) else None
+                raw = None
             if raw is None or (p.variadic and raw == ""):
                 if p.required:
                     raise UsageError(f"{p.name} is required")
@@ -295,7 +378,21 @@ class Executor:
                 raise UsageError(f"{p.name}: {exc}") from exc
         return bound
 
-    # ── §7.3 expansion ──────────────────────────────────────────────────────
+    # ── §7.3 expansion and §2.7 expressions ─────────────────────────────────
+    async def argument(
+        self, arg: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
+    ) -> Any:
+        """An argument's value: a lone placeholder keeps its value's type, anything else is text."""
+        if _is_lone(arg):
+            return await self.placeholder_value(arg[0], ctx, scope, prev)  # type: ignore[arg-type]
+        return await self.expand(arg, ctx, scope, prev)
+
+    async def condition(
+        self, cond: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
+    ) -> Any:
+        """`ifelse`'s condition: a lone placeholder's value, or the text. `ops.holds` decides."""
+        return await self.argument(cond, ctx, scope, prev)
+
     async def expand(
         self, parts: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
     ) -> str:
@@ -310,50 +407,139 @@ class Executor:
     async def placeholder_value(
         self, ph: Placeholder, ctx: ExecContext, scope: Scope, prev: Result | None
     ) -> Any:
-        value = await self.lookup(ph, ctx, scope, prev)
-        if not is_missing(value) and ph.type is not None:
-            try:
-                value = await convert(
-                    value, ph.type.name, choices=ph.type.choices, resolve_user=ctx.resolve_user
-                )
-            except ConversionError:
-                value = MISSING
+        """A top-level placeholder: its value, its `??` text, or MissingValue."""
+        value = await self.evaluate(ph, ctx, scope, prev)
         if is_missing(value):
-            if ph.fallback is not None:
-                return await self.expand(ph.fallback, ctx, scope, prev)
-            raise MissingValue("{" + ".".join((ph.root, *ph.path)) + "}")
+            raise MissingValue(render_placeholder(ph))
         return value
 
-    async def lookup(self, ph: Placeholder, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
-        root, path = ph.root, ph.path
-        if root == "_":
-            return MISSING if prev is None else result_value(prev, path)
-        if root.isdigit():
-            result = scope.results.get(int(root))
-            if result is None or int(root) not in scope.executed:
-                return MISSING
-            return result_value(result, path)
-        if root in ("chatter", "channel", "publisher"):
-            target = classify(root, path)
-            if isinstance(target, VarPath):
+    async def evaluate(self, expr: Expr, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+        """The value of an expression, or MISSING. Type errors and the like raise ExprError (ADR-0018)."""
+        ctx.expr_ops += 1
+        if ctx.expr_ops > MAX_EXPR_OPS:
+            raise ExprError(ErrorCode.E_EXPR_BUDGET, f"too many operations (max {MAX_EXPR_OPS} per run)")
+        match expr:
+            case Lit(value):
+                return value
+            case Ref():
+                return self.ref_value(expr, ctx, scope, prev)
+            case VarRef(namespace, name, path):
                 try:
-                    key = key_for(ctx, target.namespace, target.name)
+                    key = key_for(ctx, namespace, name)
                 except VariableError:
                     return MISSING
-                return descend(await ctx.variables.get(key), target.rest)
-            if isinstance(target, FieldPath):
-                return descend(self.field(ctx, target), target.rest)
-            return MISSING
-        if root in ("arg", "args"):
-            return self.arg_value(scope.args, path if root == "arg" else ("1+", *path))
+                value = await ctx.variables.get(key)
+                for step in path:
+                    value = ops.index(value, await self._key(step, ctx, scope, prev))
+                return value
+            case Index(target, key):
+                base = await self._operand(target, ctx, scope, prev)
+                return ops.index(base, await self._key(key, ctx, scope, prev))
+            case Access(target, name, choices):
+                value = await self._operand(target, ctx, scope, prev)
+                if is_missing(value):
+                    return MISSING
+                if name == "len":
+                    return ops.length(value)
+                if name == "keys":
+                    return ops.keys(value)
+                if name == "values":
+                    return ops.values(value)
+                try:
+                    return await convert(value, name, choices=choices, resolve_user=ctx.resolve_user)
+                except ConversionError:
+                    return MISSING
+            case Unary(op, operand):
+                value = await self.evaluate(operand, ctx, scope, prev)
+                return MISSING if is_missing(value) else ops.apply_unary(op, value)
+            case Binary("??", left, right):
+                value = await self.evaluate(left, ctx, scope, prev)
+                return await self.evaluate(right, ctx, scope, prev) if is_missing(value) else value
+            case Binary(("and" | "or") as op, left, right):
+                value = await self.evaluate(left, ctx, scope, prev)
+                if is_missing(value) or ops.truthy(value) == (op == "or"):
+                    return value
+                return await self.evaluate(right, ctx, scope, prev)
+            case Binary(op, left, right):
+                a = await self.evaluate(left, ctx, scope, prev)
+                b = await self.evaluate(right, ctx, scope, prev)
+                return MISSING if is_missing(a) or is_missing(b) else ops.apply_binary(op, a, b)
+            case Compare(first, rest):
+                a = await self.evaluate(first, ctx, scope, prev)
+                if is_missing(a):
+                    return MISSING
+                for op, operand in rest:
+                    b = await self.evaluate(operand, ctx, scope, prev)
+                    if is_missing(b):
+                        return MISSING
+                    if not ops.compare(op, a, b):
+                        return False
+                    a = b
+                return True
+            case Subst(inv):
+                return await self.substitute(inv, ctx, scope, prev)
+            case Placeholder(inner, fallback, _):
+                value = await self.evaluate(inner, ctx, scope, prev)
+                if not is_missing(value) or fallback is None:
+                    return value
+                return await self.expand(fallback, ctx, scope, prev)
+        raise TypeError(f"not an expression: {expr!r}")
+
+    async def _key(self, expr: Expr, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+        key = await self.evaluate(expr, ctx, scope, prev)
+        if is_missing(key):
+            raise MissingValue(render_expr(expr))
+        return key
+
+    async def _operand(self, expr: Expr, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+        """What `[ ]` and `:` work on. A bare result (`_`, `_2`) is its data, even a list or a map."""
+        if isinstance(expr, Ref) and not expr.path and expr.root.startswith("_"):
+            result = self.result_ref(expr.root, scope, prev)
+            if result is None:
+                return MISSING
+            if result.data is not None:
+                return result.data
+            return MISSING if result.message is None else result.message
+        return await self.evaluate(expr, ctx, scope, prev)
+
+    async def substitute(self, inv: Invocation, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+        """`{!cmd args}`: run one invocation; its data, or else its message, is the value (ADR-0018 D8d)."""
+        if ctx.subst_depth >= MAX_SUBST_DEPTH:
+            raise ExprError(ErrorCode.E_SUBST_DEPTH, f"{{!…}} nested more than {MAX_SUBST_DEPTH} deep")
+        ctx.subst_depth += 1
+        try:
+            result = await self._invoke(inv, ctx, scope, prev, None)
+        finally:
+            ctx.subst_depth -= 1
+        if not result.ok:
+            raise SubstFailed(result)
+        if result.data is not None:
+            return result.data
+        return MISSING if result.message is None else result.message
+
+    @staticmethod
+    def result_ref(root: str, scope: Scope, prev: Result | None) -> Result | None:
+        if root == "_":
+            return prev
+        n = int(root[1:])
+        return scope.results.get(n) if n in scope.executed else None
+
+    def ref_value(self, ref: Ref, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
+        root, path = ref.root, ref.path
+        if root.startswith("_"):
+            result = self.result_ref(root, scope, prev)
+            return MISSING if result is None else result_value(result, path)
+        if root.startswith("$"):
+            fields = self.bot_fields(ctx, root[1:])
+            return MISSING if fields is None else descend(fields, path)
+        if root == "arg":
+            return self.arg_value(scope.args, path)
+        if root == "args":
+            return self.arg_value(scope.args, ("1+",))
         if root in ("event", "match", "cooldown", "denied"):
             return descend(getattr(ctx, root), path)
-        if root == "bot":
-            return descend({"name": "doomtp-bot", "id": "", "version": __version__, **ctx.bot}, path)
         if root == "run":
             return descend({"id": ctx.run_id, "trigger": ctx.trigger_type}, path)
-        if root == "now":
-            return descend(self.now_fields(ctx), path)
         if root == "cmd":
             pub = ctx.publisher
             if pub is None:
@@ -388,12 +574,12 @@ class Executor:
             return descend(args.params[head], rest)
         return MISSING
 
-    @staticmethod
-    def field(ctx: ExecContext, target: FieldPath) -> Any:
-        if target.root == "chatter":
+    def bot_fields(self, ctx: ExecContext, root: str) -> dict[str, Any] | None:
+        """The `$` fields (ADR-0018 D11). A field with nothing to show is MISSING."""
+        if root == "chatter":
             who = ctx.invoker
             if who is None:
-                return MISSING
+                return None
             return {
                 "id": who.id,
                 "name": who.login,
@@ -403,8 +589,8 @@ class Executor:
                 "is_sub": who.is_sub,
                 "is_vip": who.is_vip,
                 "is_mod": who.is_mod,
-            }.get(target.field, MISSING)
-        if target.root == "channel":
+            }
+        if root == "channel":
             ch = ctx.channel
             uptime = int(ctx.clock() - ch.started_at) if ch.live and ch.started_at else MISSING
             return {
@@ -417,13 +603,17 @@ class Executor:
                 "game": ch.game or MISSING,
                 "viewers": ch.viewers,
                 "uptime": uptime,
-            }.get(target.field, MISSING)
-        pub = ctx.publisher
-        if pub is None:
-            return MISSING
-        return {"id": pub.id, "name": pub.login, "display": pub.display or pub.login}.get(
-            target.field, MISSING
-        )
+            }
+        if root == "publisher":
+            pub = ctx.publisher
+            if pub is None:
+                return None
+            return {"id": pub.id, "name": pub.login, "display": pub.display or pub.login}
+        if root == "bot":
+            return {"name": "doomtp-bot", "id": "", "version": __version__, **ctx.bot}
+        if root == "now":
+            return self.now_fields(ctx)
+        return None
 
     @staticmethod
     def now_fields(ctx: ExecContext) -> dict[str, Any]:
@@ -437,6 +627,25 @@ class Executor:
             "time": moment.strftime("%H:%M"),
             "weekday": moment.strftime("%A"),
         }
+
+
+def expression_failure(exc: MissingValue | ExprError | SubstFailed) -> Result:
+    """The Result an invocation ends with when one of its expressions failed."""
+    if isinstance(exc, MissingValue):
+        return error_result("E_MISSING_VALUE", f"missing value: {exc.reference}", reference=exc.reference)
+    return exc.result()
+
+
+def store_key(value: Any) -> str | int:
+    """A path step of a store target: a whole number indexes a list, anything else is a map key."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    text = render(value)
+    return int(text) if _WHOLE.fullmatch(text) else text
+
+
+def _is_lone(arg: tuple[Part, ...]) -> bool:
+    return len(arg) == 1 and isinstance(arg[0], Placeholder)
 
 
 class UsageError(Exception):

@@ -18,6 +18,9 @@ class ParseErrorCode(enum.StrEnum):
     BAD_VARREF = "E_BAD_VARREF"
     RAW_TAIL_POSITION = "E_RAW_TAIL_POSITION"
     TOO_LONG = "E_TOO_LONG"
+    EXPR_SYNTAX = "E_EXPR_SYNTAX"
+    UNKNOWN_OP = "E_UNKNOWN_OP"
+    EXPR_TOO_DEEP = "E_EXPR_TOO_DEEP"
     INTERNAL = "E_INTERNAL"
 
 
@@ -34,17 +37,23 @@ HINTS: dict[ParseErrorCode, str] = {
     ParseErrorCode.BAD_VARREF: "invalid variable (e.g. channel.deaths)",
     ParseErrorCode.RAW_TAIL_POSITION: "{name} must be used alone",
     ParseErrorCode.TOO_LONG: "expression too long",
+    ParseErrorCode.EXPR_SYNTAX: "invalid expression",
+    ParseErrorCode.UNKNOWN_OP: "unknown operator {op}",
+    ParseErrorCode.EXPR_TOO_DEEP: "expression nested too deeply",
     ParseErrorCode.INTERNAL: "internal parser error",
 }
 
 
 class ParseError(Exception):
-    """A thrown parse failure. `offset` is a 0-based character offset; `column` is 1-based (spec §C.8)."""
+    """A thrown parse failure. `offset` is a 0-based character offset; `column` is 1-based (spec §C.8).
 
-    def __init__(self, code: ParseErrorCode, offset: int, **fmt: str) -> None:
+    `hint` replaces the code's usual hint, e.g. to spell out the version 2 form of an old one (ADR-0018).
+    """
+
+    def __init__(self, code: ParseErrorCode, offset: int, hint: str | None = None, **fmt: str) -> None:
         self.code = code
         self.offset = offset
-        self.hint = HINTS[code].format(**fmt) if fmt else HINTS[code]
+        self.hint = hint if hint is not None else HINTS[code].format(**fmt) if fmt else HINTS[code]
         super().__init__(f"parse error: {code.value} at {self.column}: {self.hint}")
 
     @property

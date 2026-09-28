@@ -82,10 +82,21 @@ publication_write_grants(channel_id TEXT, publication_name TEXT, variable TEXT,
                          PRIMARY KEY (channel_id, publication_name, variable))
 ```
 
-- **Names:** `[a-z][a-z0-9_]{0,31}`, excluding reserved names (see namespaces.md §5).
+- **Names:** `[a-z][a-z0-9_]{0,31}`, excluding the reserved names below (namespaces.md §5). The list is
+  closed and matches `runtime/namespaces.py`; `tests/test_reserved_names_docs.py` keeps them in step.
+  The first row holds the result fields; the others would read as a longer namespace
+  (`channel.chatter.x`). Bot fields sit behind `$`, so names like `channel.title` are free.
+
+  | Namespace | Reserved variable names |
+  |-----------|-------------------------|
+  | every namespace | `data`, `code`, `message`, `public`, `root` |
+  | `channel.` | `chatter` |
+  | `publisher.` | `chatter`, `channel` |
+  | `publisher.channel.` | `chatter` |
+
 - **Size limits:**
   - At most 2 KB of JSON per value. *(Superseded by ADR-0019: a quota and a per-value cap per owner.)*
-  - At most 200 names per `(ns, key1, key2, key3)`.
+  - At most 200 names per `(ns, key1, key2, key3)`. *(ADR-0019: the default of a per-owner setting.)*
   - At most 100,000 rows per channel across `channel.chatter` and `publisher.channel.chatter`.
   - Per-owner caps on `publisher.*` rows, so one author's game can't fill the database.
 - **Operations:** `get`, `set`, `incr` (atomic), `append` (capped list), `del`, `top` (leaderboard over `channel.chatter`, `publisher.chatter` and `publisher.channel.chatter`). Available through `>` / `>>` and the `!var` commands.

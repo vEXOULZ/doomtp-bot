@@ -228,6 +228,17 @@ async def test_help_lists_only_runnable_commands(h: Harness) -> None:
     assert await h.reply("viewer", "!help role") == "no command named role"
 
 
+async def test_help_links_the_channel_page_when_the_site_is_set(h: Harness) -> None:
+    report = await h.say("viewer", "!help")
+    assert report is not None and "more at" not in (report.send or "")
+    assert isinstance(report.result.data, dict) and report.result.data["link"] is None
+    h.runtime.services["site_url"] = "https://site.example/"
+    h.clock.now += 100
+    report = await h.say("viewer", "!help")
+    assert report is not None and report.send is not None
+    assert report.send.endswith(f" — more at https://site.example/channels/{CHANNEL_LOGIN}")
+
+
 @pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
 async def test_help_takes_a_name_with_any_form_of_the_emoji_sign(h: Harness, saved: str, typed: str) -> None:
     report = await h.say("viewer", f'{saved}help "{typed}ping"', prefix=saved)
@@ -341,7 +352,7 @@ async def test_explain_shows_a_cooldown_without_failing_preflight(h: Harness) ->
 # ── callbacks ──────────────────────────────────────────────────────────────
 async def test_cooldown_callback_is_rendered_and_rate_limited(h: Harness) -> None:
     set_reply = await h.reply(
-        "mod", "!callback set on_cooldown command:dice echo {chatter.name}, wait {cooldown.user_remaining}s"
+        "mod", "!callback set on_cooldown command:dice echo {$chatter.name}, wait {cooldown.user_remaining}s"
     )
     assert set_reply == "set on_cooldown for command:dice"
     assert await h.reply("viewer", "!dice") == "rolled"

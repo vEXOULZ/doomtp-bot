@@ -6,6 +6,7 @@ import argparse
 
 import pytest
 
+from doomtp_bot.customcmds.system import CORE_COMMANDS
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.storage.db import Databases, fetch_value
 from scripts.starter_pack import PACK, STARTER, install, run
@@ -30,6 +31,8 @@ async def test_the_starter_commands_run_in_a_channel_that_never_published_them(h
     assert rolled is not None and rolled.startswith("Alice rolled ")
     assert 1 <= int(rolled.rsplit(" ", 1)[1]) <= 6
     assert await h.say("alice", "!so bob") == "go follow twitch.tv/bob — they were last seen being excellent"
+    # The bot isn't a moderator here, so a moderator's card can't go out either; the line still does.
+    assert await h.say("mod", "!so bob") == "go follow twitch.tv/bob — they were last seen being excellent"
 
 
 async def test_the_counter_waits_for_the_channel_to_allow_its_write(h: Harness) -> None:  # noqa: F811
@@ -87,7 +90,7 @@ async def test_the_script_installs_into_the_database_it_is_pointed_at(
     count = await fetch_value(
         dbs.bot, "SELECT count(*) FROM custom_commands WHERE owner_user_id = %s", (OWNER["id"],)
     )
-    assert count == len(STARTER)
+    assert count == len(STARTER) + len(CORE_COMMANDS)
 
 
 async def test_the_script_needs_an_owner_before_it_touches_anything(

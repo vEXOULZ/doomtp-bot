@@ -1,31 +1,35 @@
 # Placeholder Namespaces — Registry
 
-**Status:** Canonical list (update together with any language or runtime change) · **Date:** 2026-09-16
+**Status:** Canonical list (update together with any language or runtime change) · **Date:** 2026-09-28 · **Syntax:** 2.0 (ADR-0018)
 
-Every `{…}` placeholder starts with one of the namespaces below. **No other root names are valid.** Adding a namespace means adding a row here, updating the parser's reserved list, and documenting it in `!help placeholders` and `GET /api/v1/namespaces`.
+Every reference in a `{…}` placeholder starts with one of the roots below. **No other root names are valid.** Adding a root means adding a row here, updating `lang/parser.py` (`BOT_FIELDS`, `REGISTERED_ROOTS`) and `runtime/namespaces.py`, and checking that `GET /api/v1/language` reports it.
 
-General form: `{ namespace . path [ :type ] [ ?? fallback ] }`. See [command-language-proposal.md](command-language-proposal.md).
+General form: `{ expression [ ?? fallback ] }`, where the simplest expression is one reference such as `{channel.deaths}`. The full grammar is in [command-language-spec.md](command-language-spec.md) §2.7–§2.8.
+
+**`.` and `[ ]`.** A `.` walks names the bot defines: a namespace, a variable's name, a `$` field, a result's `code`/`message`/`data`. `[ ]` walks into a *value*: `{channel.stats[kills]}`, `{channel.log[-1]}`, `{channel.quotes[arg.1]}`, `{x["key with spaces"]}`. A bare word in brackets is a literal key; anything else (a number, a string, a reference, an operator) is an expression.
+
+**`$` means the bot's.** Everything the bot supplies starts with `$` (`{$chatter.display}`); no `$` means a variable (`{channel.deaths}`). A new field can never collide with a variable.
 
 ---
 
 ## 1. Results
 
-| Namespace | Meaning | Available in | Access |
-|-----------|---------|--------------|--------|
-| `{_}` | Result flowing into this command (pipe stdin, or previous result after `&&`/`\|\|`) | any expression | read |
-| `{N}` (`{1}`, `{2}`, …) | Result of the Nth command in source order (1-based) | any expression; must be able to have run before use (checked at preflight) | read |
+| Reference | Meaning | Available in |
+|-----------|---------|--------------|
+| `{_}` | Result flowing into this command (pipe stdin, or the previous result after `&&`/`\|\|`) | any expression |
+| `{_N}` (`{_1}`, `{_2}`, …) | Result of the Nth command in source order (1-based) | any expression; must be able to have run before use (checked at preflight) |
 
-Paths on results:
+A bare number is a number: `{1}` renders `1`. (For one release a typed line refuses `{1}` alone with the hint `a result is {_1} now`.)
 
-| Path | Value |
+| Form | Value |
 |------|-------|
-| `{1}` | data if scalar, else message |
-| `{1.code}` | exit code |
-| `{1.message}` | formatted message |
-| `{1.data}` | full data |
-| `{1.<key>}` / `{1.<key>.<n>}` | shortcut into data (e.g. `{1.celsius}`, `{1.items.0}`) |
+| `{_1}` | data if scalar, else message |
+| `{_1.code}` | exit code |
+| `{_1.message}` | formatted message |
+| `{_1.data}` | full data |
+| `{_1[key]}`, `{_1[items][0]}` | inside the data (e.g. `{_1[celsius]}`) |
 
-`code`, `message` and `data` are reserved keys at the top level of a result. A data key with one of those names must be accessed as `{1.data.code}`.
+At most one of `.code`, `.message`, `.data` follows a result; anything else goes in brackets, so a data key named `code` is `{_1[code]}`.
 
 ## 2. Arguments
 
@@ -50,13 +54,15 @@ A type is either **declared once** in the command's parameter definition, or giv
 | `int` | `-3`, `42` | integer; params may add `min` and `max` |
 | `float` | `3.5`, `-0.2` | float |
 | `bool` | `true/false/yes/no/on/off/1/0` | boolean |
-| `range` | `1-100` | `{arg.1.lo}`, `{arg.1.hi}` |
-| `duration` | `30s`, `10m`, `1h30m` | seconds; `{arg.1.seconds}` |
-| `user` | `@name`, `name` | resolved Twitch user: `{arg.1.id}`, `{arg.1.name}`, `{arg.1.display}` |
+| `range` | `1-100` | map: `{arg.1[lo]}`, `{arg.1[hi]}` |
+| `duration` | `30s`, `10m`, `1h30m`, or plain seconds | integer seconds |
+| `user` | `@name`, `name` | resolved Twitch user, a map: `{arg.1[id]}`, `{arg.1[name]}`, `{arg.1[display]}` |
 | `choice(a,b,c)` | one of the listed values | string |
 | `url` | http(s) URLs | string (passes a URL safety check) |
+| `list` | a placeholder holding a list (passed through), or JSON `[…]` | list: `[i]`, `[-i]`, `:len` |
+| `map` | a placeholder holding a map (passed through), or JSON `{…}` | map: `[key]`, `:len`, `:keys`, `:values` |
 
-`.` is for **paths** and `:` is for **types**. This keeps `{arg.1.name}` (a path into a user) distinct from `{arg.1:int}` (type validation).
+`[ ]` goes **into a value** and `:` **converts or measures** it. This keeps `{arg.1[name]}` (a key of a user) distinct from `{arg.1:int}` (type validation). The accessors `:len`, `:keys` and `:values` work on any list or map.
 
 ## 3. Variables (persistent)
 
@@ -74,30 +80,37 @@ A type is either **declared once** in the command's parameter definition, or giv
 - **`channel` always means the channel the run is in.**
 - **All variables are public for now.** Access control only restricts writes. Private variables are a future consideration.
 - Other users' or channels' rows can't be addressed directly.
+- Read inside a stored value with brackets: `{channel.stats[kills]}`. Writes take the same path: `!var set channel.stats[kills] 3`, `-> channel.stats[kills]`, `--> channel.log` (append).
 - The full read/write rules per actor, plus grants, are in **[variable-access-matrix.md](variable-access-matrix.md)**. That table is authoritative. The Read and Write columns above are a summary.
 
 ## 4. Context (read-only)
 
-| Namespace | Fields | Available in |
-|-----------|--------|--------------|
-| `{chatter.*}` reserved fields | `id`, `name` (login), `display`, `rank`, `roles`, `is_sub`, `is_vip`, `is_mod` | anywhere a chatter exists |
-| `{channel.*}` reserved fields | `id`, `name`, `display`, `prefix`, `live`, `title`, `game`, `viewers`, `uptime` | anywhere |
-| `{publisher.*}` reserved fields | `id`, `name`, `display` (owner of the custom command) | custom commands |
+| Root | Fields | Available in |
+|------|--------|--------------|
+| `{$chatter.*}` | `id`, `name` (login), `display`, `rank`, `roles`, `is_sub`, `is_vip`, `is_mod` | anywhere |
+| `{$channel.*}` | `id`, `name`, `display`, `prefix`, `live`, `title`, `game`, `viewers`, `uptime` | anywhere |
+| `{$publisher.*}` | `id`, `name`, `display` (owner of the custom command) | custom commands |
+| `{$bot.*}` | `name`, `id`, `version` | anywhere |
+| `{$now.*}` | `iso`, `unix`, `date`, `time`, `weekday` (channel timezone) | anywhere |
 | `{cmd.*}` | `name`, `alias`, `id`, `version`, `owner` | custom commands |
-| `{bot.*}` | `name`, `id`, `version` | anywhere |
-| `{now.*}` | `iso`, `unix`, `date`, `time`, `weekday` (channel timezone) | anywhere |
-| `{event.*}` | trigger payload: `type`, `user.*`, `input`, `reward.*`, `viewers`, `bits`, `months`, `tier`, `message` | triggers only |
+| `{event.*}` | trigger payload: `type`, `user.*`, `input`, `reward.*`, `viewers`, `bits`, `months`, `tier`, `message` | custom commands and triggers |
 | `{match.*}` | `0` (whole match), `1..N`, named groups | listeners only |
 | `{cooldown.*}` | `command`, `tier`, `tier_remaining`, `user_remaining` | `on_cooldown` callbacks only |
 | `{denied.*}` | `command`, `required_role`, `rank` | `on_denied` callbacks only |
 | `{run.*}` | `id`, `trigger` (`chat`, `timer`, `redemption`…) | anywhere |
 
+A `$` root takes exactly one field. `cmd`, `event`, `match`, `cooldown`, `denied` and `run` are structures the bot defines, so their dots go as deep as the structure does.
+
 ## 5. Reserved names
 
-- **Namespace roots:** `_`, digits, `arg`, `args`, `chatter`, `channel`, `publisher`, `cmd`, `bot`, `now`, `event`, `match`, `cooldown`, `denied`, `run`.
-- **Variable names can't be:** any reserved field listed in §4 for that namespace, `chatter` (under `channel.`, `publisher.` and `publisher.channel.`), `channel` (under `publisher.`), `data`, `code`, `message`, `public`, `root`.
+- **Roots:** `_`, `_N`, `arg`, `args`, `$chatter`, `$channel`, `$publisher`, `$bot`, `$now`, `cmd`, `event`, `match`, `cooldown`, `denied`, `run`, and the variable namespaces of §3. The expression keywords `and`, `or`, `not`, `in`, `true` and `false` are never a reference.
+- **Variable names can't be** (a closed list, `runtime/namespaces.py`):
+  - `data`, `code`, `message`, `public`, `root`, in every namespace;
+  - `chatter` under `channel.`, `publisher.` and `publisher.channel.`, and `channel` under `publisher.`, because those spell a longer namespace.
+
+  Since the bot's fields moved behind `$`, names like `channel.title` are ordinary variables, separate from `$channel.title`.
 - **Variable name format:** `[a-z][a-z0-9_]{0,31}`.
 
 ## 6. Fallbacks
 
-`{x ?? default}`: if `x` is missing, empty or fails type validation, the default is used instead. The default can be a literal or another placeholder: `{chatter.location ?? {channel.location ?? Lisbon}}`.
+`{x ?? default}`: if `x` is missing, empty or fails type validation, the default is used instead. The default can be a literal or another placeholder: `{chatter.location ?? {channel.location ?? Lisbon}}`. In an expression, `??` is an operator too: `{(arg.1 ?? "") == "add"}`.

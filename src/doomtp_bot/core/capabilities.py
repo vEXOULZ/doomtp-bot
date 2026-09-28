@@ -33,14 +33,18 @@ MODERATE = "moderate"  # delete, timeout and ban as the bot
 REDEMPTIONS = "redemptions"  # channel point redemptions (needs the broadcaster's token)
 SUBS = "subs"  # subscription events with details
 BITS = "bits"  # cheer events with details
+BROADCAST = "broadcast"  # set the title and category, place stream markers (broadcaster's token)
+RAIDS = "raids"  # start a raid (broadcaster's token)
 
 MODERATOR_CAPABILITIES = frozenset({FOLLOWERS, MODERATE})
-FULL_CAPABILITIES = frozenset({REDEMPTIONS, SUBS, BITS})
+FULL_CAPABILITIES = frozenset({REDEMPTIONS, SUBS, BITS, BROADCAST, RAIDS})
 # What each broadcaster scope buys, once they have connected their channel (ADR-0007 item 5).
 CAPABILITY_SCOPES = {
     REDEMPTIONS: ("channel:read:redemptions", "channel:manage:redemptions"),
     SUBS: ("channel:read:subscriptions",),
     BITS: ("bits:read",),
+    BROADCAST: ("channel:manage:broadcast",),
+    RAIDS: ("channel:manage:raids",),
 }
 INTERVAL_S = 3600.0  # hourly, per ADR-0007
 

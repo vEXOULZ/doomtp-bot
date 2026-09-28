@@ -12,19 +12,22 @@ import uvicorn
 from doomtp_bot import __version__
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.chatlog.queries import latest_badges
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
-from doomtp_bot.core.capabilities import CapabilityProbe, granted_by
+from doomtp_bot.core.capabilities import MODERATE, CapabilityProbe, granted_by
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
 from doomtp_bot.core.events import Event
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.core.instance_lock import InstanceLock, InstanceLockError
+from doomtp_bot.core.links import BotBadges
 from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.core.streams import StreamPoller, StreamStatus
 from doomtp_bot.customcmds.packs import PackService
-from doomtp_bot.customcmds.resolution import CustomCommandLoader
+from doomtp_bot.customcmds.resolution import CustomCommandLoader, SystemResolver
 from doomtp_bot.customcmds.service import CustomCommandService
+from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
 from doomtp_bot.history.provider import RecentMessagesProvider
@@ -38,6 +41,7 @@ from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.quotes import QuoteService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore
+from doomtp_bot.runtime.resolver import BuiltinResolver
 from doomtp_bot.storage.db import Databases, configure_event_loop, current_version
 from doomtp_bot.triggers.runner import TriggerRunner
 from doomtp_bot.triggers.service import TriggerService
@@ -74,6 +78,16 @@ async def run(settings: Settings) -> None:
     await content_filter.reload()
     customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload, filters=content_filter)
     packs = PackService(dbs.bot, customcmds)
+    try:
+        if not await require_core(packs):
+            log.warning(
+                "bot.core_pending",
+                detail="the core pack can't be installed until the bot is signed in: sign it in at"
+                " /auth/login, run scripts/starter_pack.py and restart",
+            )
+    except CoreNotInstalled:
+        await dbs.close()
+        raise
     history = RecentMessagesProvider(settings.history_provider_url)
     triggers = TriggerService(dbs.bot, filters=content_filter)
     await triggers.reload()
@@ -120,14 +134,18 @@ async def run(settings: Settings) -> None:
         "variable_access": access,
         "history": history,  # the backfill command names the service before anything is sent to it
         "explain_reports": explain_reports,
+        "site_url": settings.web_site_url,  # `!help` links the channel's command page there
         "quotes": QuoteService(dbs.bot),
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
     }
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for)
+    registry = builtin_registry()
     runtime = Runtime(
-        builtin_registry(),
+        registry,
         policy=policy,
+        # The system packs' members are sentinels, loaded once: the pack script's changes need a restart.
+        resolver=await SystemResolver.load(BuiltinResolver(registry), packs),
         callbacks=policy,
         store=store,
         access=access,
@@ -147,6 +165,19 @@ async def run(settings: Settings) -> None:
             )
         return (90, 30.0) if elevated else (20, 30.0)
 
+    bot_badges = BotBadges()
+
+    def links_allowed_for(channel_id: str) -> bool:
+        """Links stay clickable where the bot is a moderator or VIP, or in its own channel (ADR-0019)."""
+        if twitch is None or twitch.bot_id is None:
+            return False
+        if channel_id == twitch.bot_id or bot_badges.may_link(channel_id):
+            return True
+        settings_ = policy.channel_settings(channel_id)
+        if settings_ is not None and MODERATE in settings_.capabilities:
+            return True
+        return policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
+
     def hold_ms_for(channel_id: str) -> int:
         settings_ = policy.channel_settings(channel_id)
         return settings_.reply_hold_ms if settings_ else 0
@@ -157,6 +188,7 @@ async def run(settings: Settings) -> None:
         rate_for=rate_for,
         hold_ms_for=hold_ms_for,
         content_filter=content_filter.apply,
+        links_allowed_for=links_allowed_for,
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
@@ -178,6 +210,7 @@ async def run(settings: Settings) -> None:
             AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None
         ),
         customcmds=customcmds,
+        bot_badges=bot_badges,
     )
 
     backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
@@ -197,6 +230,7 @@ async def run(settings: Settings) -> None:
             if await twitch.start() and twitch.bot_id and twitch.bot_login:
                 retry_in = 0.0
                 await channels.ensure_home(twitch.bot_id, twitch.bot_login)
+                bot_badges.load(await latest_badges(dbs.chatlog, twitch.bot_id))  # VIP status (ADR-0019)
                 await channels.subscribe_all()
                 await probe.probe_all()  # tier per channel, before anything checks a capability
                 await restore_broadcasters()  # full-tier events, where a broadcaster connected
@@ -391,6 +425,9 @@ def main() -> None:
         asyncio.run(run(settings))
     except KeyboardInterrupt:
         pass
+    except CoreNotInstalled as exc:
+        log.error("bot.core_not_installed", detail=str(exc))
+        sys.exit(1)
     finally:
         lock.release()
 

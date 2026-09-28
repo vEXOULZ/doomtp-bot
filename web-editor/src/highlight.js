@@ -21,6 +21,8 @@ const MARKS = new Map(
     "ph.path",
     "ph.type",
     "ph.fallback",
+    "ph.op",
+    "ph.num",
     "raw",
     "error",
   ].map((name) => [name, Decoration.mark({ class: `dtb-${name.replace(".", "-")}` })]),
