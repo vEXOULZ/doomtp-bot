@@ -59,6 +59,8 @@ server's `BOT_IMAGE` would have to change for every release, since there is no m
 
 1. [x] `check-pr-branches.sh` in CI, `dev` refused by the pre-commit hook, and CI publishing `:dev` and
    `:vX.Y.Z`. *(2026-09-28)*
-2. [ ] Create `dev` on GitHub from `main`, protect it like `main`, and make it the default branch.
-3. [ ] Point the open pull requests at `dev`.
-4. [ ] The first release, `v0.2.0`, once this change reaches `main`.
+2. [x] Create `dev` on GitHub from `main`, protect it like `main`, and make it the default branch.
+   *(2026-09-28. Both branches require the four CI jobs and an up-to-date branch.)*
+3. [x] Point the open pull requests at `dev`. *(2026-09-28)*
+4. [x] The first release, `v0.2.0`, once this change reaches `main`. *(2026-09-28: vEXOULZ/doomtp-bot#54,
+   tagged `v0.2.0`.)*
