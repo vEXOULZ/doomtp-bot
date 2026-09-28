@@ -152,7 +152,11 @@ Rejected again on 2026-09-28 in favour of the startup check.
    (amends ADR-0012).
 6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
    starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
-7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
+7. [x] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias. *(2026-09-28:
+   a listener's name lives in the row's `match` JSON, so the table is unchanged; `rm`/`on`/`off` take
+   the name or the id, and `listen test <text>` shows what would fire without running it. Alembic
+   revision 0006 moves `triggers` module toggles and callbacks to `automation`. `!trigger` keeps its old
+   grammar and says it is going away.)*
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
 10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
