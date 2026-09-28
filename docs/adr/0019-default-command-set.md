@@ -143,6 +143,6 @@ Rejected again on 2026-09-28 in favour of the startup check.
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
-10. [ ] An ADR for the HTTP query primitive.
+10. [ ] An ADR for the HTTP query primitive. Drafted as ADR-0020 (proposed); ticked when it is accepted.
 11. [ ] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.
