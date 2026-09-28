@@ -132,7 +132,8 @@ Rejected again on 2026-09-28 in favour of the startup check.
 ## Action Items
 
 1. [ ] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`.
-2. [ ] `random` with a seed, and picking from a list or map.
+2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
+   `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
 3. [ ] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
 4. [ ] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
    endpoint, and `!var usage`.

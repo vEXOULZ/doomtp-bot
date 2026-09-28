@@ -437,3 +437,12 @@ async def test_stdin_for_body_scope() -> None:
 async def test_reply_mention_is_stripped() -> None:
     r = await run(make_runtime(), "@bob !ping", reply_parent_login="bob")
     assert r.send == "pong"
+
+
+async def test_random_with_a_seed_is_repeatable() -> None:
+    first = await run(make_runtime(), "!random 1-1000000 alice 2026-09-28")
+    again = await run(make_runtime(), "!random 1-1000000 alice 2026-09-28")
+    other = await run(make_runtime(), "!random 1-1000000 bob 2026-09-28")
+    assert first.result.code == 0 and first.result.data == again.result.data
+    assert first.result.data != other.result.data
+    assert 1 <= first.result.data <= 1_000_000  # type: ignore[operator]
