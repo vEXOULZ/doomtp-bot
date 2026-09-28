@@ -494,11 +494,11 @@ Each block leaves gaps for related errors, and the rest of 100–1023 is free fo
 | Existing value | Effect |
 |----------------|--------|
 | missing | the variable becomes `[v]` |
-| list | `v` is appended. A list that already holds `MAX_LIST_ITEMS (100)` items fails the store with 300 (`E_LIST_FULL`), and nothing is dropped |
+| list | `v` is appended. A list already at its owner's list limit (default 100 items, see quotas below) fails the store with 300 (`E_LIST_FULL`), and nothing is dropped |
 | anything else | the store fails: the Store node returns code 252 (`E_NOT_A_LIST`) instead of `r`, and nothing is buffered |
 
-- **Limits:** a value over `MAX_VALUE_BYTES` (1 MB) or a space over its name limit (ADR-0010) fails when the write is buffered, with 302 (`E_VALUE_TOO_BIG`) or 305 (`E_TOO_MANY_NAMES`).
-- **Quotas (ADR-0019):** every variable counts against one **owner**, named by the first segment of its namespace: `chatter.*` against the chatter, `channel.*` and `channel.chatter.*` against the channel, and `publisher.*` against the command's publisher. Each owner has a quota for all its values together (default 1 MB) and a cap on any one value (default 256 KB, at most 1 MB). Admins change the defaults or one owner's limits with `!admin quota|valuecap` or the API. Both are checked at commit, in the commit's transaction: a value over its owner's cap gives 302 (`E_VALUE_TOO_BIG`), and a commit that leaves an owner over its quota gives 301 (`E_QUOTA`). Either way nothing in the run is stored. A commit that only shrinks what an owner stores always succeeds, so lowering a quota never blocks a clean-up. Sizes are the stored JSON's UTF-8 bytes. `!var usage [ns]` shows an owner's use.
+- **Limits:** a value over its owner's value cap or a space over its owner's name limit (default 200 names, see quotas below) fails when the write is buffered, with 302 (`E_VALUE_TOO_BIG`) or 305 (`E_TOO_MANY_NAMES`).
+- **Quotas (ADR-0019):** every variable counts against one **owner**, named by the first segment of its namespace: `chatter.*` against the chatter, `channel.*` and `channel.chatter.*` against the channel, and `publisher.*` against the command's publisher. Each owner has a quota for all its values together (default 1 MB) and a cap on any one value (default 256 KB, at most 1 MB). Each owner also has a list limit (default 100 items per list, at most 10,000) and a name limit (default 200 variables per space, at most 10,000). Admins change any of the four, as a default or for one owner, with `!admin quota|valuecap|listitems|names` or the API; an owner without an override of its own follows the default. Both are checked at commit, in the commit's transaction: a value over its owner's cap gives 302 (`E_VALUE_TOO_BIG`), and a commit that leaves an owner over its quota gives 301 (`E_QUOTA`). Either way nothing in the run is stored. A commit that only shrinks what an owner stores always succeeds, so lowering a quota never blocks a clean-up. Sizes are the stored JSON's UTF-8 bytes. `!var usage [ns]` shows an owner's use.
 
 ### 6.6 Output
 
@@ -515,7 +515,7 @@ The expression's final Result `F` determines what the bot sends:
 | 130 | nothing |
 
 - **Only `F` is ever sent.** Intermediate messages are never sent.
-- **Sending path:** the message goes through the Outbox: the moderation recheck, then the badword filter, then chunking into at most `MAX_CHAT_MESSAGES (2)` messages of 500 characters each, then rate limiting.
+- **Sending path:** the message goes through the Outbox: the moderation recheck, then the badword filter, then the link rule (outside channels where the bot is a moderator or VIP, or its own channel, every `.` in a link's host becomes ` dot `; ADR-0019), then chunking into at most `MAX_CHAT_MESSAGES (2)` messages of 500 characters each, then rate limiting.
 - **Contexts:** Trigger, Listener and Callback contexts follow the same table. Explain never sends `F`; it sends its report instead (§9).
 
 ### 6.7 Moderation cancellation
@@ -740,7 +740,8 @@ With `--run`, it also evaluates the expression with a **discarded** write buffer
 | `MAX_DATA_BYTES` | 4096 | §6.1 |
 | `MAX_MESSAGE_CHARS` | 2000 | §6.1 |
 | `MAX_CHAT_MESSAGES` | 2 (500 chars each) | §6.6 |
-| `MAX_LIST_ITEMS` | 100 | §6.5 |
+| Items per list | 100 default per owner, 10,000 at most | ADR-0019 |
+| Variables per space | 200 default per owner, 10,000 at most | ADR-0019 |
 | Variable value size | 256 KB default per owner, 1 MB at most | ADR-0019 |
 | Variable quota | 1 MB default per owner | ADR-0019 |
 

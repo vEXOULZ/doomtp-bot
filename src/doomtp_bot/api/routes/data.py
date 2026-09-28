@@ -46,8 +46,18 @@ from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
 from doomtp_bot.runtime.spec import CommandSpec, LogLevel
-from doomtp_bot.runtime.variables import MAX_QUOTA_BYTES, MAX_VALUE_BYTES, OWNER_KINDS, Space
+from doomtp_bot.runtime.variables import (
+    LIMIT_COLUMNS,
+    MAX_LIST_ITEMS,
+    MAX_NAMES_PER_SPACE,
+    MAX_QUOTA_BYTES,
+    MAX_VALUE_BYTES,
+    OWNER_KINDS,
+    Limits,
+    Space,
+)
 from doomtp_bot.triggers.service import TRIGGER_TYPES, TriggerError, TriggerService
+from doomtp_bot.variables.store import LimitOverride
 
 router = APIRouter(prefix="/api/v1", tags=["data"])
 
@@ -696,21 +706,22 @@ async def channel_storage(request: Request, login: str, caller: Caller = READ) -
     return {
         "used_bytes": sum(used.values()),
         "namespaces": used,
-        "quota_bytes": limits.quota_bytes,
-        "value_cap_bytes": limits.value_cap_bytes,
+        **_limits_json(limits),
     }
 
 
-# ── storage limits (ADR-0019): the same writes as `!admin quota|valuecap` ────
+# ── storage limits (ADR-0019): the same writes as `!admin quota|valuecap|listitems|names` ────
 class LimitsBody(BaseModel):
     """Only the fields sent change. On an owner, `null` goes back to the default."""
 
     quota_bytes: int | None = Field(default=None, ge=0, le=MAX_QUOTA_BYTES)
     value_cap_bytes: int | None = Field(default=None, ge=0, le=MAX_VALUE_BYTES)
+    list_items: int | None = Field(default=None, ge=0, le=MAX_LIST_ITEMS)
+    names_per_space: int | None = Field(default=None, ge=0, le=MAX_NAMES_PER_SPACE)
 
 
-def _limits_json(quota: int | None, cap: int | None) -> dict[str, int | None]:
-    return {"quota_bytes": quota, "value_cap_bytes": cap}
+def _limits_json(limits: Limits | LimitOverride) -> dict[str, int | None]:
+    return {column: getattr(limits, column) for column in LIMIT_COLUMNS}
 
 
 async def _apply_limits(request: Request, kind: str, owner_id: str, body: LimitsBody, caller: Caller) -> None:
@@ -727,9 +738,9 @@ async def variable_limits(request: Request, caller: Caller = ADMIN_READ) -> dict
     store = _state(request, "variable_store")
     defaults = await store.defaults()
     return {
-        "defaults": _limits_json(defaults.quota_bytes, defaults.value_cap_bytes),
+        "defaults": _limits_json(defaults),
         "overrides": [
-            {"owner_kind": kind, "owner_id": owner_id, **_limits_json(o.quota_bytes, o.value_cap_bytes)}
+            {"owner_kind": kind, "owner_id": owner_id, **_limits_json(o)}
             for kind, owner_id, o in await store.overrides()
         ],
     }
@@ -741,7 +752,7 @@ async def set_default_limits(
 ) -> dict[str, Any]:
     await _apply_limits(request, "*", "*", body, caller)
     defaults = await _state(request, "variable_store").defaults()
-    return _limits_json(defaults.quota_bytes, defaults.value_cap_bytes)
+    return _limits_json(defaults)
 
 
 @router.patch("/variable-limits/{kind}/{user}")
@@ -761,8 +772,8 @@ async def set_owner_limits(
     return {
         "owner_kind": kind,
         "owner_id": found["id"],
-        "override": None if own is None else _limits_json(own.quota_bytes, own.value_cap_bytes),
-        "effective": _limits_json(limits.quota_bytes, limits.value_cap_bytes),
+        "override": None if own is None else _limits_json(own),
+        "effective": _limits_json(limits),
     }
 
 

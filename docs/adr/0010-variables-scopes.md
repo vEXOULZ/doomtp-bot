@@ -96,7 +96,7 @@ publication_write_grants(channel_id TEXT, publication_name TEXT, variable TEXT,
 
 - **Size limits:**
   - At most 2 KB of JSON per value. *(Superseded by ADR-0019: a quota and a per-value cap per owner.)*
-  - At most 200 names per `(ns, key1, key2, key3)`.
+  - At most 200 names per `(ns, key1, key2, key3)`. *(ADR-0019: the default of a per-owner setting.)*
   - At most 100,000 rows per channel across `channel.chatter` and `publisher.channel.chatter`.
   - Per-owner caps on `publisher.*` rows, so one author's game can't fill the database.
 - **Operations:** `get`, `set`, `incr` (atomic), `append` (capped list), `del`, `top` (leaderboard over `channel.chatter`, `publisher.chatter` and `publisher.channel.chatter`). Available through `>` / `>>` and the `!var` commands.

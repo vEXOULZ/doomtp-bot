@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.channels import ChannelManager
+    from doomtp_bot.core.links import BotBadges
     from doomtp_bot.core.outbox import Outbox
     from doomtp_bot.core.streams import StreamStatus
     from doomtp_bot.customcmds.service import CustomCommandService
@@ -61,6 +62,18 @@ def should_log_run(report: RunReport, level: LogLevel) -> bool:
     return True
 
 
+def _reply_to(msg: ChatMessage) -> dict[str, str] | None:
+    """The replied-to message, for commands that act on it (`delete`, `pin`)."""
+    if msg.reply_parent_id is None:
+        return None
+    return {
+        "message_id": msg.reply_parent_id,
+        "id": msg.reply_parent_user_id or "",
+        "name": msg.reply_parent_login or "",
+        "display": msg.reply_parent_display or "",
+    }
+
+
 def is_unignore_me(text: str, prefix: str) -> bool:
     """Is this line `<prefix>unignore me`? The one command a chatter who ignored themselves still reaches."""
     return text.startswith(prefix) and [w.lower() for w in text[len(prefix) :].split()] == ["unignore", "me"]
@@ -82,6 +95,7 @@ class Dispatcher:
         streams: StreamStatus | None = None,
         automod: AutoMod | None = None,
         customcmds: CustomCommandService | None = None,
+        bot_badges: BotBadges | None = None,
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -96,6 +110,7 @@ class Dispatcher:
         self.streams = streams
         self.automod = automod
         self.customcmds = customcmds
+        self.bot_badges = bot_badges
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -128,6 +143,8 @@ class Dispatcher:
         if self.activity is not None and not msg.is_self:
             self.activity.saw_message(msg.channel_id)
         if msg.is_self:
+            if self.bot_badges is not None:  # whether the bot may post links here (ADR-0019)
+                self.bot_badges.saw(msg.channel_id, msg.badges)
             return
         if BOT_BADGE_SET_IDS & {b.set_id for b in msg.badges}:
             return
@@ -242,6 +259,7 @@ class Dispatcher:
                     invoker=chatter,
                     trigger_type="chat",
                     message_id=msg.message_id,
+                    reply_to=_reply_to(msg),
                     is_cancelled=invalidated,
                 )
                 report = await self.runtime.run(msg.text, ctx, reply_parent_login=msg.reply_mentions)

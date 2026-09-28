@@ -31,6 +31,7 @@ class ChatMessage:
     message_type: str = "text"
     bits: int = 0
     reply_parent_id: str | None = None
+    reply_parent_user_id: str | None = None
     reply_parent_login: str | None = None
     reply_parent_display: str | None = None
     reward_id: str | None = None

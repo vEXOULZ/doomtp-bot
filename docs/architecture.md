@@ -163,7 +163,7 @@ Three properties the picture is meant to make obvious:
    - The runtime checks the Moderation Index between stages and cancels if the trigger was invalidated (exit code 130).
    - The **Outbox rechecks immediately before calling Helix**.
    - Buffered variable writes are committed only if the run wasn't cancelled.
-5. The final result goes through the Outbox: badword filter, then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
+5. The final result goes through the Outbox: badword filter, then the link rule (links stay clickable only where the bot is a moderator or VIP, or in its own channel; ADR-0019), then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
 6. The run is recorded in `command_runs` according to the command's log level.
 
 ### How step 1 is tested
@@ -324,7 +324,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 - `reads` and `writes` are **enforced**. A handler reaches variables only through `ctx.variables`, which lets it read and write the `namespace.name` keys its spec declares (a declared write is also a read) and fails anything else with code 126. `!var` declares `*`, because the variable is its argument: it is the documented exception (variable-access-matrix.md §2), and a test fails if any other built-in declares `*` or reaches round `ctx.variables`. Expression stores (`> channel.x`) and placeholders are the expression's, not the command's, and the access policy governs those. *(Changed in revision 5: these used to be declarations only.)*
 - `side_effects=True` marks a command that acts on Twitch (§4.3). The runtime checks the moderation index once more right before running it, after its arguments were expanded, and `!explain --run` never runs it.
 - Custom commands carry the same metadata (summary, params, examples), written by their owner.
-- `!help` filters by the **effective policy** for the caller in that channel. `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
+- `!help` filters by the **effective policy** for the caller in that channel, and ends with a link to the channel's page on the web site when `WEB_SITE_URL` is set (ADR-0019). `GET /api/v1/commands` lists everything, including role, cooldown and toggle defaults.
 
 ### 4.3 Execution rules
 
@@ -337,7 +337,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 | Arguments | Declared param types and inline `{arg.N:type}` are validated before the body runs. Failure returns code 2 with generated usage text. |
 | Re-entrancy | Output is never parsed as a command. The bot ignores its own messages. |
 | Variable writes | Buffered per run. They commit atomically at the end if the run was not cancelled, **including when the final code is non-zero** (e.g. `!counter +1 && !fail`). |
-| Side-effect commands | `!timeout` and `!shoutout` (`modules/moderation.py`, `side_effects=True`) act on Twitch at the time of their stage, not at the end of the run. The runtime checks the moderation index right before running them, and each handler checks again right before its Helix call, since looking the target up takes a moment. They need the `moderate` capability. `!explain --run` reports them as not run. |
+| Side-effect commands | `!timeout`, `!shoutout` and the rest of the `moderation` module (`modules/moderation.py`, `side_effects=True`) act on Twitch at the time of their stage, not at the end of the run. The runtime checks the moderation index right before running them, and each handler checks again right before its Helix call, since looking the target up takes a moment. Most need the `moderate` capability; `!settitle`, `!setgame`, `!marker` and `!raid` go out on the broadcaster's token and need `broadcast` or `raids` instead. `!delete`, `!pin` and `!unpin` act on the message the asking one replies to (`ExecContext.reply_to`). `!explain --run` reports them as not run. |
 
 ### 4.4 `!explain <expr>`
 
@@ -471,7 +471,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - Nothing is silently redirected: the placeholder name is the key. A write that isn't allowed is said out loud: publishing lists the writes still waiting on a grant, and `!explain` names the denied ones.
 - **All variables are public for now.** Access control only restricts writes, and write grants name exact variables (no wildcards). Private variables are a future consideration.
 - The full per-actor rules (typed, own, built-in, foreign via link or publication, trigger, callback), grant types and admin actions are in **[variable-access-matrix.md](variable-access-matrix.md)** (reviewed).
-- Values are JSON. Each owner (a chatter, channel or publisher) has a quota, 1 MB by default, and a per-value cap, 256 KB by default, which admins change with `!admin quota|valuecap` (ADR-0019, spec §6.5). Operations are atomic (`set`, `incr`, `append`, `del`, `top`). Writes are buffered per run (§4.3).
+- Values are JSON. Each owner (a chatter, channel or publisher) has a quota, 1 MB by default, a per-value cap, 256 KB by default, a list limit (100 items) and a name limit (200 variables per space), which admins change with `!admin quota|valuecap|listitems|names` (ADR-0019, spec §6.5). Operations are atomic (`set`, `incr`, `append`, `del`, `top`). Writes are buffered per run (§4.3).
 - The full list of namespaces, context fields, argument types and reserved names is in **[namespaces.md](namespaces.md)**.
 
 ---
@@ -558,11 +558,29 @@ A **race window** remains: a mod can act after the message has already been sent
 | Tier | How the channel gets it | What works |
 |------|-------------------------|------------|
 | **basic** | A bot owner or admin runs `!join <channel>`, or the broadcaster types `!join` in the bot's own channel. **No broadcaster OAuth.** | Chat, deletes, clears and chat notifications (subs, resubs, gifts, raids, announcements), reading and sending chat, commands, the log, variables and custom commands. Stream online/offline comes from Helix polling (see ADR-0007). |
-| **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why), the `automod` module and the `moderation` module (`!timeout`, `!shoutout`) |
+| **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why), the `automod` module and the `moderation` module (`!timeout`, `!ban`, `!unban`, `!warn`, `!shoutout`, `!announce`, `!chatmode`, `!clear`, `!shield`, `!delete`, `!pin`, `!unpin`) |
 | **full** | The broadcaster completes OAuth at `/auth/connect` | Everything in moderator, plus channel point redemptions, subscription and cheer event details, the chat bot badge (`channel:bot`) and other broadcaster-scoped features |
 
 - The **CapabilityProbe** runs at join and hourly, and updates `channels.capabilities` and `channels.tier`. It measures mod status by *asking for* the moderator-only `channel.follow` subscription: no endpoint tells the bot's own token whether it is a mod without a scope the broadcaster would have to grant anyway, and that subscription is what a follow trigger needs in any case. What the broadcaster granted (redemptions, subs, bits) is never taken away by a probe — only the broadcaster flow (ADR-0007 item 5) sets it.
-- **The broadcaster flow** (`/auth/connect`) is one link a broadcaster follows. It asks for `channel:bot`, `channel:read:redemptions`, `channel:read:subscriptions` and `bits:read`, and none of them is required: whatever comes back becomes that channel's capabilities, and the rest stays unavailable with a reason. The token is stored as `broadcaster:<user_id>` alongside the bot's own, the channel is joined if it wasn't, and the redemption and cheer subscriptions are created with it. Both OAuth flows return to the one `/auth/callback` Twitch has registered, and are told apart by the `state` — which is doing its anti-forgery job at the same time. At startup, every stored broadcaster token is handed back to the Twitch client and its subscriptions are recreated.
+- **The broadcaster flow** (`/auth/connect`) is one link a broadcaster follows. It asks for `channel:bot`, `channel:read:redemptions`, `channel:read:subscriptions`, `bits:read`, `channel:manage:broadcast` and `channel:manage:raids`, and none of them is required: whatever comes back becomes that channel's capabilities, and the rest stays unavailable with a reason. The token is stored as `broadcaster:<user_id>` alongside the bot's own, the channel is joined if it wasn't, and the redemption and cheer subscriptions are created with it. Both OAuth flows return to the one `/auth/callback` Twitch has registered, and are told apart by the `state` — which is doing its anti-forgery job at the same time. At startup, every stored broadcaster token is handed back to the Twitch client and its subscriptions are recreated.
+
+**Scopes for later.** Asking for a scope is cheap to add and costs every bot and broadcaster a fresh sign-in, so these are listed rather than requested before a feature uses them (reviewed 2026-09-28):
+
+| Feature | Scope | Token |
+|---|---|---|
+| Polls and predictions | `channel:manage:polls`, `channel:manage:predictions` | broadcaster |
+| Creating, fulfilling or refunding channel point rewards | `channel:manage:redemptions` | broadcaster |
+| VIPs and moderators from chat | `channel:manage:vips`, `channel:manage:moderators` | broadcaster |
+| Running ads, reading the ad schedule | `channel:edit:commercial`, `channel:read:ads` | broadcaster |
+| Editing the stream schedule | `channel:manage:schedule` | broadcaster |
+| Hype train and goal events | `channel:read:hype_train`, `channel:read:goals` | broadcaster |
+| Clips from chat | `clips:edit` | bot or broadcaster |
+| Who is in chat (`$channel.chatters`, raffles among present chatters) | `moderator:read:chatters` | bot |
+| Twitch's own AutoMod queue and settings | `moderator:manage:automod`, `moderator:manage:automod_settings` | bot |
+| Blocked terms kept in Twitch rather than in our filter | `moderator:manage:blocked_terms` | bot |
+| Unban requests | `moderator:manage:unban_requests` | bot |
+| Suspicious-user and warning events | `moderator:read:suspicious_users`, `moderator:read:warnings` | bot |
+
   - A broadcaster can take the grant back from Twitch's **Connections** page, and Twitch doesn't tell us. The next subscription attempt is what notices: a 401 or 403 there (or a token Twitch won't take at all) drops the stored token and calls `CapabilityProbe.revoke_full`, so the channel falls back to whatever the bot earned by being a moderator. A request that merely failed on the way is not treated as a revoked grant, and the grant is checked again at every startup rather than on a timer.
 - **Stream status** is Helix `Get Streams` for every joined channel, batched 100 per request, once a minute (`core/streams.py`). A failed request keeps the last answer rather than declaring everybody offline. Transitions become `StreamStatusChanged`, which fires the `stream_online`/`stream_offline` triggers and feeds `only_live`. Live state is memory-only: it is stale the moment the process stops, and the first poll after a restart rebuilds it.
 - Modules and triggers declare what they `require`. Unmet requirements disable a feature with a visible reason instead of an error.
@@ -677,7 +695,7 @@ src/doomtp_bot/
 ├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔ connections and migrations only
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
-│               moderation.py quotes.py logsearch.py                       ✔ timeout, shoutout (§4.3); quotes; log search
+│               moderation.py quotes.py logsearch.py                       ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); quotes; log search
 └─ api/         app.py keys.py sessions.py access.py grammar.py            ✔ no pages: those are doomtp-web's (ADR-0016)
                 routes/ (health auth language data session site)          ✔
                 static/editor/editor.js                                    ✔ the built editor bundle, committed
@@ -702,7 +720,7 @@ owner, as `chatlog/queries.py` does for the full-text search the API and `logsea
 
 ```mermaid
 flowchart LR
-    push["git push to main"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
+    push["release merged into main<br/>(dev → main, ADR-0021)"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
     ci -->|red| none["nothing is published"]
     ci -->|green| ghcr[("ghcr.io/owner/doomtp-bot<br/>:main and :sha")]
 
@@ -732,12 +750,14 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
     only read SQLite.
   - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
     (ADR-0013). The same file builds locally in development and pulls on a server.
-- **How an update reaches the server (ADR-0013):** CI pushes `:main` and `:<sha>` to GHCR on every push to
+- **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
+  `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
+  publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to
   `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
   hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and
+  chosen under. Rolling back means pinning `BOT_IMAGE` to the previous release tag (or a sha tag) — but migrations run at startup and
   are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
   before the deploy.
 - **What the image holds:** the locked dependency set and the installed package — static files,
