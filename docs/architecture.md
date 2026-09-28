@@ -331,7 +331,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 | Rule | Default |
 |------|---------|
 | Preflight | Every command in the expression is resolved and policy-checked **before anything runs**. Commands on an operator branch that may never run are still checked, which keeps `!explain` predictable. |
-| Limits | 8 commands per expression, 3 s per stage, 6 s in total, 4 KB of data per stage, final message up to 2 chat messages, custom command nesting depth 3, cycle detection |
+| Limits | 16 commands per expression (after expansion), 3 s per stage, 6 s in total, 4 KB of data per stage, final message up to 2 chat messages, custom command nesting depth 3, cycle detection |
 | Operators | `\|` stops on failure. `&&`/`\|\|` branch on the exit code. There is no `;` (reserved). `>`/`>>` store only on success. |
 | Output shown | Only the **message of the last executed command**, and only if it isn't empty |
 | Arguments | Declared param types and inline `{arg.N:type}` are validated before the body runs. Failure returns code 2 with generated usage text. |

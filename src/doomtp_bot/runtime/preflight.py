@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from doomtp_bot.runtime.resolver import Resolved, Resolver
     from doomtp_bot.runtime.variables import VariableAccess
 
-MAX_INVOCATIONS = 8
+MAX_INVOCATIONS = 16
 MAX_CC_DEPTH = 3
 
 
