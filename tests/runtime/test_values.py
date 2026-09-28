@@ -1,6 +1,7 @@
 import pytest
 
-from doomtp_bot.runtime.namespaces import FieldPath, VarPath, classify, is_reserved_var_name
+from doomtp_bot.lang.parser import Context
+from doomtp_bot.runtime.namespaces import bot_field_known, is_reserved_var_name, root_available
 from doomtp_bot.runtime.values import MISSING, ConversionError, convert, render
 
 
@@ -67,20 +68,17 @@ async def test_convert_choice_and_bounds_and_user() -> None:
         await convert("@nobody", "user", resolve_user=resolve)
 
 
-def test_classify_placeholders() -> None:
-    assert classify("chatter", ("name",)) == FieldPath("chatter", "name")
-    assert classify("chatter", ("location", "city")) == VarPath("chatter", "location", ("city",))
-    assert classify("channel", ("chatter", "points")) == VarPath("channel.chatter", "points")
-    assert classify("publisher", ("channel", "chatter", "score")) == VarPath(
-        "publisher.channel.chatter", "score"
-    )
-    assert classify("publisher", ("channel", "round")) == VarPath("publisher.channel", "round")
-    assert classify("channel", ("chatter",)) is None
+def test_bot_fields_and_roots() -> None:
+    assert bot_field_known("$chatter", "display") and bot_field_known("$now", "date")
+    assert not bot_field_known("$chatter", "location")
+    assert root_available("_2", Context.LINE) and root_available("$chatter", Context.LINE)
+    assert root_available("arg", Context.BODY) and not root_available("arg", Context.LINE)
+    assert root_available("match", Context.LISTENER) and not root_available("match", Context.BODY)
     assert MISSING is not None and not MISSING
 
 
 def test_reserved_variable_names() -> None:
-    assert is_reserved_var_name("chatter", "name")
+    assert not is_reserved_var_name("chatter", "name")  # `$chatter.name` is the field now
     assert is_reserved_var_name("channel", "chatter")
     assert is_reserved_var_name("publisher", "channel")
     assert is_reserved_var_name("publisher.channel", "chatter")

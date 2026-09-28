@@ -19,12 +19,12 @@ from tests.runtime.helpers import ALICE, CHANNEL, EMOJI_SIGNS, make_runtime, run
 
 # ── Appendix A.2 ───────────────────────────────────────────────────────────
 async def test_a2_1_pipe_data_path() -> None:
-    r = await run(make_runtime(), '!weather Lisbon | echo "it\'s {1.celsius}C"')
+    r = await run(make_runtime(), '!weather Lisbon | echo "it\'s {_1[celsius]}C"')
     assert (r.result.code, r.send) == (0, "it's 21.5C")
 
 
 async def test_a2_2_pipe_stops_on_failure() -> None:
-    r = await run(make_runtime(), '!weather Nowhere | echo "{1.celsius}"')
+    r = await run(make_runtime(), '!weather Nowhere | echo "{_1[celsius]}"')
     assert (r.result.code, r.send, r.executed) == (3, "location not found", [1])
 
 
@@ -35,20 +35,20 @@ async def test_a2_3_or_handles_failure() -> None:
 
 async def test_a2_4_grouped_fallback_is_stored() -> None:
     store = InMemoryVariableStore()
-    r = await run(make_runtime(store=store), "( !weather Nowhere || default ? ) > chatter.w")
+    r = await run(make_runtime(store=store), "( !weather Nowhere || default ? ) -> chatter.w")
     assert (r.result.code, r.send) == (0, "?")
     assert store.data[VarKey("chatter", "u1", name="w")] == "?"
 
 
 async def test_a2_5_store_skipped_on_failure() -> None:
     store = InMemoryVariableStore()
-    r = await run(make_runtime(store=store), "!weather Nowhere > chatter.w")
+    r = await run(make_runtime(store=store), "!weather Nowhere -> chatter.w")
     assert (r.result.code, r.send, store.data) == (3, "location not found", {})
 
 
 async def test_a2_6_reference_to_skipped_command_is_missing() -> None:
-    r = await run(make_runtime(), "!ping || !random 1-6 && echo {2}")
-    assert r.result.code == ErrorCode.E_MISSING_VALUE and r.send == "missing value: {2}"
+    r = await run(make_runtime(), "!ping || !random 1-6 && echo {_2}")
+    assert r.result.code == ErrorCode.E_MISSING_VALUE and r.send == "missing value: {_2}"
 
 
 async def test_a2_7_true_makes_optional_and_sends_nothing() -> None:
@@ -67,15 +67,15 @@ async def test_a2_9_unknown_later_command_replies() -> None:
 
 
 class DenyAdd(AllowAllPolicy):
-    """`add` needs a moderator, refused in preflight; `ping` is on cooldown, refused when it is reached."""
+    """`plus` needs a moderator, refused in preflight; `ping` is on cooldown, refused when it is reached."""
 
     def check(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
-        if spec.name == "add":
+        if spec.name == "plus":
             return Decision(False, Code.DENIED, "needs mod", {"required_role": "moderator"})
         return Decision.allow()
 
     def is_permitted(self, ctx, spec: CommandSpec) -> bool:  # type: ignore[no-untyped-def]
-        return spec.name != "add"
+        return spec.name != "plus"
 
     def check_cooldown(self, ctx, spec: CommandSpec) -> Decision:  # type: ignore[no-untyped-def]
         if spec.name == "ping":
@@ -99,13 +99,31 @@ class LosesTheRace(AllowAllPolicy):
 
 
 async def test_a2_10_denied_is_silent_with_callback() -> None:
-    r = await run(make_runtime(policy=DenyAdd()), "!add 1 2")
+    r = await run(make_runtime(policy=DenyAdd()), "!plus 1 2")
     assert (r.result.code, r.send, r.callback, r.result.data) == (
         126,
         None,
         "on_denied",
         {"required_role": "moderator"},
     )  # type: ignore[union-attr]
+
+
+async def test_a_refused_command_in_an_ifelse_branch_waits_for_its_branch() -> None:
+    runtime = make_runtime(policy=DenyAdd())
+    r = await run(runtime, "!ifelse {false} ( plus 1 2 ) ( echo fine )")
+    assert (r.result.code, r.send) == (0, "fine")
+    r = await run(runtime, "!ifelse {true} ( plus 1 2 || echo refused ) && echo after")
+    assert (r.result.code, r.send) == (0, "after")
+    r = await run(runtime, "!ifelse {true} ( plus 1 2 )")
+    assert (r.result.code, r.send, r.executed) == (126, None, [])
+
+
+async def test_outside_a_branch_a_refusal_still_stops_the_line_up_front() -> None:
+    runtime = make_runtime(policy=DenyAdd())
+    r = await run(runtime, "!plus 1 2 || echo refused")
+    assert (r.result.code, r.send, r.origin, r.executed) == (126, None, "preflight", [])
+    r = await run(runtime, "!ifelse {false} ( nosuch ) ( echo fine )")  # a typo is still a typo
+    assert (r.result.code, r.origin) == (127, "preflight")
 
 
 # ── cooldowns fail the invocation, at runtime (spec 1.1, ADR-0006 item 5) ────
@@ -129,7 +147,7 @@ async def test_a_branch_that_never_runs_never_trips_its_cooldown() -> None:
 
 
 async def test_or_routes_around_a_cooldown() -> None:
-    r = await run(make_runtime(policy=DenyAdd()), "!ping || echo ping is resting for {_.user_remaining}s")
+    r = await run(make_runtime(policy=DenyAdd()), "!ping || echo ping is resting for {_[user_remaining]}s")
     assert (r.result.code, r.send, r.callback, r.executed) == (0, "ping is resting for 4s", None, [2])
 
 
@@ -178,12 +196,12 @@ class DenyWrites:
 
 
 async def test_a2_11_denied_store_blocks_whole_line() -> None:
-    r = await run(make_runtime(access=DenyWrites()), "!random 1-6 > channel.x")
+    r = await run(make_runtime(access=DenyWrites()), "!random 1-6 -> channel.x")
     assert (r.result.code, r.send, r.executed) == (126, None, [])
 
 
 async def test_a2_12_forward_reference_rejected() -> None:
-    r = await run(make_runtime(), "!echo {1}")
+    r = await run(make_runtime(), "!echo {_1}")
     assert r.result.code == ErrorCode.E_BAD_REFERENCE and "runs later" in (r.send or "")
 
 
@@ -234,37 +252,39 @@ async def test_sentinels(expr: str, code: int, send: str | None) -> None:
 
 
 async def test_true_passes_data_through() -> None:
-    r = await run(make_runtime(), "!weather Lisbon | true | echo {_.celsius}")
+    r = await run(make_runtime(), "!weather Lisbon | true | echo {_[celsius]}")
     assert r.send == "21.5"
 
 
 # ── placeholders ───────────────────────────────────────────────────────────
 async def test_bare_result_prefers_scalar_data_then_message() -> None:
     rt = make_runtime()
-    assert (await run(rt, "!add 2 3 | echo {1}")).send == "5"
-    assert (await run(rt, "!weather Lisbon | echo {1}")).send == "Lisbon: 21.5°C"
-    assert (await run(rt, "!weather Lisbon | echo {1.tags}")).send == "sun, warm"
-    assert (await run(rt, "!weather Lisbon | echo {1.tags.1} {1.code}")).send == "warm 0"
+    assert (await run(rt, "!plus 2 3 | echo {_1}")).send == "5"
+    assert (await run(rt, "!weather Lisbon | echo {_1}")).send == "Lisbon: 21.5°C"
+    assert (await run(rt, "!weather Lisbon | echo {_1[tags]}")).send == "sun, warm"
+    assert (await run(rt, "!weather Lisbon | echo {_1[tags][1]} {_1.code}")).send == "warm 0"
 
 
 async def test_fallbacks_and_types() -> None:
     rt = make_runtime()
     assert (await run(rt, "!echo {chatter.location ?? {channel.location ?? Lisbon}}")).send == "Lisbon"
-    assert (await run(rt, "!add 1 1 | echo {1:int ?? no}")).send == "2"
-    assert (await run(rt, "!weather Lisbon | echo {1.nope ?? none}")).send == "none"
+    assert (await run(rt, "!plus 1 1 | echo {_1:int ?? no}")).send == "2"
+    assert (await run(rt, "!weather Lisbon | echo {_1[nope] ?? none}")).send == "none"
     assert (await run(rt, "!echo abc | echo {_:int ?? not a number}")).send == "not a number"
 
 
 async def test_context_fields() -> None:
     rt = make_runtime()
-    r = await run(rt, "!echo {chatter.display} in {channel.name} rank {chatter.rank} sub={chatter.is_sub}")
+    r = await run(
+        rt, "!echo {$chatter.display} in {$channel.name} rank {$chatter.rank} sub={$chatter.is_sub}"
+    )
     assert r.send == "Alice in doomtp rank 20 sub=true"
 
 
 async def test_placeholder_expansion_is_not_re_lexed() -> None:
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
-    stored = await run(rt, '!echo "a | b && \\{x}" > chatter.trick')
+    stored = await run(rt, '!echo "a | b && \\{x}" -> chatter.trick')
     assert stored.result.ok
     r = await run(rt, "!echo {chatter.trick}")
     assert r.send == "a | b && {x}" and r.executed == [1]
@@ -286,10 +306,10 @@ async def test_arg_captures_in_body_context() -> None:
 # ── arguments ──────────────────────────────────────────────────────────────
 async def test_argument_validation_usage_message() -> None:
     rt = make_runtime()
-    r = await run(rt, "!add one 2")
-    assert r.result.code == Code.USAGE and r.send == "usage: !add <a> <b> — a: expected a whole number"
-    r = await run(rt, "!add 1")
-    assert r.send == "usage: !add <a> <b> — b is required"
+    r = await run(rt, "!plus one 2")
+    assert r.result.code == Code.USAGE and r.send == "usage: !plus <a> <b> — a: expected a whole number"
+    r = await run(rt, "!plus 1")
+    assert r.send == "usage: !plus <a> <b> — b is required"
     r = await run(rt, "!ping extra")
     assert r.send == "usage: !ping — takes no arguments"
 
@@ -297,7 +317,7 @@ async def test_argument_validation_usage_message() -> None:
 async def test_random_uses_context_rng() -> None:
     rt = make_runtime()
     expected = random.Random(7).randint(1, 6)
-    r = await run(rt, "!random 1-6 | echo you rolled {1}", seed=7)
+    r = await run(rt, "!random 1-6 | echo you rolled {_1}", seed=7)
     assert r.send == f"you rolled {expected}"
 
 
@@ -305,7 +325,7 @@ async def test_random_uses_context_rng() -> None:
 async def test_read_your_writes_and_append() -> None:
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
-    r = await run(rt, "!echo a >> chatter.log && echo b >> chatter.log && echo {chatter.log}")
+    r = await run(rt, "!echo a --> chatter.log && echo b --> chatter.log && echo {chatter.log}")
     assert r.send == "a, b"
     assert store.data[VarKey("chatter", "u1", name="log")] == ["a", "b"]
 
@@ -313,8 +333,8 @@ async def test_read_your_writes_and_append() -> None:
 async def test_append_to_non_list_fails_and_nothing_is_committed_for_that_op() -> None:
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
-    await run(rt, "!echo x > chatter.v")
-    r = await run(rt, "!echo y >> chatter.v")
+    await run(rt, "!echo x -> chatter.v")
+    r = await run(rt, "!echo y --> chatter.v")
     assert r.result.code == ErrorCode.E_NOT_A_LIST and r.send == "chatter.v is not a list"
     assert store.data[VarKey("chatter", "u1", name="v")] == "x"
 
@@ -324,7 +344,7 @@ async def test_append_to_a_full_list_fails_instead_of_dropping_the_oldest_item()
     rt = make_runtime(store=store)
     key = VarKey("chatter", "u1", name="log")
     store.data[key] = [str(n) for n in range(DEFAULT_LIST_ITEMS)]
-    r = await run(rt, "!echo new >> chatter.log")
+    r = await run(rt, "!echo new --> chatter.log")
     assert r.result.code == ErrorCode.E_LIST_FULL
     assert r.result.data == {"error": "E_LIST_FULL"}
     assert store.data[key][0] == "0" and len(store.data[key]) == DEFAULT_LIST_ITEMS
@@ -332,25 +352,25 @@ async def test_append_to_a_full_list_fails_instead_of_dropping_the_oldest_item()
 
 async def test_writes_commit_even_when_final_code_fails() -> None:
     store = InMemoryVariableStore()
-    r = await run(make_runtime(store=store), "!echo kept > channel.note && false")
+    r = await run(make_runtime(store=store), "!echo kept -> channel.note && false")
     assert r.result.code == 1 and store.data[VarKey("channel", "c1", name="note")] == "kept"
 
 
 async def test_publisher_namespaces_only_in_custom_commands() -> None:
     rt = make_runtime()
-    r = await run(rt, "!echo x > publisher.y")
+    r = await run(rt, "!echo x -> publisher.y")
     assert r.result.code == ErrorCode.E_BAD_REFERENCE and "only available inside custom commands" in (
         r.send or ""
     )
     pub = Publisher(id="p9", login="bob")
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
-    ok = await run(rt, "echo x > publisher.channel.chatter.score", context=Context.BODY, publisher=pub)
+    ok = await run(rt, "echo x -> publisher.channel.chatter.score", context=Context.BODY, publisher=pub)
     assert ok.result.ok and store.data[VarKey("publisher.channel.chatter", "p9", "c1", "u1", "score")] == "x"
 
 
 async def test_chatter_namespace_without_invoker() -> None:
-    r = await run(make_runtime(), "echo x > chatter.y", invoker=None, context=Context.TRIGGER)
+    r = await run(make_runtime(), "echo x -> chatter.y", invoker=None, context=Context.TRIGGER)
     assert r.result.code == ErrorCode.E_BAD_REFERENCE and "needs a chatter" in (r.send or "")
 
 
@@ -365,7 +385,7 @@ async def test_stage_timeout() -> None:
 async def test_expression_timeout_discards_writes() -> None:
     store = InMemoryVariableStore()
     rt = make_runtime(store=store, expr_timeout=0.05)
-    r = await run(rt, "!echo x > chatter.t && slow")
+    r = await run(rt, "!echo x -> chatter.t && slow")
     assert r.result.code == Code.TIMEOUT and store.data == {}
 
 
@@ -389,21 +409,21 @@ async def test_moderation_cancellation_discards_writes() -> None:
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)
     flag = {"cancelled": False}
-    r1 = await run(rt, "!echo x > chatter.c && cancelme", is_cancelled=lambda: flag["cancelled"])
+    r1 = await run(rt, "!echo x -> chatter.c && cancelme", is_cancelled=lambda: flag["cancelled"])
     assert r1.send == "not cancelled"
     flag["cancelled"] = True
     store.data.clear()
-    r2 = await run(rt, "!echo x > chatter.c && cancelme", is_cancelled=lambda: flag["cancelled"])
+    r2 = await run(rt, "!echo x -> chatter.c && cancelme", is_cancelled=lambda: flag["cancelled"])
     assert (r2.result.code, r2.send, r2.cancelled, store.data) == (130, None, True, {})
 
 
 async def test_failures_carry_the_specs_error_identifier() -> None:
     rt = make_runtime()
-    bad_ref = await run(rt, "!echo {2}")
+    bad_ref = await run(rt, "!echo {_2}")
     assert bad_ref.result.code == ErrorCode.E_BAD_REFERENCE
     assert bad_ref.result.data == {
         "error": "E_BAD_REFERENCE",
-        "reference": "{2}",
+        "reference": "{_2}",
     }
     missing = await run(rt, "!echo {chatter.unset}")  # no ?? fallback (spec §7.5)
     assert missing.result.data == {"error": "E_MISSING_VALUE", "reference": "{chatter.unset}"}
@@ -418,7 +438,7 @@ async def test_parse_error_visible_only_when_first_command_runnable() -> None:
     rt = make_runtime(policy=DenyAdd())
     shown = await run(rt, "!echo a ; b")
     assert shown.origin == "parse" and shown.send and "E_RESERVED_OPERATOR" in shown.send
-    hidden = await run(rt, "!add 1 ; 2")
+    hidden = await run(rt, "!plus 1 ; 2")
     assert hidden.send is None
     unknown = await run(rt, "!nope a ; b")
     assert unknown.send is None

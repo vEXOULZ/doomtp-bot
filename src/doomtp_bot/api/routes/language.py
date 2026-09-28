@@ -13,11 +13,15 @@ from pydantic import BaseModel, Field
 
 from doomtp_bot.api.access import authenticate, check_area
 from doomtp_bot.core.streams import live_fields
+from doomtp_bot.customcmds.resolution import system_specs
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
 from doomtp_bot.lang.errors import HINTS, ParseError, ParseErrorCode
 from doomtp_bot.lang.parser import (
+    ACCESSORS,
+    BOT_FIELDS,
     DEFAULT_PREFIX,
+    EXPR_COMMANDS,
     MAX_EXPR_CHARS,
     MAX_NAME_CHARS,
     MAX_PLACEHOLDER_NESTING,
@@ -165,6 +169,9 @@ async def language(request: Request) -> dict[str, Any]:
         "syntax_version": SYNTAX_VERSION,
         "operators": list(OPERATOR_TOKENS),
         "roots": sorted(REGISTERED_ROOTS),
+        "bot_fields": {"$" + root: sorted(fields) for root, fields in BOT_FIELDS.items()},
+        "accessors": list(ACCESSORS),
+        "expression_commands": sorted(EXPR_COMMANDS),
         "roots_by_context": {str(ctx): sorted(roots) for ctx, roots in CONTEXT_ROOTS.items()},
         "types": list(TYPE_NAMES) + ["choice"],
         "variable_namespaces": list(VAR_NAMESPACES),
@@ -187,8 +194,7 @@ async def commands(request: Request) -> dict[str, Any]:
     """Every built-in command with its usage, parameters and examples (architecture §4.2)."""
     runtime = _runtime(request)
     listing = []
-    for entry in runtime.registry.all():
-        spec = entry.spec
+    for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver):
         listing.append(
             {
                 "name": spec.name,

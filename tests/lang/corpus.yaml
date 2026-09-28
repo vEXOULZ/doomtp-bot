@@ -1,4 +1,5 @@
-# Parser conformance corpus — command-language-spec Appendix A.1 (+ cases added with Appendix C).
+# Parser conformance corpus — command-language-spec Appendix A.1 (+ cases added with Appendix C),
+# syntax 2.0 (ADR-0018).
 # Shared by pytest (parser: ast / error / column) and vitest in web-editor/ (token classes only).
 #
 # Fields:
@@ -19,12 +20,12 @@ defaults:
 
 cases:
   - id: A1.01-pipe-placeholder
-    input: '!random 1-100 | echo dice rolled a {1}!'
-    ast: 'Pipe(random["1-100"], echo["dice","rolled","a","{1}!"])'
+    input: '!random 1-100 | echo dice rolled a {_1}!'
+    ast: 'Pipe(random["1-100"], echo["dice","rolled","a","{_1}!"])'
 
   - id: A1.02-operators-only-when-standalone
-    input: '!echo a|b ;) -> >:( (lol)'
-    ast: 'echo["a|b",";)","->",">:(","(lol)"]'
+    input: '!echo a|b ;) a->b > >> >:( (lol)'
+    ast: 'echo["a|b",";)","a->b",">",">>",">:(","(lol)"]'
 
   - id: A1.03-apostrophe-and-double-quotes
     input: "!echo it's \"a | b\" fine"
@@ -64,7 +65,7 @@ cases:
     ast: 'And(Group(Or(a[], true[])), b[])'
 
   - id: A1.12-precedence
-    input: '!a && !b | !c > channel.x || !d'
+    input: '!a && !b | !c -> channel.x || !d'
     ast: 'Or(And(a[], Pipe(b[], Store(c[], channel.x))), d[])'
 
   - id: A1.13-unexpected-operator
@@ -72,16 +73,16 @@ cases:
     error: E_UNEXPECTED_OPERATOR
 
   - id: A1.14-dynamic-varref
-    input: '!a > {chatter.name}'
+    input: '!a -> {chatter.name}'
     error: E_DYNAMIC_VARREF
 
   - id: A1.15-explain-raw-tail
-    input: '!explain !random 1-6 | echo {1}'
-    ast: 'explain[]~"!random 1-6 | echo {1}"'
+    input: '!explain !random 1-6 | echo {_1}'
+    ast: 'explain[]~"!random 1-6 | echo {_1}"'
 
   - id: A1.16-cc-add-raw-tail-quoted
-    input: '!cc add roll "!random 1-6 | echo {1}"'
-    ast: 'cc["add","roll"]~"!random 1-6 | echo {1}"'
+    input: '!cc add roll "!random 1-6 | echo {_1}"'
+    ast: 'cc["add","roll"]~"!random 1-6 | echo {_1}"'
 
   - id: A1.17-not-a-command
     input: '! random'
@@ -120,8 +121,8 @@ cases:
     error: E_RAW_TAIL_POSITION
 
   - id: C.05-cc-info-is-not-raw
-    input: '!cc info x | echo {1}'
-    ast: 'Pipe(cc["info","x"], echo["{1}"])'
+    input: '!cc info x | echo {_1}'
+    ast: 'Pipe(cc["info","x"], echo["{_1}"])'
 
   - id: C.06-missing-operand
     input: '!a |'
@@ -132,16 +133,16 @@ cases:
     error: E_UNTERMINATED_QUOTE
 
   - id: C.08-append-store
-    input: '!roll >> chatter.rolls'
+    input: '!roll --> chatter.rolls'
     ast: 'Append(roll[], chatter.rolls)'
 
   - id: C.09-publisher-channel-chatter
     context: body
-    input: 'incr > publisher.channel.chatter.wins'
+    input: 'incr -> publisher.channel.chatter.wins'
     ast: 'Store(incr[], publisher.channel.chatter.wins)'
 
   - id: C.10-reserved-var-name
-    input: '!a > channel.chatter'
+    input: '!a -> channel.chatter'
     error: E_BAD_VARREF
 
   - id: C.11-personal-alias
@@ -160,8 +161,8 @@ cases:
 
   - id: C.14-emoji-prefix-gap
     prefix: '🏜'
-    input: '🏜 random 1-100 | echo {1}'
-    ast: 'Pipe(random["1-100"], echo["{1}"])'
+    input: '🏜 random 1-100 | echo {_1}'
+    ast: 'Pipe(random["1-100"], echo["{_1}"])'
 
   - id: C.15-emoji-prefix-variation-selector
     prefix: '🏜'
@@ -172,3 +173,122 @@ cases:
     input: '! random'
     not_command: true
 
+
+  # ── syntax 2.0 (ADR-0018) ──────────────────────────────────────────────────
+  - id: V2.01-bot-fields-have-a-sigil
+    input: '!echo {$chatter.display} {chatter.display_name}'
+    ast: 'echo["{$chatter.display}","{chatter.display_name}"]'
+
+  - id: V2.02-a-number-is-a-number-in-bodies
+    context: body
+    input: 'echo {1} {1 + 1}'
+    ast: 'echo["{1}","{1 + 1}"]'
+
+  - id: V2.03-v1-result-ref-in-a-line
+    input: '!echo {1}'
+    error: E_BAD_PLACEHOLDER
+    column: 7
+
+  - id: V2.04-v1-bot-field-in-a-line
+    input: '!echo {chatter.display}'
+    error: E_BAD_PLACEHOLDER
+
+  - id: V2.05-v1-store-in-a-line
+    input: '!echo hi > channel.x'
+    error: E_UNEXPECTED_OPERATOR
+    column: 10
+
+  - id: V2.06-v1-dot-into-a-result
+    input: '!echo {_.x}'
+    error: E_BAD_PLACEHOLDER
+
+  - id: V2.07-arithmetic-precedence
+    input: '!echo {-_1 * (2 + 3) // 4 % 5 - 1}'
+    ast: 'echo["{((((-_1) * (2 + 3)) // 4) % 5) - 1}"]'
+
+  - id: V2.08-chained-comparison-and-logic
+    input: '!echo {1 < channel.x <= 3 and not $channel.live or false}'
+    ast: 'echo["{((1 < channel.x <= 3) and (not $channel.live)) or false}"]'
+
+  - id: V2.09-membership
+    input: '!echo {arg.1 in channel.list} {2 not in _1}'
+    ast: 'echo["{arg.1 in channel.list}","{2 not in _1}"]'
+
+  - id: V2.10-brackets
+    input: '!echo {channel.stats["best run"][-1]} {channel.q[arg.1]} {channel.log[_1]}'
+    ast: 'echo["{channel.stats[\"best run\"][-1]}","{channel.q[arg.1]}","{channel.log[_1]}"]'
+
+  - id: V2.11-accessors
+    input: '!echo {channel.x:keys:len} {channel.x:len ?? 0}'
+    ast: 'echo["{channel.x:keys:len}","{channel.x:len ?? 0}"]'
+
+  - id: V2.12-command-substitution
+    input: '!echo {!random 1-6} and {!echo {arg.1 ?? x}}'
+    ast: 'echo["{!random[\"1-6\"]}","and","{!echo[\"{arg.1 ?? x}\"]}"]'
+
+  - id: V2.13-check
+    input: '!check {channel.x} > 3 && echo big'
+    ast: 'And(check{{channel.x} > 3}, echo["big"])'
+
+  - id: V2.14-bare-expression-line
+    input: '!1 + 2 * 3'
+    ast: 'calc{1 + (2 * 3)}'
+
+  - id: V2.15-bare-expression-line-group
+    prefix: '🏜'
+    input: '🏜 (1 + 2) * 3'
+    ast: 'calc{(1 + 2) * 3}'
+
+  - id: V2.16-bare-expression-line-placeholder
+    input: '!{channel.deaths} * 2'
+    ast: 'calc{{channel.deaths} * 2}'
+
+  - id: V2.17-a-lone-number-is-not-a-command
+    input: '!100'
+    not_command: true
+
+  - id: V2.18-a-lone-negative-is-not-a-command
+    input: '!-1'
+    not_command: true
+
+  - id: V2.19-ifelse
+    input: '!ifelse {channel.deaths > 10} ( echo rough day ) ( echo going well )'
+    ast: 'IfElse("{channel.deaths > 10}", Group(echo["rough","day"]), Group(echo["going","well"]))'
+
+  - id: V2.20-ifelse-without-else
+    input: '!ifelse {_.code == 224} ( echo empty )'
+    ast: 'IfElse("{_.code == 224}", Group(echo["empty"]))'
+
+  - id: V2.21-store-into-a-path
+    input: '!echo a -> channel.log[arg.1][0]'
+    ast: 'Store(echo["a"], channel.log[arg.1][0])'
+
+  - id: V2.22-store-key-that-is-a-segment-name
+    input: '!a -> channel.x[chatter]'
+    ast: 'Store(a[], channel.x[chatter])'
+
+  - id: V2.23-expression-syntax
+    input: '!echo {1 +}'
+    error: E_EXPR_SYNTAX
+
+  - id: V2.24-unknown-operator
+    input: '!echo {1 ** 2}'
+    error: E_UNKNOWN_OP
+
+  - id: V2.25-unknown-accessor
+    input: '!echo {arg.1:integer}'
+    error: E_UNKNOWN_OP
+
+  - id: V2.26-expression-too-deep
+    input: '!echo {((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))}'
+    error: E_EXPR_TOO_DEEP
+
+  - id: V2.27-ifelse-third-branch
+    context: body
+    input: 'ifelse {true} ( echo a ) ( echo b ) ( echo c )'
+    error: E_UNEXPECTED_OPERATOR
+
+  - id: V2.28-ifelse-needs-a-group
+    context: body
+    input: 'ifelse {true} echo a'
+    error: E_EXPR_SYNTAX

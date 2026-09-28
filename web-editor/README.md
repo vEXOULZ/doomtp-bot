@@ -23,7 +23,7 @@ stands, so `npm run build` is part of changing anything here, and its output goe
 
 ```html
 <dtb-editor context="line" prefix="🏜" channel="doomtp" explain>
-  <textarea name="expr" rows="3">🏜ping | echo {1}</textarea>
+  <textarea name="expr" rows="3">🏜ping | echo {_1}</textarea>
 </dtb-editor>
 <script src="/static/editor/editor.js" defer></script>
 ```
@@ -39,7 +39,7 @@ this way, ADR-0016):
 
 ```js
 const { tokenize } = await import("/static/editor/tokens.js");
-tokenize("🏜random 1-6 | echo {1}", { context: "line" }); // [{ t: "prefix", s: 0, e: 2 }, …]
+tokenize("🏜random 1-6 | echo {_1}", { context: "line" }); // [{ t: "prefix", s: 0, e: 2 }, …]
 ```
 
 Its exports (`tokenize`, `allowsGap`, `DEFAULT_PREFIX`, `VARIATION_SELECTOR`) and the token classes are a

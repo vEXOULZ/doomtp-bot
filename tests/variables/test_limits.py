@@ -234,14 +234,14 @@ async def test_admin_sets_the_list_and_name_limits_as_counts(h: Harness) -> None
 
 async def test_a_list_limit_override_applies_to_that_owner_only(h: Harness) -> None:
     await h.store.set_limit("channel", CHANNEL_ID, "list_items", 2, actor="1", via="chat")
-    await h.run("owner", "!echo a >> channel.log")
-    await h.run("owner", "!echo b >> channel.log")
-    report = await h.run("owner", "!echo c >> channel.log")
+    await h.run("owner", "!echo a --> channel.log")
+    await h.run("owner", "!echo b --> channel.log")
+    report = await h.run("owner", "!echo c --> channel.log")
     assert report.result is not None and report.result.code == ErrorCode.E_LIST_FULL
     assert await h.store.get(VarKey("channel", CHANNEL_ID, name="log")) == ["a", "b"]
-    await h.run("alice", "!echo a >> chatter.log")
-    await h.run("alice", "!echo b >> chatter.log")
-    assert (await h.run("alice", "!echo c >> chatter.log")).result.ok  # type: ignore[union-attr]
+    await h.run("alice", "!echo a --> chatter.log")
+    await h.run("alice", "!echo b --> chatter.log")
+    assert (await h.run("alice", "!echo c --> chatter.log")).result.ok  # type: ignore[union-attr]
 
 
 async def test_a_name_limit_override_caps_the_variables_in_a_space(h: Harness) -> None:

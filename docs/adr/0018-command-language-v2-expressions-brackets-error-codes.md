@@ -140,11 +140,17 @@ parser, and doomtp-web's highlighter has to follow in the same window.
 
 1. [x] Codes: widen `Result` to 0–1023, add the `E_*` enum beside `Code` in `runtime/result.py`, free
    code 4 in `fail`, and rewrite spec §6.2. Raise `E_LIST_FULL` where `-->` silently drops items today.
-2. [ ] `$` fields and the closed reserved list (`runtime/namespaces.py`, `docs/namespaces.md`,
-   `GET /api/v1/namespaces`).
-3. [ ] Brackets, `list`/`map` types, accessors, path writes and `!var pop`.
-4. [ ] Result refs `{_N}`, `->`/`-->`, and the quoted cron spec.
-5. [ ] The expression evaluator, the operator commands, `check`, `ifelse` and `calc`.
-6. [ ] `{!cmd}` substitution and bare expression lines.
-7. [ ] Syntax version 2, and the rewrite of stored bodies with a golden test over a dev dump.
-8. [ ] Spec, grammar, railroad diagrams and corpus, plus a doomtp-web PR for the highlighter.
+2. [x] `$` fields and the closed reserved list (`runtime/namespaces.py`, `docs/namespaces.md`,
+   `GET /api/v1/namespaces`). The fields are listed by `GET /api/v1/language` (`bot_fields`), which is
+   where the editor already reads roots from; there is no separate namespaces route.
+3. [x] Brackets, `list`/`map` types, accessors, path writes and `!var pop`.
+4. [x] Result refs `{_N}`, `->`/`-->`, and the quoted cron spec. Typed lines point `{1}`, `> ns.x` and
+   `{chatter.name}` at the new spelling for one release.
+5. [x] The expression evaluator, the operator commands, `check`, `ifelse` and `calc`.
+6. [x] `{!cmd}` substitution and bare expression lines. Purely numeric command names are refused.
+7. [x] Syntax version 2, and the rewrite of stored bodies (`lang/migrate.py`, `scripts/migrate_v2.py`).
+   The golden test is a table of 1.0 → 2.0 pairs (`tests/lang/test_migrate.py`). The run over a dev
+   dump is `scripts/migrate_v2.py --dry-run` against the dev database, before deploying: it prints every
+   rewrite and writes nothing.
+8. [x] Spec, grammar, railroad diagrams and corpus, plus a doomtp-web PR for the highlighter. The bot's
+   own editor bundle (`web-editor/`) is on 2.0 too, with two new token classes, `ph.op` and `ph.num`.

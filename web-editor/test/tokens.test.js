@@ -22,9 +22,9 @@ const classes = (text, options) =>
 
 describe("the lexer", () => {
   it("colours a command line", () => {
-    expect(classes("!random 1-100 | echo a {1}!", { prefix: "!", context: "line" })).toBe(
+    expect(classes("!random 1-100 | echo a {_1}!", { prefix: "!", context: "line" })).toBe(
       "prefix:! command:random word:1-100 operator:| command:echo word:a " +
-        "ph.open:{ ph.root:1 ph.close:} word:!",
+        "ph.open:{ ph.root:_1 ph.close:} word:!",
     );
   });
 
@@ -35,8 +35,8 @@ describe("the lexer", () => {
   });
 
   it("only treats an operator as one when it stands alone", () => {
-    expect(classes("echo a|b ;) -> (lol)")).toBe(
-      "command:echo word:a|b word:;) word:-> word:(lol)",
+    expect(classes("echo a|b ;) a->b > (lol)")).toBe(
+      "command:echo word:a|b word:;) word:a->b word:> word:(lol)",
     );
     expect(classes("echo a | b")).toBe("command:echo word:a operator:| command:b");
   });
@@ -52,24 +52,80 @@ describe("the lexer", () => {
       "command:echo ph.open:{ ph.root:arg ph.path:.1 ph.type::int ph.fallback:?? " +
         "ph.fallback:20 ph.close:}",
     );
-    expect(classes("echo {chatter.name}")).toBe(
-      "command:echo ph.open:{ ph.root:chatter ph.path:.name ph.close:}",
+    expect(classes("echo {$chatter.name}")).toBe(
+      "command:echo ph.open:{ ph.root:$chatter ph.path:.name ph.close:}",
     );
   });
 
   it("colours a placeholder inside a fallback", () => {
-    expect(classes("echo {arg.1 ?? {chatter.display}}")).toBe(
+    expect(classes("echo {arg.1 ?? {$chatter.display}}")).toBe(
       "command:echo ph.open:{ ph.root:arg ph.path:.1 ph.fallback:?? ph.open:{ " +
-        "ph.root:chatter ph.path:.display ph.close:} ph.close:}",
+        "ph.root:$chatter ph.path:.display ph.close:} ph.close:}",
+    );
+  });
+
+  it("colours an expression inside a placeholder", () => {
+    expect(classes("echo {channel.deaths * 2 > 10}")).toBe(
+      "command:echo ph.open:{ ph.root:channel ph.path:.deaths ph.op:* ph.num:2 ph.op:> ph.num:10 ph.close:}",
+    );
+    expect(classes('echo {(arg.1 ?? "") == "add" and not true}')).toBe(
+      "command:echo ph.open:{ ph.op:( ph.root:arg ph.path:.1 ph.op:?? string:\"\" ph.op:) ph.op:== " +
+        'string:"add" ph.op:and ph.op:not ph.num:true ph.close:}',
+    );
+    expect(classes("echo {channel.deaths-1}")).toBe(
+      "command:echo ph.open:{ ph.root:channel ph.path:.deaths ph.op:- ph.num:1 ph.close:}",
+    );
+  });
+
+  it("reads brackets, accessors and result references", () => {
+    expect(classes("echo {channel.stats[kills]} {channel.log[-1]} {channel.q[arg.1]:len}")).toBe(
+      "command:echo ph.open:{ ph.root:channel ph.path:.stats ph.op:[ ph.path:kills ph.op:] ph.close:} " +
+        "ph.open:{ ph.root:channel ph.path:.log ph.op:[ ph.op:- ph.num:1 ph.op:] ph.close:} " +
+        "ph.open:{ ph.root:channel ph.path:.q ph.op:[ ph.root:arg ph.path:.1 ph.op:] ph.type::len ph.close:}",
+    );
+    expect(classes("echo {_1.code} {_[_1]}")).toBe(
+      "command:echo ph.open:{ ph.root:_1 ph.path:.code ph.close:} " +
+        "ph.open:{ ph.root:_ ph.op:[ ph.root:_1 ph.op:] ph.close:}",
+    );
+  });
+
+  it("colours a command substitution", () => {
+    expect(classes("echo you rolled {!random 1-6}!")).toBe(
+      "command:echo word:you word:rolled ph.open:{ ph.op:! command:random word:1-6 ph.close:} word:!",
+    );
+  });
+
+  it("reads check and calc as one expression", () => {
+    expect(classes("check {channel.deaths} > 3 && echo rough")).toBe(
+      "command:check ph.open:{ ph.root:channel ph.path:.deaths ph.close:} ph.op:> ph.num:3 " +
+        "operator:&& command:echo word:rough",
+    );
+    expect(classes("@calc 1 + 2")).toBe("personal:@ command:calc word:1 word:+ word:2");
+  });
+
+  it("reads a bare expression line, and leaves a lone number alone", () => {
+    expect(classes("\u{1F3DC}(2 + 3) * 4", { context: "line" })).toBe(
+      "prefix:\u{1F3DC} ph.op:( ph.num:2 ph.op:+ ph.num:3 ph.op:) ph.op:* ph.num:4",
+    );
+    expect(classes("\u{1F3DC}100", { context: "line" })).toBe("prefix:\u{1F3DC} command:100");
+  });
+
+  it("reads ifelse as a command with groups", () => {
+    expect(classes("ifelse {x.y > 1} ( echo a ) ( echo b )")).toBe(
+      "command:ifelse ph.open:{ ph.root:x ph.path:.y ph.op:> ph.num:1 ph.close:} operator:( " +
+        "command:echo word:a operator:) operator:( command:echo word:b operator:)",
     );
   });
 
   it("names the variable a result is stored in", () => {
-    expect(classes("echo hi > channel.greeting")).toBe(
-      "command:echo word:hi operator:> store.target:channel.greeting",
+    expect(classes("echo hi -> channel.greeting")).toBe(
+      "command:echo word:hi operator:-> store.target:channel.greeting",
     );
-    expect(classes("echo hi >> chatter.log")).toBe(
-      "command:echo word:hi operator:>> store.target:chatter.log",
+    expect(classes("echo hi --> chatter.log")).toBe(
+      "command:echo word:hi operator:--> store.target:chatter.log",
+    );
+    expect(classes("echo 3 -> channel.stats[kills]")).toBe(
+      "command:echo word:3 operator:-> store.target:channel.stats[kills]",
     );
   });
 

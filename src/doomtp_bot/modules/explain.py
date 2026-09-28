@@ -31,7 +31,7 @@ FLAGS = {"--run", "--as-body"}
         log_level=LogLevel.INVOCATIONS,
         examples=(
             Example(
-                "{sign}explain {sign}random 1-6 | echo you rolled {1}",
+                "{sign}explain {sign}random 1-6 | echo you rolled {_1}",
                 "Pipe(random,echo) — 1:random ✓, 2:echo ✓",
             ),
             Example("{sign}explain --run {sign}ping", "ping[] — 1:ping ✓ — ran: code 0, would send: pong"),

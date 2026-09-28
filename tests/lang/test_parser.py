@@ -6,7 +6,17 @@ from collections.abc import Sequence
 
 import pytest
 
-from doomtp_bot.lang.ast import Invocation, Pipe, Placeholder, Text, invocations, to_canonical
+from doomtp_bot.lang.ast import (
+    Index,
+    Invocation,
+    Lit,
+    Pipe,
+    Placeholder,
+    Ref,
+    Text,
+    invocations,
+    to_canonical,
+)
 from doomtp_bot.lang.errors import ParseError, ParseErrorCode
 from doomtp_bot.lang.parser import (
     MAX_EXPR_CHARS,
@@ -51,19 +61,19 @@ def error(text: str, context: Context = Context.LINE) -> ParseError:
 
 # ── indexes and spans ──────────────────────────────────────────────────────
 def test_invocation_indexes_are_preorder_source_order() -> None:
-    node = parse("( !a || b ) && c | d > channel.x", Context.LINE, PARAMS)
+    node = parse("( !a || b ) && c | d -> channel.x", Context.LINE, PARAMS)
     assert [(i.index, i.name) for i in invocations(node)] == [(1, "a"), (2, "b"), (3, "c"), (4, "d")]
 
 
 def test_spans_cover_source() -> None:
-    text = "!random 1-100 | echo {1}!"
+    text = "!random 1-100 | echo {_1}!"
     node = parse(text, Context.LINE, PARAMS)
     assert isinstance(node, Pipe)
     first, second = invocations(node)
     assert text[first.span[0] : first.span[1]] == "!random 1-100"
-    assert text[second.span[0] : second.span[1]] == "echo {1}!"
+    assert text[second.span[0] : second.span[1]] == "echo {_1}!"
     ph = second.args[0][0]
-    assert isinstance(ph, Placeholder) and text[ph.span[0] : ph.span[1]] == "{1}"
+    assert isinstance(ph, Placeholder) and text[ph.span[0] : ph.span[1]] == "{_1}"
 
 
 def test_names_are_case_folded() -> None:
@@ -119,11 +129,11 @@ def test_escaped_quote_inside_quotes() -> None:
 
 
 def test_placeholders_inside_quotes_are_parsed() -> None:
-    node = parse('!echo "it\'s {1.celsius}C now!"', Context.LINE, PARAMS)
+    node = parse('!echo "it\'s {_1[celsius]}C now!"', Context.LINE, PARAMS)
     assert isinstance(node, Invocation)
     parts = node.args[0]
     assert parts[0] == Text("it's ") and isinstance(parts[1], Placeholder) and parts[2] == Text("C now!")
-    assert parts[1].root == "1" and parts[1].path == ("celsius",)
+    assert parts[1].expr == Index(Ref("_1"), Lit("celsius"))
 
 
 def test_body_allows_surrounding_whitespace() -> None:
@@ -141,8 +151,8 @@ def test_prefix_optional_after_operators_and_in_body() -> None:
     [
         ("!echo {arg.3+}", 'echo["{arg.3+}"]'),
         ("!echo {arg.3+raw}", 'echo["{arg.3+raw}"]'),
-        ("!echo {1.items.0}", 'echo["{1.items.0}"]'),
-        ("!echo { chatter.name }", 'echo["{chatter.name}"]'),
+        ("!echo {_1[items][0]}", 'echo["{_1[items][0]}"]'),
+        ("!echo { $chatter.name }", 'echo["{$chatter.name}"]'),
         ("!echo {_.code}", 'echo["{_.code}"]'),
         ("!echo {x ?? y}", None),
         ("!echo {arg.1:int??5}", 'echo["{arg.1:int ?? 5}"]'),
@@ -162,15 +172,128 @@ def test_placeholder_forms(text: str, expected: str | None) -> None:
     "text",
     [
         "!echo {1",
-        "!echo {0}",
         "!echo {arg.}",
-        "!echo {arg.1:integer}",
+        "!echo {x}",
         "!echo {arg.1:choice()}",
         "!echo {_x}",
     ],
 )
 def test_bad_placeholders(text: str) -> None:
     assert error(text).code is ParseErrorCode.BAD_PLACEHOLDER
+
+
+# ── syntax 1.0 spellings, rejected with the 2.0 one (ADR-0018) ─────────────
+@pytest.mark.parametrize(
+    ("text", "code", "hint"),
+    [
+        ("!echo {1}", ParseErrorCode.BAD_PLACEHOLDER, "a result is {_1} now"),
+        (
+            "!echo {chatter.display}",
+            ParseErrorCode.BAD_PLACEHOLDER,
+            "the bot's fields start with $: {$chatter.display}",
+        ),
+        ("!echo {_.x}", ParseErrorCode.BAD_PLACEHOLDER, "a result has .code, .message and .data; use _[key]"),
+        ("!echo a > channel.x", ParseErrorCode.UNEXPECTED_OPERATOR, "> is plain text now: store with ->"),
+        ("!echo a >> channel.x", ParseErrorCode.UNEXPECTED_OPERATOR, ">> is plain text now: store with -->"),
+    ],
+)
+def test_v1_spellings_get_the_new_one(text: str, code: ParseErrorCode, hint: str) -> None:
+    exc = error(text)
+    assert (exc.code, exc.hint) == (code, hint)
+
+
+def test_greater_than_is_text_in_bodies() -> None:
+    assert body("echo {1} a>b") == 'echo["{1}","a>b"]'  # `{1}` is the number one
+    assert body('echo ">" "->"') == 'echo[">","->"]'
+
+
+# ── expressions (ADR-0018 item 3) ──────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("echo {-_1 * (2 + 3) // 4 % 5 - 1}", 'echo["{((((-_1) * (2 + 3)) // 4) % 5) - 1}"]'),
+        ("echo {1 < channel.x <= 3}", 'echo["{1 < channel.x <= 3}"]'),
+        (
+            "echo {not arg.1 and $chatter.is_mod or false}",
+            'echo["{((not arg.1) and $chatter.is_mod) or false}"]',
+        ),
+        (
+            "echo {arg.1 in channel.list and 2 not in _1}",
+            'echo["{(arg.1 in channel.list) and (2 not in _1)}"]',
+        ),
+        ("echo {channel.q[arg.1] ?? none}", 'echo["{channel.q[arg.1] ?? none}"]'),
+        ("echo {arg.1 ?? 1 ?? 2}", 'echo["{arg.1 ?? 1 ?? 2}"]'),
+        ('echo {channel.stats["best run"][-1]:len}', 'echo["{channel.stats[\\"best run\\"][-1]:len}"]'),
+        ("echo {$now.date} {_2.code}", 'echo["{$now.date}","{_2.code}"]'),
+        ("echo {!random 1-6} x{!echo {arg.1}}", 'echo["{!random[\\"1-6\\"]}","x{!echo[\\"{arg.1}\\"]}"]'),
+        ("echo {channel.x:keys:len}", 'echo["{channel.x:keys:len}"]'),
+    ],
+)
+def test_expressions(text: str, expected: str) -> None:
+    assert body(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [
+        ("echo {1 +}", ParseErrorCode.EXPR_SYNTAX),
+        ("echo {1 2}", ParseErrorCode.EXPR_SYNTAX),
+        ("echo {(1}", ParseErrorCode.EXPR_SYNTAX),
+        ("echo {1 ** 2}", ParseErrorCode.UNKNOWN_OP),
+        ("echo {arg.1:integer}", ParseErrorCode.UNKNOWN_OP),
+        ("echo {" + "(" * 40 + "1" + ")" * 40 + "}", ParseErrorCode.EXPR_TOO_DEEP),
+    ],
+)
+def test_expression_errors(text: str, code: ParseErrorCode) -> None:
+    assert error(text, Context.BODY).code is code
+
+
+def test_check_and_calc_take_one_expression() -> None:
+    assert body("check 1 < channel.x < 3 && echo in") == 'And(check{1 < channel.x < 3}, echo["in"])'
+    assert body("calc (1 + 2) * 3 -> channel.x") == "Store(calc{(1 + 2) * 3}, channel.x)"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("!1 + 2", "calc{1 + 2}"),
+        ("!(1+2)*3", "calc{(1 + 2) * 3}"),
+        ("!{channel.x} * 2", "calc{{channel.x} * 2}"),
+    ],
+)
+def test_bare_expression_lines_run_calc(text: str, expected: str) -> None:
+    assert line(text) == expected
+
+
+@pytest.mark.parametrize("text", ["!100", "!-1"])
+def test_a_lone_number_is_not_a_command(text: str) -> None:
+    with pytest.raises(NotACommand):
+        parse(preprocess_line(text), Context.LINE, PARAMS)
+
+
+def test_ifelse() -> None:
+    assert (
+        body("ifelse {_1.code == 0} ( echo a ) ( echo b ) -> channel.x")
+        == 'Store(IfElse("{_1.code == 0}", Group(echo["a"]), Group(echo["b"])), channel.x)'
+    )
+    assert body("ifelse {channel.live} ( echo on )") == 'IfElse("{channel.live}", Group(echo["on"]))'
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [
+        ("ifelse {1} echo a", ParseErrorCode.EXPR_SYNTAX),
+        ("ifelse ( echo a )", ParseErrorCode.EXPR_SYNTAX),
+        ("ifelse {1} ( echo a ) ( echo b ) ( echo c )", ParseErrorCode.UNEXPECTED_OPERATOR),
+    ],
+)
+def test_ifelse_errors(text: str, code: ParseErrorCode) -> None:
+    assert error(text, Context.BODY).code is code
+
+
+def test_store_targets_take_a_path() -> None:
+    assert body("echo a -> channel.x[arg.1][0]") == 'Store(echo["a"], channel.x[arg.1][0])'
+    assert body("echo a --> channel.log[kills]") == 'Append(echo["a"], channel.log[kills])'
 
 
 def test_placeholder_nesting_limit() -> None:
@@ -184,10 +307,10 @@ def test_placeholder_nesting_limit() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("!a > chatter.x", "Store(a[], chatter.x)"),
-        ("!a > publisher.chatterbox", "Store(a[], publisher.chatterbox)"),
-        ("!a > publisher.channel.round", "Store(a[], publisher.channel.round)"),
-        ("( !a | b ) > channel.x", "Store(Group(Pipe(a[], b[])), channel.x)"),
+        ("!a -> chatter.x", "Store(a[], chatter.x)"),
+        ("!a -> publisher.chatterbox", "Store(a[], publisher.chatterbox)"),
+        ("!a -> publisher.channel.round", "Store(a[], publisher.channel.round)"),
+        ("( !a | b ) -> channel.x", "Store(Group(Pipe(a[], b[])), channel.x)"),
     ],
 )
 def test_store_targets(text: str, expected: str) -> None:
@@ -197,13 +320,13 @@ def test_store_targets(text: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("text", "code"),
     [
-        ("!a > channel.Deaths", ParseErrorCode.BAD_VARREF),
-        ("!a > channels.x", ParseErrorCode.BAD_VARREF),
-        ("!a > channel.", ParseErrorCode.BAD_VARREF),
-        ("!a > chatter.x" + "y" * 32, ParseErrorCode.BAD_VARREF),
-        ("!a > channel.x > channel.y", ParseErrorCode.UNEXPECTED_OPERATOR),
-        ("!a > | b", ParseErrorCode.UNEXPECTED_OPERATOR),
-        ("!a >", ParseErrorCode.MISSING_OPERAND),
+        ("!a -> channel.Deaths", ParseErrorCode.BAD_VARREF),
+        ("!a -> channels.x", ParseErrorCode.BAD_VARREF),
+        ("!a -> channel.", ParseErrorCode.BAD_VARREF),
+        ("!a -> chatter.x" + "y" * 32, ParseErrorCode.BAD_VARREF),
+        ("!a -> channel.x -> channel.y", ParseErrorCode.UNEXPECTED_OPERATOR),
+        ("!a -> | b", ParseErrorCode.UNEXPECTED_OPERATOR),
+        ("!a ->", ParseErrorCode.MISSING_OPERAND),
     ],
 )
 def test_store_target_errors(text: str, code: ParseErrorCode) -> None:

@@ -25,8 +25,9 @@ from doomtp_bot.core.links import BotBadges
 from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.core.streams import StreamPoller, StreamStatus
 from doomtp_bot.customcmds.packs import PackService
-from doomtp_bot.customcmds.resolution import CustomCommandLoader
+from doomtp_bot.customcmds.resolution import CustomCommandLoader, SystemResolver
 from doomtp_bot.customcmds.service import CustomCommandService
+from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
 from doomtp_bot.history.provider import RecentMessagesProvider
@@ -40,6 +41,7 @@ from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.quotes import QuoteService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore
+from doomtp_bot.runtime.resolver import BuiltinResolver
 from doomtp_bot.storage.db import Databases, configure_event_loop, current_version
 from doomtp_bot.triggers.runner import TriggerRunner
 from doomtp_bot.triggers.service import TriggerService
@@ -76,6 +78,16 @@ async def run(settings: Settings) -> None:
     await content_filter.reload()
     customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload, filters=content_filter)
     packs = PackService(dbs.bot, customcmds)
+    try:
+        if not await require_core(packs):
+            log.warning(
+                "bot.core_pending",
+                detail="the core pack can't be installed until the bot is signed in: sign it in at"
+                " /auth/login, run scripts/starter_pack.py and restart",
+            )
+    except CoreNotInstalled:
+        await dbs.close()
+        raise
     history = RecentMessagesProvider(settings.history_provider_url)
     triggers = TriggerService(dbs.bot, filters=content_filter)
     await triggers.reload()
@@ -128,9 +140,12 @@ async def run(settings: Settings) -> None:
     }
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for)
+    registry = builtin_registry()
     runtime = Runtime(
-        builtin_registry(),
+        registry,
         policy=policy,
+        # The system packs' members are sentinels, loaded once: the pack script's changes need a restart.
+        resolver=await SystemResolver.load(BuiltinResolver(registry), packs),
         callbacks=policy,
         store=store,
         access=access,
@@ -410,6 +425,9 @@ def main() -> None:
         asyncio.run(run(settings))
     except KeyboardInterrupt:
         pass
+    except CoreNotInstalled as exc:
+        log.error("bot.core_not_installed", detail=str(exc))
+        sys.exit(1)
     finally:
         lock.release()
 

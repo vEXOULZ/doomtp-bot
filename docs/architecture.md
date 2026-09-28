@@ -41,7 +41,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | F1 | **Log every chat message** into a queryable database. **Never delete log rows.** Deletions, timeouts, bans and clears are recorded as events and flagged on the affected messages. |
 | F2 | **Fill log gaps** caused by crashes, updates or disconnects from a third-party history service (recent-messages) |
 | F3 | **Command language** with pipes and chain operators (`\|`, `&&`, `\|\|`, grouping, `>`/`>>` variable writes) and sentinel commands (`true`, `false`, `default`, `fail`). A pipe stops on failure, and `\|\|` handles failures. Details are in the language proposal. |
-| F4 | **Commands return three things:** an exit code (0 = success), a formatted message (shown when it's the final result) and structured data (usable by later commands, e.g. `{1.celsius}`) |
+| F4 | **Commands return three things:** an exit code (0 = success), a formatted message (shown when it's the final result) and structured data (usable by later commands, e.g. `{_1[celsius]}`) |
 | F5 | **Permission tiers:** Twitch built-ins (broadcaster, lead mod, mod, VIP, sub), custom roles (e.g. ambassador) at any rank including above moderator, and **global bot owners and bot admins** above everything |
 | F6 | **Cooldowns:** a global cooldown per tier **and** a per-user cooldown. **Both must have expired** for the command to run. Rejections are silent, with an optional **callback** that can customize the response. |
 | F7 | **Toggles** for modules and individual commands, **globally and per channel** |
@@ -272,7 +272,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 class Result:
     code: int = 0                 # 0 ok; non-zero = error (see table)
     message: str | None = None    # human text; sent to chat only if this is the final result
-    data: JsonValue = None        # structured; addressable as {N.path} / {_.path}
+    data: JsonValue = None        # structured; addressable as {_N[key]} / {_[key]}
 ```
 
 | Code | Meaning (shell-inspired) |
@@ -309,7 +309,7 @@ it stays here as the example. Adding it means an ADR for the source first.)*
     data_schema={"celsius": float, "fahrenheit": float, "condition": str, "location": str},
     examples=[                                 # {sign} = the reader's own command sign
         Example("{sign}weather Lisbon", "Lisbon: 21°C, clear"),
-        Example('{sign}weather Lisbon | echo "it\'s {1.celsius}C now!"', "it's 21C now!"),
+        Example('{sign}weather Lisbon | echo "it\'s {_1[celsius]}C now!"', "it's 21C now!"),
     ],
     required_role="everyone",
     default_cooldowns={"everyone": Cooldown(tier_s=10, user_s=30), "moderator": Cooldown(0, 0)},
@@ -453,6 +453,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - **Limits:** a body may nest custom commands `MAX_CC_DEPTH (3)` deep, cycles are rejected, and the 8-invocation limit counts every command after expansion (spec §5.2).
 - **Packs** group a user's commands so they publish and unpublish as one unit, and the pack's name is the module name for `!module` toggles (ADR-0012). A command added to a published pack appears immediately.
 - **Derived commands** are custom commands published to the global scope by a bot owner or admin: available in every channel, still overridable by a channel publication, and never able to shadow a Python built-in (a *primitive*).
+- The **`core` system pack** (the derived sentinels `false` and `default`) is installed by the same script, resolves in every channel without a publication, and is checked at startup: the bot refuses to start without it at the expected version (ADR-0012 amendment, ADR-0019).
 - The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`) is installed by `scripts/starter_pack.py` (compose: `--profile tools run --rm starter-pack`), not seeded at boot: it creates the commands under the bot's own account and publishes the `starter` pack globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication.
 
 ### Variables, briefly
@@ -503,7 +504,7 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
 
 - **Crons** are timers told *when* instead of *how often*: the five standard fields (`minute hour day month weekday`, with `*`, lists, ranges, steps and names) evaluated in the channel's `timezone`. The scheduler keeps both clocks — monotonic for intervals, so correcting the machine's clock can't skip a timer, and wall clock for crons, which is the whole point of them. A matching minute fires once, and the minute is marked handled even when `only_live` holds it back, so a cron waits for its next time instead of firing late.
 
-**Built so far:** `!trigger listen <regex> => <expression>`, `!trigger add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron <m h dom mon dow> => <expression>`, each with `list`, `rm` and `on`/`off`. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
+**Built so far:** `!trigger listen <regex> <expression>`, `!trigger add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron "<m h dom mon dow>" <expression>`, each with `list`, `rm` and `on`/`off`. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
 
 ---
 

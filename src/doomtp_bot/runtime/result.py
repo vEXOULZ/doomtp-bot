@@ -55,6 +55,9 @@ class ErrorCode(enum.IntEnum):
     E_BAD_VARREF = 209
     E_RAW_TAIL_POSITION = 210
     E_TOO_LONG = 211
+    E_EXPR_SYNTAX = 212
+    E_UNKNOWN_OP = 213
+    E_EXPR_TOO_DEEP = 214
     # 220–229: preflight (spec §5.2)
     E_TOO_MANY = 220
     E_INPUT_NOT_ACCEPTED = 221
@@ -64,8 +67,17 @@ class ErrorCode(enum.IntEnum):
     # 230–249: evaluation
     E_MISSING_VALUE = 230
     E_DATA_TOO_LARGE = 231
+    E_TYPE = 232
+    E_DIV_ZERO = 233
+    E_OVERFLOW = 234
+    E_EXPR_BUDGET = 235
+    E_SUBST_DEPTH = 236
     # 250–269: values and collections
+    E_INDEX = 250
+    E_KEY = 251
     E_NOT_A_LIST = 252
+    E_NOT_A_MAP = 253
+    E_EMPTY = 254
     E_NOT_A_NUMBER = 255
     # 300–399: storage
     E_LIST_FULL = 300

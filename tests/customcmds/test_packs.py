@@ -10,12 +10,13 @@ from typing import Any
 import pytest
 
 from doomtp_bot.customcmds.packs import RESERVED_PACK_NAMES, PackService
-from doomtp_bot.customcmds.resolution import CustomCommandLoader
+from doomtp_bot.customcmds.resolution import CustomCommandLoader, SystemResolver
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import RunReport, Runtime
+from doomtp_bot.runtime.resolver import BuiltinResolver
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.variables.access import VariableAccessPolicy
@@ -81,12 +82,14 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     await access.reload()
     service = CustomCommandService(dbs.bot, on_grants_changed=access.reload)
     packs = PackService(dbs.bot, service)
+    registry = builtin_registry()
     runtime = Runtime(
-        builtin_registry(),
+        registry,
         policy=policy,
         store=store,
         access=access,
         resolve_user=resolve_user,
+        resolver=SystemResolver(BuiltinResolver(registry)),  # empty until a test installs a system pack
         custom=CustomCommandLoader(service, packs),
         services={
             "policy": policy,
@@ -198,7 +201,7 @@ async def test_a_pack_holds_only_its_owners_commands(h: Harness) -> None:
 
 # ── derived commands: published globally ───────────────────────────────────
 async def test_a_global_publication_works_in_every_channel(h: Harness) -> None:
-    await h.say("owner", "!cc add hug echo {chatter.display} hugs {arg.1 ?? everyone}")
+    await h.say("owner", "!cc add hug echo {$chatter.display} hugs {arg.1 ?? everyone}")
     reply = await h.say("owner", "!cc publish hug global")
     assert reply is not None and "everywhere" in reply
     assert await h.say("bob", "!hug alice") == "Bob hugs alice"

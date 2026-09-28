@@ -50,9 +50,10 @@ These stay as they are, plus:
 ### Derived commands
 
 - **`ping`** moves out of Python into the `starter` pack.
-- **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to call `shoutout` and then
-  echo a line, and adds the readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and
-  `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
+- **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to echo a line, calling
+  `shoutout` first when a moderator runs it (`ifelse {$chatter.is_mod} ( shoutout … || true ) && echo …`;
+  a command in an `ifelse` branch is refused only if its branch is chosen, spec §6.3). It adds the
+  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
 - **Quotes** become a derived pack. `quote` dispatches with `ifelse` to the internal members
   `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `channel.quotes` and
   `channel.quote_next`. `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
@@ -138,23 +139,22 @@ Rejected again on 2026-09-28 in favour of the startup check.
    every channel, set on the deploy side.)*
 2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
    `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
-3. [ ] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
+3. [x] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
    `shoutout` is done, and so are the rest (2026-09-28): `ban`, `unban`/`untimeout`, `warn`,
    `announce`, `chatmode`, `clear`, `shield`, and `delete`, `pin` and `unpin` on the replied-to message,
    on the bot's token; `settitle`, `setgame`, `marker` and `raid` on the broadcaster's, behind the new
-   `broadcast` and `raids` capabilities (ADR-0007). `so` still only echoes: a body that calls `shoutout` fails preflight with 127
-   wherever the bot lacks `moderate`, even behind `|| true`. `so` will check first with `ifelse`
-   (ADR-0018), as reviewed on 2026-09-28.
+   `broadcast` and `raids` capabilities (ADR-0007). `so` checks with `ifelse` (ADR-0018) before
+   calling `shoutout`, so it still echoes wherever the bot lacks `moderate`.
 4. [x] Quotas and per-value caps: `variable_limits`, `size_bytes`, `!admin quota|valuecap`, the JSON
    endpoint, and `!var usage`. *(The admin UI is a doomtp-web PR. The list and name limits
    joined as `list_items` and `names_per_space`, `!admin listitems|names`, in migration 0004.)*
-5. [ ] Internal pack members and system packs, with `false` and `default` moved into `core`
+5. [x] Internal pack members and system packs, with `false` and `default` moved into `core`
    (amends ADR-0012).
 6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
-   starter readouts, and `$channel.next_stream`.
+   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
 7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
 10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
-11. [ ] The reserved-name list in ADR-0010 and the access matrix, with a test against
+11. [x] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.

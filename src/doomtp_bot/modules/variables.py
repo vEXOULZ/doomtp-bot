@@ -11,36 +11,64 @@ import dataclasses
 import json
 from typing import TYPE_CHECKING, Any
 
+from doomtp_bot.lang.ast import Lit
+from doomtp_bot.lang.errors import ParseError
+from doomtp_bot.lang.parser import parse_var_ref
 from doomtp_bot.modules._common import rank, reject_filtered, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK
+from doomtp_bot.runtime import ops
 from doomtp_bot.runtime.context import Args, CommandContext
+from doomtp_bot.runtime.executor import store_key
 from doomtp_bot.runtime.namespaces import CHATTER_KEY, VAR_NAMESPACES
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
-from doomtp_bot.runtime.values import MISSING, descend, render
-from doomtp_bot.runtime.variables import ANY, Space, VarKey, WriteOp, format_size, key_for, owner_of
+from doomtp_bot.runtime.values import MISSING, render
+from doomtp_bot.runtime.variables import (
+    ANY,
+    Space,
+    VarKey,
+    WriteOp,
+    format_size,
+    key_for,
+    owner_of,
+    pop_item,
+)
 
 if TYPE_CHECKING:
     from doomtp_bot.variables.store import PostgresVariableStore
 
 MODULE = "variables"
 USAGE = (
-    "var get <ns.name> [user] | set <ns.name> <value> | incr <ns.name> [amount] | del <ns.name> [user]"
-    " | list <ns> [user] | top <ns.name> [count] | usage [ns]"
+    "var get <ns.name[path]> [user] | set <ns.name[path]> <value> | incr <ns.name[path]> [amount]"
+    " | del <ns.name[path]> [user] | pop <ns.name[path]> [index] | list <ns> [user] | top <ns.name> [count]"
+    " | usage [ns]"
 )
-_NS_LONGEST_FIRST = sorted(VAR_NAMESPACES, key=len, reverse=True)
 
 
-def parse_ref(token: str, *, allow_path: bool = False) -> tuple[str, str, tuple[str, ...]]:
-    """'channel.chatter.points.best' → ('channel.chatter', 'points', ('best',))."""
-    for ns in _NS_LONGEST_FIRST:
-        if token.startswith(ns + "."):
-            name, *path = token[len(ns) + 1 :].split(".")
-            if not name or (path and not allow_path):
-                break
-            return ns, name, tuple(path)
-    raise CommandError(f"expected a variable like channel.deaths or chatter.location, got {token}")
+def parse_ref(token: str, *, allow_path: bool = False) -> tuple[str, str, tuple[str | int, ...]]:
+    """'channel.chatter.points[best][0]' → ('channel.chatter', 'points', ('best', 0)) (ADR-0018).
+
+    The typed line already put any `{…}` into the text, so a path step is a plain key or index here.
+    """
+    try:
+        ref = parse_var_ref(token)
+    except ParseError:
+        raise CommandError(
+            f"expected a variable like channel.deaths or channel.stats[kills], got {token}"
+        ) from None
+    if ref.path and not allow_path:
+        raise CommandError(f"{ref.namespace}.{ref.name} takes no [path] here")
+    steps: list[str | int] = []
+    for step in ref.path:
+        if not isinstance(step, Lit):
+            raise CommandError("a path takes plain keys and numbers here; put a value in with {…}")
+        steps.append(store_key(step.value))
+    return ref.namespace, ref.name, tuple(steps)
+
+
+def _label(ns: str, name: str, path: tuple[str | int, ...]) -> str:
+    return f"{ns}.{name}" + "".join(f"[{step}]" for step in path)
 
 
 def parse_value(raw: str) -> Any:
@@ -128,7 +156,9 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         key = key_for(ctx.exec, ns, name)
         if len(v) > 2:
             key = _key_for_user(ctx, ns, name, (await user_arg(ctx, v[2]))["id"])
-        value = descend(await ctx.variables.get(key), path)
+        value = await ctx.variables.get(key)
+        for step in path:
+            value = ops.index(value, step)
         label = v[1] + (f" ({v[2]})" if len(v) > 2 else "")
         if value is MISSING:
             return Result.failure(Code.NOT_FOUND, f"{label} is not set")
@@ -162,7 +192,8 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         text = ", ".join(f"{i}. {who} {render(val)}" for i, who, val in ranked)
         return Result.success(text, [{"rank": i, "user": who, "value": val} for i, who, val in ranked])
 
-    ns, name, _ = parse_ref(v[1])
+    ns, name, path = parse_ref(v[1], allow_path=True)
+    label = _label(ns, name, path)
 
     if action in ("set", "incr"):
         if action == "set":
@@ -173,16 +204,33 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         key = key_for(ctx.exec, ns, name)
         if action == "set":
             if len(v) < 3:
-                raise CommandError("usage: var set <ns.name> <value>")
-            new = await ctx.variables.buffer(WriteOp("set", key, parse_value(" ".join(v[2:]))))
+                raise CommandError("usage: var set <ns.name[path]> <value>")
+            op = WriteOp("set", key, parse_value(" ".join(v[2:])), path)
         else:
             amount: Any = 1
             if len(v) > 2:
                 amount = parse_value(v[2])
                 if isinstance(amount, bool) or not isinstance(amount, (int, float)):
                     raise CommandError("amount must be a number")
-            new = await ctx.variables.buffer(WriteOp("incr", key, amount))
-        return Result.success(f"{ns}.{name} = {render(new)}", new)
+            op = WriteOp("incr", key, amount, path)
+        new = await ctx.variables.buffer(op)
+        for step in path:
+            new = ops.index(new, step)
+        return Result.success(f"{label} = {render(new)}", new)
+
+    if action == "pop":
+        if not access.can_write(ctx.exec, ns, name):
+            raise CommandError(f"you can't change {ns}.{name}", Code.DENIED)
+        index: int | None = None
+        if len(v) > 2:
+            try:
+                index = int(v[2])
+            except ValueError:
+                raise CommandError("index must be a whole number, e.g. 0 or -1") from None
+        op = WriteOp("pop", key_for(ctx.exec, ns, name), index, path)
+        item = pop_item(await ctx.variables.get(op.key), op)
+        await ctx.variables.buffer(op)
+        return Result.success(render(item), item)
 
     if action == "del":
         if len(v) > 2:
@@ -192,16 +240,16 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
             allowed = own and access.can_write(ctx.exec, ns, name)
             if not own:
                 allowed = (ns == "channel.chatter" and _var_admin(ctx)) or rank(ctx) >= BOT_ADMIN_RANK
-            label = f"{ns}.{name} for {user['display']}"
+            label = f"{label} for {user['display']}"
         else:
             key = key_for(ctx.exec, ns, name)
             allowed = access.can_write(ctx.exec, ns, name)
-            label = f"{ns}.{name}"
         if not allowed:
             raise CommandError(f"you can't delete {label}", Code.DENIED)
         if await ctx.variables.get(key) is MISSING:
             return Result.failure(Code.NOT_FOUND, f"{label} is not set")
-        await ctx.variables.buffer(WriteOp("delete", key))
+        # With a path, a key or item that isn't there is E_KEY / E_INDEX (ADR-0019 D4c).
+        await ctx.variables.buffer(WriteOp("delete", key, path=path))
         return Result.success(f"deleted {label}")
 
     raise CommandError(f"usage: {USAGE}")

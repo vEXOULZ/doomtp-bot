@@ -167,18 +167,84 @@ def key_for(ctx: ExecContext, namespace: str, name: str) -> VarKey:
 
 
 # ── operations and buffer ───────────────────────────────────────────────────
-OpKind = Literal["set", "append", "incr", "delete"]
+OpKind = Literal["set", "append", "incr", "delete", "pop"]
 
 
 @dataclass(frozen=True, slots=True)
 class WriteOp:
     kind: OpKind
     key: VarKey
-    value: Any = None  # set: value; append: item; incr: number
+    value: Any = None  # set: value; append: item; incr: number; pop: index
+    path: tuple[str | int, ...] = ()  # keys and indexes inside the value: channel.stats[kills] (ADR-0018)
+
+    def label(self) -> str:
+        return self.key.label() + "".join(f"[{p}]" for p in self.path)
 
 
 def apply_op(current: Any, op: WriteOp, limits: Limits) -> Any:
-    """Pure application of one op to a current value (MISSING if absent). Raises VariableError."""
+    """Pure application of one op to a current value (MISSING if absent). Raises VariableError.
+
+    With a path, the op applies to what the path points at. Writes create missing maps on the way;
+    `delete` and `pop` need everything they walk through to be there.
+    """
+    if not op.path:
+        return _apply_leaf(current, op, limits)
+    creates = op.kind not in ("delete", "pop")
+    if current is MISSING:
+        if not creates:
+            raise VariableError(f"{op.key.label()} doesn't exist", ErrorCode.E_KEY)
+        root: Any = {}
+    else:
+        root = copy.deepcopy(current)
+    _apply_at(root, op.path, op, creates, limits)
+    return root
+
+
+def _apply_at(
+    container: Any, path: tuple[str | int, ...], op: WriteOp, creates: bool, limits: Limits
+) -> None:
+    key, rest = path[0], path[1:]
+    if isinstance(container, dict):
+        name = str(key)
+        if name not in container:
+            if not creates:
+                raise VariableError(f"{op.label()}: no key {name}", ErrorCode.E_KEY)
+            if rest:
+                container[name] = {}
+        if rest:
+            _apply_at(container[name], rest, op, creates, limits)
+        elif op.kind == "delete":
+            del container[name]
+        else:
+            container[name] = _apply_leaf(container.get(name, MISSING), op, limits)
+    elif isinstance(container, list):
+        position = _position(key, container, op)
+        if rest:
+            _apply_at(container[position], rest, op, creates, limits)
+        elif op.kind == "delete":
+            del container[position]
+        else:
+            container[position] = _apply_leaf(container[position], op, limits)
+    else:
+        raise VariableError(
+            f"{op.label()}: can't go inside a value that isn't a map or list", ErrorCode.E_NOT_A_MAP
+        )
+
+
+def _position(key: str | int, items: list[Any], op: WriteOp) -> int:
+    """A list index, negative from the end, down to -len (ADR-0019 D4c)."""
+    try:
+        position = int(key)
+    except ValueError:
+        raise VariableError(
+            f"{op.label()}: a list takes a number, not {key}", ErrorCode.E_NOT_A_MAP
+        ) from None
+    if not -len(items) <= position < len(items):
+        raise VariableError(f"{op.label()}: no item {position} (it has {len(items)})", ErrorCode.E_INDEX)
+    return position
+
+
+def _apply_leaf(current: Any, op: WriteOp, limits: Limits) -> Any:
     if op.kind == "set":
         return op.value
     if op.kind == "delete":
@@ -187,17 +253,51 @@ def apply_op(current: Any, op: WriteOp, limits: Limits) -> Any:
         if current is MISSING:
             return [op.value]
         if not isinstance(current, list):
-            raise VariableError(f"{op.key.label()} is not a list", ErrorCode.E_NOT_A_LIST)
+            raise VariableError(f"{op.label()} is not a list", ErrorCode.E_NOT_A_LIST)
         if len(current) >= limits.list_items:
             raise VariableError(
-                f"{op.key.label()} is full (max {limits.list_items} items)", ErrorCode.E_LIST_FULL
+                f"{op.label()} is full (max {limits.list_items} items)", ErrorCode.E_LIST_FULL
             )
         return [*current, op.value]
+    if op.kind == "pop":
+        if current is MISSING:
+            raise VariableError(f"{op.label()} doesn't exist", ErrorCode.E_KEY)
+        if not isinstance(current, list):
+            raise VariableError(f"{op.label()} is not a list", ErrorCode.E_NOT_A_LIST)
+        if not current:
+            raise VariableError(f"{op.label()} is empty", ErrorCode.E_EMPTY)
+        items = list(current)
+        del items[_position(-1 if op.value is None else op.value, items, op)]
+        return items
     # incr
     base = 0 if current is MISSING else current
     if isinstance(base, bool) or not isinstance(base, (int, float)):
-        raise VariableError(f"{op.key.label()} is not a number", ErrorCode.E_NOT_A_NUMBER)
+        raise VariableError(f"{op.label()} is not a number", ErrorCode.E_NOT_A_NUMBER)
     return base + op.value
+
+
+def pop_item(current: Any, op: WriteOp) -> Any:
+    """The item `op` (a pop) would remove, read before it is buffered. Raises what the pop would."""
+    items = _at(current, op)
+    _apply_leaf(items, op, Limits())  # the same checks as the pop itself; a pop meets no limit
+    return items[_position(-1 if op.value is None else op.value, items, op)]
+
+
+def _at(current: Any, op: WriteOp) -> Any:
+    for key in op.path:
+        if isinstance(current, dict):
+            if str(key) not in current:
+                raise VariableError(f"{op.label()}: no key {key}", ErrorCode.E_KEY)
+            current = current[str(key)]
+        elif isinstance(current, list):
+            current = current[_position(key, current, op)]
+        elif current is MISSING:
+            raise VariableError(f"{op.key.label()} doesn't exist", ErrorCode.E_KEY)
+        else:
+            raise VariableError(
+                f"{op.label()}: can't go inside a value that isn't a map or list", ErrorCode.E_NOT_A_MAP
+            )
+    return current
 
 
 class VariableStore(Protocol):
@@ -287,7 +387,7 @@ class DeclaredVariables:
 
     Declarations are `namespace.name`, e.g. `chatter.location`. Anything else fails the command with 126,
     so what the docs and `!explain` say a command touches is all it can touch (architecture §4.2).
-    Expression stores (`> channel.x`) and placeholders are not a command's own reads and writes: the
+    Expression stores (`-> channel.x`) and placeholders are not a command's own reads and writes: the
     access policy governs those.
     """
 

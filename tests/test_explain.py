@@ -76,8 +76,8 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
 
 
 async def test_it_reports_the_ast_and_each_invocation(h: Harness) -> None:
-    report = await h.explain("alice", "!random 1-6 | echo you rolled {1}")
-    assert report.ast == 'Pipe(random["1-6"], echo["you","rolled","{1}"])'
+    report = await h.explain("alice", "!random 1-6 | echo you rolled {_1}")
+    assert report.ast == 'Pipe(random["1-6"], echo["you","rolled","{_1}"])'
     assert [(i.index, i.name, i.allowed) for i in report.invocations] == [
         (1, "random", True),
         (2, "echo", True),
@@ -105,11 +105,11 @@ async def test_it_reports_unknown_commands_and_parse_errors(h: Harness) -> None:
 
 
 async def test_it_reports_placeholders_and_store_targets(h: Harness) -> None:
-    report = await h.explain("mod", "!echo {chatter.display} > channel.note")
+    report = await h.explain("mod", "!echo {$chatter.display} -> channel.note")
     assert report.stores == [{"variable": "channel.note", "append": False, "allowed": True}]
-    assert report.invocations[0].placeholders[0]["reference"] == "{chatter.display}"
+    assert report.invocations[0].placeholders[0]["reference"] == "{$chatter.display}"
 
-    viewer = await h.explain("alice", "!echo hi > channel.note")
+    viewer = await h.explain("alice", "!echo hi -> channel.note")
     assert viewer.stores[0]["allowed"] is False
     assert "can't write channel.note" in viewer.one_line()  # the chat answer says so too (ADR-0010)
     assert "can't write" not in report.one_line()
@@ -131,7 +131,7 @@ async def test_it_shows_where_a_custom_command_came_from(h: Harness) -> None:
 
 
 async def test_run_evaluates_without_committing_or_sending(h: Harness) -> None:
-    report = await h.explain("mod", "!echo 42 > channel.note", run=True)
+    report = await h.explain("mod", "!echo 42 -> channel.note", run=True)
     assert report.ran and report.run_result is not None and report.run_result.ok
     assert report.would_send == "42"  # what it *would* send; the caller sends nothing
     assert await h.store.get(VarKey("channel", CHANNEL_ID, name="note")) is not 42  # noqa: F632
@@ -148,7 +148,7 @@ async def test_as_body_explains_in_the_body_context(h: Harness) -> None:
 
 
 async def test_the_chat_command_answers_in_one_line(h: Harness) -> None:
-    reply = await h.say("alice", "!explain !random 1-6 | echo {1}")
+    reply = await h.say("alice", "!explain !random 1-6 | echo {_1}")
     assert reply is not None and reply.startswith("Pipe(random") and "1:random ✓" in reply
 
     ran = await h.say("alice", "!explain --run !ping")
@@ -162,7 +162,7 @@ async def test_the_chat_reply_links_the_full_report_only_when_chat_can_open_it(h
 
     reports = ReportStore("https://bot.example/")
     h.runtime.services["explain_reports"] = reports
-    reply = await h.say("alice", "!explain !random 1-6 | echo {1}")
+    reply = await h.say("alice", "!explain !random 1-6 | echo {_1}")
     assert reply is not None and " — full report: https://bot.example/explain/" in reply
     kept = reports.get(reply.rsplit("/", 1)[1])
     assert kept is not None and kept["channel"] == CHANNEL_LOGIN

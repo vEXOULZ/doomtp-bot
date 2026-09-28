@@ -21,16 +21,29 @@ describe("the cursor", () => {
     const root = at("echo {chat‸");
     expect(root.kind).toBe("root");
     expect(root.from).toBe(6);
-    expect(at("echo {chatter.na‸").kind).toBe("none"); // fields belong to the value, not to a list
+    expect(at("echo {channel.stats[ki‸").kind).toBe("none"); // keys belong to the value, not to a list
+    expect(at("echo {x + y‸").kind).toBe("none");
     expect(at("echo {arg.1} th‸").kind).toBe("none"); // the placeholder is closed again
+  });
+
+  it("offers the bot's fields after a $ root", () => {
+    const field = at("echo {$chatter.di‸");
+    expect(field).toEqual({ kind: "field", root: "$chatter", from: 15 });
+    expect(at("echo {1 + $now.‸").kind).toBe("field");
+  });
+
+  it("offers a command inside {!…}", () => {
+    expect(at("echo {!ran‸")).toEqual({ kind: "command", from: 7 });
   });
 
   it("offers types after a colon", () => {
     expect(at("echo {arg.1:i‸").kind).toBe("type");
+    expect(at("echo {channel.log:l‸").kind).toBe("type");
   });
 
   it("offers variables to store into", () => {
-    expect(at("echo hi > cha‸").kind).toBe("variable");
-    expect(at("echo hi >> cha‸").kind).toBe("variable");
+    expect(at("echo hi -> cha‸").kind).toBe("variable");
+    expect(at("echo hi --> cha‸").kind).toBe("variable");
+    expect(at("echo hi > cha‸").kind).toBe("none"); // `>` is a plain word since 2.0
   });
 });

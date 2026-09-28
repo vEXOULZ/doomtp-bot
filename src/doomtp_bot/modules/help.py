@@ -52,7 +52,7 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
         for pack_publication, pack in await packs.publications_in(ctx.channel.id, include_global=True):
             if pack_publication.status != "active":
                 continue
-            for member in await packs.members(pack.id):
+            for member in await packs.members(pack.id, internal=False):  # helpers aren't typed
                 specs.setdefault(member.name, spec_for(member.name, member, None, pack))
     if ctx.invoker is not None:
         for alias, command_ in await service.linked_by(ctx.invoker.id):
@@ -81,7 +81,8 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     name = args.get("command")
     if name:
         wanted = strip_prefix(name, prefix).lower().removeprefix("@")
-        found = registry.get(wanted)
+        # The runtime's own resolver: the built-ins and the system packs' sentinels (ADR-0019).
+        found = ctx.service("runtime").resolver.resolve_name(ctx.exec, wanted)
         spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
         if spec is None or not policy.is_permitted(ctx.exec, spec):
             return Result.failure(Code.NOT_FOUND, f"no command named {name}")
