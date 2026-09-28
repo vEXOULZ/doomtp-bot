@@ -417,7 +417,8 @@ not drive failures.
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
 | Install the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm starter-pack` |
 
-To **roll back**, point `BOT_IMAGE` at a `:<sha>` tag and run the update unit again. Mind that migrations
+To **roll back**, point `BOT_IMAGE` at the previous release, `:vX.Y.Z` (or any `:<sha>` tag), and run the
+update unit again. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR-0021). Mind that migrations
 run at startup and only go forward: roll back within a schema, or restore a backup taken before the
 deploy.
 

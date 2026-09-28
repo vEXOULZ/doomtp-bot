@@ -16,7 +16,7 @@ from doomtp_bot.lang.parser import Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import RunReport, Runtime
-from doomtp_bot.runtime.result import Code
+from doomtp_bot.runtime.result import Code, ErrorCode
 from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import VarKey
 from doomtp_bot.storage.db import Databases
@@ -187,8 +187,15 @@ async def test_a_command_calling_itself_fails_preflight(h: Harness) -> None:
     command = await h.add("alice", "loop", "echo start")
     await h.service.edit(command, "loop", channel_id=CHANNEL_ID, prefix="!")
     report = await h.run("alice", "!loop")
-    assert report.result.code == Code.USAGE
+    assert report.result.code == ErrorCode.E_CC_CYCLE
     assert isinstance(report.result.data, dict) and report.result.data["error"] == "E_CC_CYCLE"
+
+
+async def test_a_runtime_error_in_a_body_keeps_its_code_and_identifier(h: Harness) -> None:
+    await h.add("alice", "shaky", "echo {chatter.unset}")
+    report = await h.run("alice", "!shaky")
+    assert report.result.code == ErrorCode.E_MISSING_VALUE
+    assert isinstance(report.result.data, dict) and report.result.data["error"] == "E_MISSING_VALUE"
 
 
 async def test_nesting_deeper_than_the_limit_fails_preflight(h: Harness) -> None:

@@ -17,9 +17,10 @@ if [ -z "$branch" ]; then
     exit 2
 fi
 
-# Committing on the trunk is what this is here to stop: it lands on main through a merge, not directly.
+# Committing on a long-lived branch is what this is here to stop: work reaches dev and main through a
+# merge, not directly (ADR-0021).
 case "$branch" in
-    main | master | develop)
+    main | master | dev | develop)
         cat >&2 <<EOF
 Refusing to commit on '$branch'.
 

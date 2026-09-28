@@ -116,3 +116,12 @@ async def test_twitch_rejections_are_recorded() -> None:
     result = await outbox.send("c1", "x")
     assert result[0].dropped_reason == "twitch_rejected:msg_duplicate"
     assert outbox.dropped == {"twitch_rejected:msg_duplicate": 1}
+
+
+async def test_links_are_defanged_where_the_bot_may_not_post_them() -> None:
+    sender, out_log = FakeSender(), FakeLog()
+    outbox = Outbox(sender, out_log, links_allowed_for=lambda channel_id: channel_id == "modded")
+    await outbox.send("modded", "see https://example.com/a.b")
+    await outbox.send("plain", "see https://example.com/a.b")
+    assert [s[1] for s in sender.sent] == ["see https://example.com/a.b", "see https://example dot com/a.b"]
+    assert out_log.rows[-1]["text_prefilter"] == "see https://example.com/a.b"

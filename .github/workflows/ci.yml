@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # dev is where work integrates, main is what production runs, and a v* tag is a release (ADR-0021).
+    branches: [main, dev]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -11,11 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Conventional Branch
+      - name: Conventional Branch, and allowed into its base
         # Through the environment, never interpolated into the script: a branch name is user input.
+        # Also checks the flow of ADR-0021: only dev, release/* and hotfix/* merge into main.
         env:
-          BRANCH: ${{ github.head_ref }}
-        run: .githooks/check-branch-name.sh "$BRANCH"
+          HEAD: ${{ github.head_ref }}
+          BASE: ${{ github.base_ref }}
+        run: .githooks/check-pr-branches.sh "$HEAD" "$BASE"
 
   python:
     runs-on: ubuntu-latest
@@ -109,10 +113,21 @@ jobs:
       contents: read
       packages: write
     env:
-      # A pull request builds the image and stops there; only main publishes one (ADR-0013).
-      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # A pull request builds the image and stops there. Pushes to main and dev and release tags publish
+      # one (ADR-0013, ADR-0021).
+      PUBLISH: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Tag matches the package version
+        # A v* tag names the version the code says it is, so /healthz and $bot.version agree with it.
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          code=$(grep -m1 '^__version__ = ' src/doomtp_bot/__init__.py | cut -d'"' -f2)
+          project=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          echo "tag $TAG, __version__ $code, pyproject $project"
+          [ "$TAG" = "v$code" ] && [ "$TAG" = "v$project" ]
       - uses: docker/setup-buildx-action@v3
       - name: Image name
         # GHCR rejects an uppercase path, and an owner's login may well have one.
@@ -134,15 +149,32 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image tags
+        # :main is what production follows and :dev what a test box follows. A release adds :vX.Y.Z,
+        # the name to roll back to; the sha tag is there for everything else.
+        id: tags
+        env:
+          REPO: ${{ steps.image.outputs.repo }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          case "$REF_TYPE/$REF_NAME" in
+            tag/v*) name=$REF_NAME ;;
+            branch/dev) name=dev ;;
+            *) name=main ;;
+          esac
+          {
+            echo 'list<<EOF'
+            echo "$REPO:$name"
+            echo "$REPO:$GITHUB_SHA"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
       - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ env.PUBLISH == 'true' }}
           platforms: linux/amd64
-          # :main is what a server follows; the sha tag is what it rolls back to.
-          tags: |
-            ${{ steps.image.outputs.repo }}:main
-            ${{ steps.image.outputs.repo }}:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
