@@ -163,7 +163,7 @@ Three properties the picture is meant to make obvious:
    - The runtime checks the Moderation Index between stages and cancels if the trigger was invalidated (exit code 130).
    - The **Outbox rechecks immediately before calling Helix**.
    - Buffered variable writes are committed only if the run wasn't cancelled.
-5. The final result goes through the Outbox: badword filter, then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
+5. The final result goes through the Outbox: badword filter, then the link rule (links stay clickable only where the bot is a moderator or VIP, or in its own channel; ADR-0019), then chunking, then the rate limit, then send. What was actually sent is written to `outbound_msgs`.
 6. The run is recorded in `command_runs` according to the command's log level.
 
 ### How step 1 is tested

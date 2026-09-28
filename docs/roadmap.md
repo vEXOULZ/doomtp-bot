@@ -31,7 +31,7 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
 | [0017](adr/0017-moderator-sessions-through-twitch-sign-in.md) | Moderator sessions through Twitch sign-in | 6/6 | Complete |
 | [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 1/8 | Numbered error codes done; the syntax changes are next |
-| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 1/11 | Storage quotas done; the rest needs 0018 |
+| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 1/11 | Storage quotas done, the link rule built; the rest needs 0018 |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 1/4 | CI and hooks done; the GitHub settings and first release are next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
