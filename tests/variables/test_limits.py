@@ -1,4 +1,4 @@
-"""Storage limits: quotas and value caps per namespace owner, `!admin quota|valuecap`, `!var usage` (ADR-0019)."""
+"""Storage limits: quotas and value caps per namespace owner, `!admin quota|valuecap|listitems|names`, `!var usage` (ADR-0019)."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ async def test_the_in_memory_store_enforces_its_limits() -> None:
 
 # ── the Postgres store ──────────────────────────────────────────────────────
 async def test_defaults_come_from_the_migration(h: Harness) -> None:
-    assert await h.store.limits_for("channel", CHANNEL_ID) == Limits(1024 * 1024, 256 * 1024)
+    assert await h.store.limits_for("channel", CHANNEL_ID) == Limits(1024 * 1024, 256 * 1024, 100, 200)
 
 
 async def test_a_write_over_quota_rolls_the_whole_commit_back(h: Harness) -> None:
@@ -213,3 +213,40 @@ async def test_a_run_over_quota_fails_with_e_quota(h: Harness) -> None:
     report = await h.run("alice", "!var set chatter.note this note is much too long")
     assert report.result is not None and report.result.code == ErrorCode.E_QUOTA
     assert await h.store.get(VarKey("chatter", "400", name="note")) is MISSING
+
+
+async def test_admin_sets_the_list_and_name_limits_as_counts(h: Harness) -> None:
+    assert (await h.run("owner", "!admin listitems default")).send == "default list limit: 100"
+    assert (
+        await h.run("owner", "!admin listitems channel doomtp 3")
+    ).send == "channel Doomtp list limit is now 3"
+    assert (
+        await h.run("owner", "!admin names chatter alice 2")
+    ).send == "chatter Alice variable limit is now 2"
+    assert await h.store.limits_for("chatter", "400") == Limits(names_per_space=2)
+    assert "whole number" in ((await h.run("owner", "!admin names default 1KB")).send or "")
+    assert "at most 10000" in ((await h.run("owner", "!admin listitems default 20000")).send or "")
+    assert (await h.run("owner", "!admin names chatter alice reset")).send == (
+        "chatter Alice variable limit is back to the default"
+    )
+    assert await h.store.override("chatter", "400") is None
+
+
+async def test_a_list_limit_override_applies_to_that_owner_only(h: Harness) -> None:
+    await h.store.set_limit("channel", CHANNEL_ID, "list_items", 2, actor="1", via="chat")
+    await h.run("owner", "!echo a >> channel.log")
+    await h.run("owner", "!echo b >> channel.log")
+    report = await h.run("owner", "!echo c >> channel.log")
+    assert report.result is not None and report.result.code == ErrorCode.E_LIST_FULL
+    assert await h.store.get(VarKey("channel", CHANNEL_ID, name="log")) == ["a", "b"]
+    await h.run("alice", "!echo a >> chatter.log")
+    await h.run("alice", "!echo b >> chatter.log")
+    assert (await h.run("alice", "!echo c >> chatter.log")).result.ok  # type: ignore[union-attr]
+
+
+async def test_a_name_limit_override_caps_the_variables_in_a_space(h: Harness) -> None:
+    await h.store.set_limit("chatter", "400", "names_per_space", 1, actor="1", via="chat")
+    assert (await h.run("alice", "!var set chatter.one 1")).result.ok  # type: ignore[union-attr]
+    assert (await h.run("alice", "!var set chatter.one 2")).result.ok  # type: ignore[union-attr]
+    report = await h.run("alice", "!var set chatter.two 1")
+    assert report.result is not None and report.result.code == ErrorCode.E_TOO_MANY_NAMES

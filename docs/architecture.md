@@ -470,7 +470,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - Nothing is silently redirected: the placeholder name is the key. A write that isn't allowed is said out loud: publishing lists the writes still waiting on a grant, and `!explain` names the denied ones.
 - **All variables are public for now.** Access control only restricts writes, and write grants name exact variables (no wildcards). Private variables are a future consideration.
 - The full per-actor rules (typed, own, built-in, foreign via link or publication, trigger, callback), grant types and admin actions are in **[variable-access-matrix.md](variable-access-matrix.md)** (reviewed).
-- Values are JSON. Each owner (a chatter, channel or publisher) has a quota, 1 MB by default, and a per-value cap, 256 KB by default, which admins change with `!admin quota|valuecap` (ADR-0019, spec §6.5). Operations are atomic (`set`, `incr`, `append`, `del`, `top`). Writes are buffered per run (§4.3).
+- Values are JSON. Each owner (a chatter, channel or publisher) has a quota, 1 MB by default, a per-value cap, 256 KB by default, a list limit (100 items) and a name limit (200 variables per space), which admins change with `!admin quota|valuecap|listitems|names` (ADR-0019, spec §6.5). Operations are atomic (`set`, `incr`, `append`, `del`, `top`). Writes are buffered per run (§4.3).
 - The full list of namespaces, context fields, argument types and reserved names is in **[namespaces.md](namespaces.md)**.
 
 ---
