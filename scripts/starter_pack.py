@@ -63,18 +63,18 @@ STARTER: tuple[Derived, ...] = (
     Derived(
         name="hug",
         summary="Hug someone, or the whole chat",
-        body="echo {chatter.display} hugs {arg.1 ?? the whole chat} 🫂",
+        body="echo {$chatter.display} hugs {arg.1 ?? the whole chat} 🫂",
         declarations=('1 name=target type=user required=no "who to hug"',),
     ),
     Derived(
         name="lurk",
         summary="Say you're still around, quietly",
-        body="echo thanks for the lurk, {chatter.display} — your seat stays warm",
+        body="echo thanks for the lurk, {$chatter.display} — your seat stays warm",
     ),
     Derived(
         name="roll",
         summary="Roll a die",
-        body="random {arg.1 ?? 1-20} | echo {chatter.display} rolled {1}",
+        body="random {arg.1 ?? 1-20} | echo {$chatter.display} rolled {_1}",
         declarations=('1 name=range type=range required=no "a range like 1-6 (default 1-20)"',),
     ),
     Derived(
@@ -87,7 +87,7 @@ STARTER: tuple[Derived, ...] = (
     Derived(
         name="deaths",
         summary="Count the deaths of the run",
-        body="var incr channel.deaths | echo deaths: {1}",
+        body="var incr channel.deaths | echo deaths: {_1}",
         note="writes a channel variable, so each channel allows it once: `!cc grant deaths channel.deaths`",
     ),
 )

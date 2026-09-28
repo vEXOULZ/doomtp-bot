@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -252,12 +253,22 @@ def stores(node: Node) -> list[Store]:
 # Inside an expression, every operation below the top one is parenthesised, so precedence is visible.
 
 
+_BARE_KEY = re.compile(r"(?!_\d*$)[A-Za-z_][A-Za-z0-9_]*")
+
+
 def _render_lit(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
     return repr(value)
+
+
+def _render_key(key: Expr) -> str:
+    """A bracket key as written: `[kills]` for a word key, else the expression (`["best run"]`, `[arg.1]`)."""
+    if isinstance(key, Lit) and isinstance(key.value, str) and _BARE_KEY.fullmatch(key.value):
+        return f"[{key.value}]"
+    return f"[{render_expr(key)}]"
 
 
 def render_expr(expr: Expr, top: bool = True) -> str:
@@ -273,9 +284,9 @@ def render_expr(expr: Expr, top: bool = True) -> str:
         case Ref(root, path):
             return ".".join((root, *path))
         case VarRef(namespace, name, path):
-            return f"{namespace}.{name}" + "".join(f"[{render_expr(k)}]" for k in path)
+            return f"{namespace}.{name}" + "".join(_render_key(k) for k in path)
         case Index(target, key):
-            return f"{inner(target)}[{render_expr(key)}]"
+            return inner(target) + _render_key(key)
         case Access(target, name, choices):
             return f"{inner(target)}:{name}" + (f"({','.join(choices)})" if name == "choice" else "")
         case Unary(op, operand):
@@ -292,6 +303,8 @@ def render_expr(expr: Expr, top: bool = True) -> str:
 
 
 def render_placeholder(ph: Placeholder) -> str:
+    if isinstance(ph.expr, Subst) and ph.fallback is None:
+        return render_expr(ph.expr)  # `{!cmd}` is its own placeholder
     text = render_expr(ph.expr)
     if ph.fallback is not None:
         text += " ?? " + render_parts(ph.fallback)

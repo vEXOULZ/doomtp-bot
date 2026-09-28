@@ -198,7 +198,7 @@ async def test_a_pack_holds_only_its_owners_commands(h: Harness) -> None:
 
 # ── derived commands: published globally ───────────────────────────────────
 async def test_a_global_publication_works_in_every_channel(h: Harness) -> None:
-    await h.say("owner", "!cc add hug echo {chatter.display} hugs {arg.1 ?? everyone}")
+    await h.say("owner", "!cc add hug echo {$chatter.display} hugs {arg.1 ?? everyone}")
     reply = await h.say("owner", "!cc publish hug global")
     assert reply is not None and "everywhere" in reply
     assert await h.say("bob", "!hug alice") == "Bob hugs alice"

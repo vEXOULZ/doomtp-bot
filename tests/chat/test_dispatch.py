@@ -156,15 +156,15 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
 
 
 async def test_command_reply_is_sent_threaded_and_everything_logged(h: Harness) -> None:
-    mid = await h.say("alice", "!random 1-1 | echo rolled {1}")
+    mid = await h.say("alice", "!random 1-1 | echo rolled {_1}")
     await h.say("alice", "just chatting")
     await h.settle()
     assert h.twitch.sent == [(CHANNEL_ID, "rolled 1", mid)]
     assert await h.rows("SELECT text, is_command FROM messages ORDER BY sent_at") == [
-        ("!random 1-1 | echo rolled {1}", 1),
+        ("!random 1-1 | echo rolled {_1}", 1),
         ("just chatting", 0),
     ]
-    assert await h.rows("SELECT expr, code FROM command_runs") == [("!random 1-1 | echo rolled {1}", 0)]
+    assert await h.rows("SELECT expr, code FROM command_runs") == [("!random 1-1 | echo rolled {_1}", 0)]
     assert await h.rows("SELECT text_sent FROM outbound_msgs") == [("rolled 1",)]
 
 
@@ -362,12 +362,12 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
 
 
 async def test_custom_command_sees_the_stream_while_live(h: Harness) -> None:
-    """{channel.live} and {channel.title} come from what the Helix poller last saw (ADR-0007)."""
+    """{$channel.live} and {$channel.title} come from what the Helix poller last saw (ADR-0007)."""
     created = await h.commands.create(
         owner_user_id=USERS["alice"],
         owner_login="alice",
         name="status",
-        body="echo live={channel.live} title={channel.title}",
+        body="echo live={$channel.live} title={$channel.title}",
         channel_id=CHANNEL_ID,
         prefix="!",
     )
@@ -382,7 +382,7 @@ async def test_custom_command_sees_the_stream_while_live(h: Harness) -> None:
     del h.streams.streams[CHANNEL_ID]
     await h.say("bob", "!status")
     await h.settle()
-    assert h.twitch.sent[-1][1] == "missing value: {channel.title}"  # offline: no title to show
+    assert h.twitch.sent[-1][1] == "missing value: {$channel.title}"  # offline: no title to show
 
 
 async def test_backfill_explains_itself_and_waits_for_the_broadcaster(h: Harness) -> None:

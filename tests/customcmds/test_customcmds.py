@@ -106,14 +106,14 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
 
 # ── personal aliases and publications ──────────────────────────────────────
 async def test_owner_runs_their_own_command(h: Harness) -> None:
-    await h.add("alice", "hi", "echo hello {chatter.display}, you said {arg.1 ?? nothing}")
+    await h.add("alice", "hi", "echo hello {$chatter.display}, you said {arg.1 ?? nothing}")
     assert await h.say("alice", "!hi there") == "hello Alice, you said there"
     assert await h.say("alice", "!hi") == "hello Alice, you said nothing"
     assert await h.say("bob", "!hi") is None  # not published, not linked: unknown command, silent
 
 
 async def test_publication_serves_the_whole_channel(h: Harness) -> None:
-    command = await h.add("alice", "roll", "random 1-{arg.1 ?? 20} | echo {chatter.display} rolled {1}")
+    command = await h.add("alice", "roll", "random 1-{arg.1 ?? 20} | echo {$chatter.display} rolled {_1}")
     await h.service.publish(
         channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"]
     )
@@ -122,7 +122,7 @@ async def test_publication_serves_the_whole_channel(h: Harness) -> None:
 
 
 async def test_link_gives_a_personal_alias_and_unlink_removes_it(h: Harness) -> None:
-    command = await h.add("alice", "hi", "echo hi from {publisher.name}")
+    command = await h.add("alice", "hi", "echo hi from {$publisher.name}")
     await h.service.link(user_id=USERS["bob"]["id"], alias="yo", command=command)
     assert await h.say("bob", "!yo") == "hi from alice"
     assert await h.say("bob", "!@yo") == "hi from alice"  # @ addresses the personal alias explicitly
@@ -215,7 +215,7 @@ async def test_expanded_invocations_count_toward_the_limit(h: Harness) -> None:
 # ── identity and variable access (the safety rules) ────────────────────────
 async def test_the_body_runs_as_the_invoker_not_the_owner(h: Harness) -> None:
     """A moderator's command run by a viewer stays a viewer's run (ADR-0009)."""
-    command = await h.add("mod", "mine", "echo {chatter.display} rank {chatter.rank}")
+    command = await h.add("mod", "mine", "echo {$chatter.display} rank {$chatter.rank}")
     await h.service.publish(
         channel_id=CHANNEL_ID, name="mine", command=command, published_by=USERS["mod"]["id"]
     )
@@ -225,7 +225,7 @@ async def test_the_body_runs_as_the_invoker_not_the_owner(h: Harness) -> None:
 
 async def test_publishing_says_which_writes_still_need_a_grant(h: Harness) -> None:
     """ADR-0010: a mod publishing a community command shouldn't find out from silence (§4)."""
-    await h.add("mod", "count", "echo 1 > channel.deaths | echo {_} >> channel.chatter.log")
+    await h.add("mod", "count", "echo 1 -> channel.deaths | echo {_} --> channel.chatter.log")
     published = await h.run("mod", "!cc publish count")
     assert "count writes channel.chatter.log, channel.deaths" in published.send
     assert "!cc grant count channel.chatter.log" in published.send
@@ -237,12 +237,12 @@ async def test_publishing_says_which_writes_still_need_a_grant(h: Harness) -> No
     again = await h.run("mod", "!cc publish count")  # publishing again keeps the grants
     assert "grant" not in again.send  # everything it writes is already allowed
 
-    await h.add("mod", "quiet", "echo hi > chatter.note")
+    await h.add("mod", "quiet", "echo hi -> chatter.note")
     assert "grant" not in (await h.run("mod", "!cc publish quiet")).send  # its own variables, no grant
 
 
 async def test_a_published_body_cannot_write_channel_variables_without_a_grant(h: Harness) -> None:
-    command = await h.add("alice", "count", "echo 1 > channel.deaths")
+    command = await h.add("alice", "count", "echo 1 -> channel.deaths")
     await h.service.publish(
         channel_id=CHANNEL_ID, name="count", command=command, published_by=USERS["mod"]["id"]
     )
@@ -257,7 +257,7 @@ async def test_a_published_body_cannot_write_channel_variables_without_a_grant(h
 
 
 async def test_publisher_variables_belong_to_the_owner(h: Harness) -> None:
-    command = await h.add("alice", "note", "echo {arg.1} > publisher.channel.note")
+    command = await h.add("alice", "note", "echo {arg.1} -> publisher.channel.note")
     await h.service.publish(
         channel_id=CHANNEL_ID, name="note", command=command, published_by=USERS["mod"]["id"]
     )
@@ -267,11 +267,11 @@ async def test_publisher_variables_belong_to_the_owner(h: Harness) -> None:
 
 async def test_publisher_is_restored_after_a_nested_body(h: Harness) -> None:
     """A nested command must not leave its publisher behind for the rest of the line."""
-    inner = await h.add("alice", "inner", "echo {publisher.name}")
+    inner = await h.add("alice", "inner", "echo {$publisher.name}")
     await h.service.publish(
         channel_id=CHANNEL_ID, name="inner", command=inner, published_by=USERS["mod"]["id"]
     )
-    outer = await h.add("bob", "outer", "inner | echo inner said {1}, mine is {publisher.name}")
+    outer = await h.add("bob", "outer", "inner | echo inner said {_1}, mine is {$publisher.name}")
     await h.service.publish(
         channel_id=CHANNEL_ID, name="outer", command=outer, published_by=USERS["mod"]["id"]
     )
@@ -302,7 +302,7 @@ async def test_bodies_are_parsed_in_body_context(h: Harness) -> None:
 
 # ── the !cc chat commands ──────────────────────────────────────────────────
 async def test_cc_add_publish_link_and_run_from_chat(h: Harness) -> None:
-    created = await h.say("alice", "!cc add hype echo {chatter.display} is hyped!")
+    created = await h.say("alice", "!cc add hype echo {$chatter.display} is hyped!")
     assert created is not None and created.startswith("created !hype (cc_")
     assert await h.say("alice", "!hype") == "Alice is hyped!"
 
@@ -319,7 +319,7 @@ async def test_cc_add_publish_link_and_run_from_chat(h: Harness) -> None:
 
 
 async def test_cc_link_warns_and_respects_sharing(h: Harness) -> None:
-    await h.say("alice", "!cc add hi echo hi from {publisher.name}")
+    await h.say("alice", "!cc add hi echo hi from {$publisher.name}")
     refused = await h.run("bob", "!cc link @alice hi")
     assert refused.result.code == Code.USAGE  # not shared yet
     assert await h.say("alice", "!cc share hi on") is not None
@@ -341,7 +341,7 @@ async def test_cc_edit_reports_reach_and_rejects_broken_bodies(h: Harness) -> No
 
 
 async def test_cc_grant_is_moderator_only_and_scoped_to_the_command(h: Harness) -> None:
-    await h.say("alice", "!cc add count echo 1 > channel.deaths")
+    await h.say("alice", "!cc add count echo 1 -> channel.deaths")
     await h.say("alice", "!cc share count on")
     await h.say("mod", "!cc link @alice count")
     await h.say("mod", "!cc publish count")
@@ -358,7 +358,7 @@ async def test_cc_grant_is_moderator_only_and_scoped_to_the_command(h: Harness) 
 
 
 async def test_cc_unpublish_revokes_grants(h: Harness) -> None:
-    await h.say("alice", "!cc add count echo 1 > channel.deaths")
+    await h.say("alice", "!cc add count echo 1 -> channel.deaths")
     await h.say("alice", "!cc share count on")
     await h.say("mod", "!cc link @alice count")
     await h.say("mod", "!cc publish count")
@@ -379,7 +379,7 @@ async def test_cc_list_and_info(h: Harness) -> None:
 # ── running by id (ADR-0009 action item 6) ─────────────────────────────────
 async def test_cc_run_reaches_a_command_by_id(h: Harness) -> None:
     """The owner's escape hatch: no publication, no alias, and the name is a built-in's."""
-    await h.say("alice", "!cc add ping echo pong from {publisher.name} to {arg.1 ?? nobody}")
+    await h.say("alice", "!cc add ping echo pong from {$publisher.name} to {arg.1 ?? nobody}")
     assert await h.say("alice", "!ping") == "pong"  # the built-in still wins by name
     command = await h.service.by_owner(USERS["alice"]["id"], "ping")
     assert command is not None
@@ -404,7 +404,7 @@ async def test_cc_run_refuses_a_private_command_and_an_unknown_id(h: Harness) ->
 
 
 async def test_cc_run_validates_declared_params_and_runs_as_the_invoker(h: Harness) -> None:
-    await h.say("alice", "!cc add roll echo {chatter.display} rolled {arg.sides}")
+    await h.say("alice", "!cc add roll echo {$chatter.display} rolled {arg.sides}")
     await h.say("alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "sides"')
     await h.say("alice", "!cc share roll on")
     command = await h.service.by_owner(USERS["alice"]["id"], "roll")
@@ -425,7 +425,7 @@ async def test_a_body_cannot_call_cc_run(h: Harness) -> None:
 
 # ── declared parameters and !help (ADR-0009 action item 3) ─────────────────
 async def test_declared_params_are_validated_and_shown(h: Harness) -> None:
-    await h.say("alice", "!cc add roll random 1-{arg.sides} | echo {chatter.display} rolled {1}")
+    await h.say("alice", "!cc add roll random 1-{arg.sides} | echo {$chatter.display} rolled {_1}")
     usage = await h.say(
         "alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "how many sides"'
     )

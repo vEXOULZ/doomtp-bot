@@ -341,7 +341,7 @@ async def test_explain_shows_a_cooldown_without_failing_preflight(h: Harness) ->
 # ── callbacks ──────────────────────────────────────────────────────────────
 async def test_cooldown_callback_is_rendered_and_rate_limited(h: Harness) -> None:
     set_reply = await h.reply(
-        "mod", "!callback set on_cooldown command:dice echo {chatter.name}, wait {cooldown.user_remaining}s"
+        "mod", "!callback set on_cooldown command:dice echo {$chatter.name}, wait {cooldown.user_remaining}s"
     )
     assert set_reply == "set on_cooldown for command:dice"
     assert await h.reply("viewer", "!dice") == "rolled"

@@ -17,7 +17,10 @@ from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.ast import Node, to_canonical
 from doomtp_bot.lang.errors import HINTS, ParseError, ParseErrorCode
 from doomtp_bot.lang.parser import (
+    ACCESSORS,
+    BOT_FIELDS,
     DEFAULT_PREFIX,
+    EXPR_COMMANDS,
     MAX_EXPR_CHARS,
     MAX_NAME_CHARS,
     MAX_PLACEHOLDER_NESTING,
@@ -165,6 +168,9 @@ async def language(request: Request) -> dict[str, Any]:
         "syntax_version": SYNTAX_VERSION,
         "operators": list(OPERATOR_TOKENS),
         "roots": sorted(REGISTERED_ROOTS),
+        "bot_fields": {"$" + root: sorted(fields) for root, fields in BOT_FIELDS.items()},
+        "accessors": list(ACCESSORS),
+        "expression_commands": sorted(EXPR_COMMANDS),
         "roots_by_context": {str(ctx): sorted(roots) for ctx, roots in CONTEXT_ROOTS.items()},
         "types": list(TYPE_NAMES) + ["choice"],
         "variable_namespaces": list(VAR_NAMESPACES),
