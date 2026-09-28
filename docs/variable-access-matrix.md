@@ -28,6 +28,16 @@ Legend:
 
 In every combined namespace, `chatter` = the invoker (or the event user for triggers) and `channel` = the channel the run is in. **No pipeline can address another user's or another channel's row directly.** Cross-row access exists only through built-in aggregate commands such as `!var top`.
 
+**Reserved variable names** (a closed list, `runtime/namespaces.py`, checked by
+`tests/test_reserved_names_docs.py`). A line that names one fails with `E_BAD_VAR_NAME` (304):
+
+| Namespace | Reserved variable names |
+|-----------|-------------------------|
+| every namespace | `data`, `code`, `message`, `public`, `root` |
+| `channel.` | `chatter` |
+| `publisher.` | `chatter`, `channel` |
+| `publisher.channel.` | `chatter` |
+
 ## 2. Who is running the code
 
 | Code | Description |

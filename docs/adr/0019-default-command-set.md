@@ -146,5 +146,5 @@ Rejected again on 2026-09-28 in favour of the startup check.
 8. [ ] `customecho` and the `:template` accessor.
 9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
 10. [ ] An ADR for the HTTP query primitive.
-11. [ ] The reserved-name list in ADR-0010 and the access matrix, with a test against
+11. [x] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.
