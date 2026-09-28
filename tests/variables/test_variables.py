@@ -16,7 +16,7 @@ from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.context import Chatter, ExecContext, Publisher
 from doomtp_bot.runtime.engine import RunReport, Runtime
-from doomtp_bot.runtime.result import Code
+from doomtp_bot.runtime.result import Code, ErrorCode
 from doomtp_bot.runtime.values import MISSING
 from doomtp_bot.runtime.variables import VarKey, WriteOp
 from doomtp_bot.storage.db import Databases
@@ -254,7 +254,7 @@ async def test_var_writes_respect_matrix(h: Harness) -> None:
     assert await h.reply("alice", "!var incr channel.chatter.points") == "channel.chatter.points = 1"
     assert await h.reply("alice", "!var set chatter.name x") is not None  # reserved name → usage error
     report = await h.run("alice", "!var set chatter.name x")
-    assert report.result.code == Code.USAGE
+    assert report.result.code == ErrorCode.E_BAD_VAR_NAME
 
 
 async def test_everything_is_readable_including_other_users(h: Harness) -> None:

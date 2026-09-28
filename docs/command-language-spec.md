@@ -1,6 +1,6 @@
 # doomtp-bot Command Language — Specification
 
-**Version:** 1.1.0-draft · **Status:** Draft for review · **Date:** 2026-09-22 (1.0: 2026-09-16)
+**Version:** 1.2.0-draft · **Status:** Draft for review · **Date:** 2026-09-28 (1.1: 2026-09-22, 1.0: 2026-09-16)
 **Supersedes:** [command-language-proposal.md](command-language-proposal.md) (kept for rationale)
 **Normative companions:** [namespaces.md](namespaces.md) (namespaces, types, reserved names) and [variable-access-matrix.md](variable-access-matrix.md) (variable permissions)
 **Runtime design:** [ADR-0005](adr/0005-command-pipeline-runtime.md)
@@ -191,12 +191,12 @@ Example: `!cc add roll !random 1-{arg.1:int ?? 20} | echo {chatter.name} rolled 
 
 ### 3.4 Parse errors
 
-Parse errors produce a Result with **code 2** and message `parse error: <E_CODE> at <column>: <hint>`.
+Parse errors produce a Result with **the error's own code** (200–219, §6.2) and message `parse error: <E_CODE> at <column>: <hint>`.
 
 - The message is **only sent** if the first invocation of the line resolves to a command the invoker is permitted to run (§5, §6.6).
 - Otherwise the line is silently ignored. This keeps typos in normal chat, like `!` followed by text, from producing bot noise.
 
-| Code | Condition |
+| Error | Condition |
 |------|-----------|
 | `E_UNTERMINATED_QUOTE` | `"` not closed |
 | `E_BAD_PLACEHOLDER` | malformed `{…}`, unknown root, bad type, nesting too deep |
@@ -268,15 +268,15 @@ For each resolved invocation, in this order:
 |---|-------|--------------|
 | 1 | Toggles and channel capabilities (ADR-0006, ADR-0007) | 127 (a disabled command behaves as unknown) |
 | 2 | Permission: invoker rank vs. required role or allowed roles | 126 |
-| 3 | Input mode: a command with `input=NONE` must not be the right operand of `\|` | 2 (`E_INPUT_NOT_ACCEPTED`) |
-| 4 | Placeholder validity for this context (§7.2), and `{N}` with 1 ≤ N < this invocation's index | 2 (`E_BAD_REFERENCE`) |
-| 5 | Store targets: namespace valid for the context, and write permitted per variable-access-matrix.md | 2 for an invalid context, 126 for denied |
-| 6 | Custom command expansion: depth ≤ `MAX_CC_DEPTH`, no cycles | 2 (`E_CC_DEPTH` / `E_CC_CYCLE`) |
-| 7 | Total invocations after expansion ≤ `MAX_INVOCATIONS (8)`; sentinels count | 2 (`E_TOO_MANY`) |
+| 3 | Input mode: a command with `input=NONE` must not be the right operand of `\|` | 221 (`E_INPUT_NOT_ACCEPTED`) |
+| 4 | Placeholder validity for this context (§7.2), and `{N}` with 1 ≤ N < this invocation's index | 222 (`E_BAD_REFERENCE`) |
+| 5 | Store targets: namespace valid for the context, and write permitted per variable-access-matrix.md | the variable error (§6.2) for an invalid target, 126 for denied |
+| 6 | Custom command expansion: depth ≤ `MAX_CC_DEPTH`, no cycles | 224 (`E_CC_DEPTH`) / 223 (`E_CC_CYCLE`) |
+| 7 | Total invocations after expansion ≤ `MAX_INVOCATIONS (8)`; sentinels count | 220 (`E_TOO_MANY`) |
 
 If any check fails, **no invocation executes.** The expression's result is the first failure in source order. Output rules for these codes are in §6.6.
 
-**Error identifiers.** The `E_…` names above are carried in the Result's `data.error`, with the human-readable text in `message` — for example `Result(2, "{2} refers to a command that runs later", {"error": "E_BAD_REFERENCE", "reference": "{2}"})`. Parse errors (§3.4) also put their code in `data.error` alongside `data.column`. This keeps chat replies readable while `!explain`, `/parse` and the editor get stable identifiers.
+**Error identifiers.** The `E_…` names above are carried in the Result's `data.error`, with the human-readable text in `message` — for example `Result(222, "{2} refers to a command that runs later", {"error": "E_BAD_REFERENCE", "reference": "{2}"})`. Parse errors (§3.4) also put their code in `data.error` alongside `data.column`. This keeps chat replies readable while `!explain`, `/parse` and the editor get stable identifiers.
 
 **Cooldowns are not a preflight check.** They are checked when evaluation reaches an invocation (§6.3), and an invocation on cooldown **fails with code 128** like any other failure. So `||` can route around it — `!a || !b` runs `b` when `a` is on cooldown — and `&&` stops at it. An invocation that is never reached is never held to its cooldown and never starts one. If the final Result is 128, output stays silent and the `on_cooldown` callback runs (§6.6).
 
@@ -311,7 +311,7 @@ Value  := null | bool | int (64-bit) | float (IEEE-754 double) | str | list[Valu
 ```
 
 - `code = 0` means success. Any other value means failure.
-- The serialized size of `data` MUST NOT exceed `MAX_DATA_BYTES (4096)`. Larger data yields code 2 (`E_DATA_TOO_LARGE`).
+- The serialized size of `data` MUST NOT exceed `MAX_DATA_BYTES (4096)`. Larger data yields code 231 (`E_DATA_TOO_LARGE`).
 - On a runtime or preflight failure with a named error, `data` is a map carrying that name: `{"error": "E_…", …}` (§5.2).
 - `message` MUST NOT exceed `MAX_MESSAGE_CHARS (2000)` and is truncated with `…`.
 
@@ -321,7 +321,7 @@ Value  := null | bool | int (64-bit) | float (IEEE-754 double) | str | list[Valu
 |------|------|-------------|
 | 0 | OK | success |
 | 1 | FAIL | generic command failure |
-| 2 | USAGE | parse errors, bad arguments, invalid references, limits |
+| 2 | USAGE | a command's own bad arguments or usage (§5.3) |
 | 3 | NOT_FOUND | lookup found nothing |
 | 124 | TIMEOUT | stage or expression timeout |
 | 125 | UPSTREAM_LIMITED | external API rate limit |
@@ -329,8 +329,22 @@ Value  := null | bool | int (64-bit) | float (IEEE-754 double) | str | list[Valu
 | 127 | UNKNOWN | unresolved or disabled command |
 | 128 | COOLDOWN | cooldown active |
 | 130 | CANCELLED | moderation cancellation (§6.7) |
+| 200–1023 | `E_…` | a named runtime error, each with its own code (below) |
 
-Commands MUST use 1–3 or 5–99 for their own failures. Codes 100–255 are reserved for the runtime, and a command that *returns* one is corrected to code 1. A built-in MAY *raise* a runtime failure that carries a reserved code when the runtime owns that meaning: `!var` raises 126 when a write is denied, so the denial behaves like any other (silent, with the `on_denied` callback).
+Codes run from 0 to 1023. Commands MUST use 1–99 for their own failures (4 included). Codes 100–1023 are reserved for the runtime, and a command that *returns* one is corrected to code 1. A built-in MAY *raise* a runtime failure that carries a reserved code when the runtime owns that meaning: `!var` raises 126 when a write is denied, so the denial behaves like any other (silent, with the `on_denied` callback), and raises the storage errors below for a bad write. A custom command's body that ends in a named error passes that code to its caller unchanged.
+
+**Named errors (ADR-0018).** Every `E_…` identifier has its own code, carried alongside its name in `data.error`, so a script can tell one error from another by its code instead of parsing the message. The names and numbers live in `ErrorCode` (`runtime/result.py`) and are published by `GET /api/v1/language` as `exit_codes`. These codes carry no special behaviour: they are not silent and fire no callback.
+
+| Block | Errors |
+|---|---|
+| 200–219 parse (§3.4) | 200 `E_UNTERMINATED_QUOTE`, 201 `E_BAD_PLACEHOLDER`, 202 `E_RESERVED_OPERATOR`, 203 `E_UNEXPECTED_OPERATOR`, 204 `E_MISSING_OPERAND`, 205 `E_UNBALANCED_GROUP`, 206 `E_BAD_NAME`, 207 `E_DYNAMIC_NAME`, 208 `E_DYNAMIC_VARREF`, 209 `E_BAD_VARREF`, 210 `E_RAW_TAIL_POSITION`, 211 `E_TOO_LONG` |
+| 220–229 preflight (§5.2) | 220 `E_TOO_MANY`, 221 `E_INPUT_NOT_ACCEPTED`, 222 `E_BAD_REFERENCE`, 223 `E_CC_CYCLE`, 224 `E_CC_DEPTH` |
+| 230–249 evaluation | 230 `E_MISSING_VALUE`, 231 `E_DATA_TOO_LARGE` |
+| 250–269 values | 252 `E_NOT_A_LIST`, 255 `E_NOT_A_NUMBER` |
+| 299 | `E_INTERNAL`: the parser failed without a named error, which is a bug |
+| 300–399 storage (§6.5) | 300 `E_LIST_FULL`, 302 `E_VALUE_TOO_BIG`, 303 `E_BAD_NAMESPACE`, 304 `E_BAD_VAR_NAME`, 305 `E_TOO_MANY_NAMES` |
+
+The gaps are taken by errors ADR-0018 and ADR-0019 plan, and the rest of 100–1023 is free for new blocks.
 
 ### 6.3 Evaluation
 
@@ -370,10 +384,10 @@ Commands MUST use 1–3 or 5–99 for their own failures. Codes 100–255 are re
 | Existing value | Effect |
 |----------------|--------|
 | missing | the variable becomes `[v]` |
-| list | `v` is appended, and the oldest items are dropped beyond `MAX_LIST_ITEMS (100)` |
-| anything else | the store fails: the Store node returns code 2 (`E_NOT_A_LIST`) instead of `r`, and nothing is buffered |
+| list | `v` is appended. A list that already holds `MAX_LIST_ITEMS (100)` items fails the store with 300 (`E_LIST_FULL`), and nothing is dropped |
+| anything else | the store fails: the Store node returns code 252 (`E_NOT_A_LIST`) instead of `r`, and nothing is buffered |
 
-- **Limits:** the per-value size limit (2 KB) and per-space name limits (ADR-0010) are checked when a write is buffered. A violation gives code 2.
+- **Limits:** the per-value size limit (2 KB) and per-space name limits (ADR-0010) are checked when a write is buffered. A violation gives 302 (`E_VALUE_TOO_BIG`) or 305 (`E_TOO_MANY_NAMES`).
 
 ### 6.6 Output
 
@@ -433,7 +447,7 @@ The authoritative list is [namespaces.md](namespaces.md) §1–§5. v1 roots: `_
 | `match` | — | — | — | ✔ | — |
 | `cooldown` / `denied` | — | — | — | — | ✔ (matching callback type) |
 
-A root that isn't available in the context fails preflight with code 2 (`E_BAD_REFERENCE`). Timers have no chatter, so `chatter.*` there is missing.
+A root that isn't available in the context fails preflight with code 222 (`E_BAD_REFERENCE`). Timers have no chatter, so `chatter.*` there is missing.
 
 ### 7.3 Expansion
 
@@ -443,7 +457,7 @@ Placeholders are expanded **immediately before their invocation executes** (§6.
    - A path into a non-map or non-list, a missing key, or an out-of-range index gives missing.
    - For result roots, a bare `{N}` / `{_}` gives `data` if it is a scalar (not null, list or map), otherwise `message`. `.code`, `.message` and `.data` select those parts. Any other first segment is looked up inside `data`.
 2. **Type:** if `:type` is present, convert per §7.4. A conversion failure is treated as missing.
-3. **Fallback:** if the value is missing, null or the empty string, and `??` is present, the fallback is expanded (recursively) and used, and no type is applied to it. Without `??`, the invocation fails with code 2 (`E_MISSING_VALUE: {ref}`) and does not execute.
+3. **Fallback:** if the value is missing, null or the empty string, and `??` is present, the fallback is expanded (recursively) and used, and no type is applied to it. Without `??`, the invocation fails with code 230 (`E_MISSING_VALUE: {ref}`) and does not execute.
 4. **Render** the value to text (§7.6) and substitute it into the argument.
 5. **No re-lexing.** Expanded text is never split into multiple arguments, never interpreted as operators, placeholders or escapes, and never parsed as a command. **One chunk stays one argument.**
 
@@ -557,6 +571,7 @@ With `--run`, it also evaluates the expression with a **discarded** write buffer
 
 - This document is **syntax version 1.0**. Changes that alter how existing valid input parses or evaluates require a **major** version change. Additions that only make previously invalid input valid (e.g. un-reserving `;`) are **minor** version changes.
 - The syntax version covers the grammar and how a body parses. Document 1.1 moved cooldowns from preflight to runtime (§5.2) — a change in *policy outcome*, which 1.0 declared in advance as a minor change (Appendix B item 4). The grammar and every parse are unchanged, so `syntax_version` stays `"1.0"` and no stored body needs migrating.
+- Document 1.2 gave every named runtime error its own code (§6.2, ADR-0018) where they were all code 2, and made `>>` fail on a full list instead of dropping the oldest item. Again the grammar and every parse are unchanged, so `syntax_version` stays `"1.0"`. A stored body that tests for code 2 after one of these errors now sees the new code.
 - Stored bodies keep the syntax version they were parsed with. When the major version changes, the implementation MUST either keep a parser for the old version or migrate bodies automatically, and record the migration as a new custom command version.
 - Deferred features are tracked in language proposal §6: the `?` suffix, and `;` behavior.
 
@@ -600,7 +615,7 @@ The parser golden-test corpus MUST include at least the following cases. `⟨…
 | 3 | `!weather Nowhere \|\| echo "failed: {_.message}"` | as above | `0` / `failed: location not found` |
 | 4 | `( !weather x \|\| default ? ) > chatter.w` | weather fails | `0` / `?`; `chatter.w = "?"` |
 | 5 | `!weather x > chatter.w` | weather fails | `3` / weather's message; **nothing stored** |
-| 6 | `!a \|\| !b && echo {2}` | `a` succeeds | `{2}` is missing → code 2 `E_MISSING_VALUE` unless `??` is used |
+| 6 | `!a \|\| !b && echo {2}` | `a` succeeds | `{2}` is missing → code 230 `E_MISSING_VALUE` unless `??` is used |
 | 7 | `!shoutout @x \|\| true` | shoutout fails | `0` / nothing sent (`true` has no message) |
 | 8 | `!foo` (unknown) | — | `127` / nothing sent |
 | 9 | `!random 1-6 \| !foo` (unknown second) | — | `127` / `unknown command: foo` |
@@ -846,7 +861,7 @@ Checks outside the grammar, run before parsing:
 ### C.8 Error reporting
 
 - The parser MUST report the **first** thrown error, with its code, the 1-based column and a hint.
-- Errors not thrown by name (plain PEG failure at the top level) MUST NOT happen in a conforming implementation. `End` and `Primary` cover every leftover case. If one does happen, it is reported as `E_INTERNAL`, logged, and treated as a parse error (code 2).
+- Errors not thrown by name (plain PEG failure at the top level) MUST NOT happen in a conforming implementation. `End` and `Primary` cover every leftover case. If one does happen, it is reported as `E_INTERNAL`, logged, and treated as a parse error (code 299).
 - **Hints per code:**
 
 | Code | Hint text (English, localizable) |
