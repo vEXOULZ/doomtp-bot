@@ -1,6 +1,6 @@
 # ADR-0020: A gated HTTP query primitive
 
-**Status:** Proposed — 2026-09-28, awaiting the project owner's review
+**Status:** Accepted — 2026-09-28
 **Date:** 2026-09-28
 **Deciders:** Project owner
 
@@ -21,28 +21,40 @@ A command that fetches a URL someone typed or stored is the riskiest thing the l
   like any other output.
 - **Latency.** A run has a time budget (spec §6.4). A slow host must not hold a pipeline hostage.
 
-## Decision (proposed)
+## Decision
 
-A primitive **`http`** command in a new `http` module, **off by default everywhere**.
+A primitive **`http`** command in a new `http` module. Only bot admins can write code that calls it.
 
 ### Who can use it
 
-- The module is disabled globally. A bot admin turns it on per channel (`!module enable http`), and it
-  stays off in every other channel.
-- Each channel has an **allow-list of hosts**, set only by bot admins with `!admin http allow|deny
-  <channel> <host>` (and a JSON endpoint for the admin UI in doomtp-web). A host matches exactly; a
-  leading `*.` matches one or more subdomains. There is no global "allow everything".
-- `http` has `required_role="moderator"` by default. As with any command, `!perm` can open it to
-  everyone, which is how a `weather` derived command would reach chat.
+- **Only from derived commands published by a bot admin.** `http` runs only inside the body of a custom
+  command whose publisher is a bot admin at the time of the run. Typed in chat, in a trigger or callback,
+  or in anyone else's custom command, it fails with `E_HTTP_NOT_ALLOWED` before any request is made. It
+  is hidden from `help`. So every URL the bot ever fetches was written by an admin; a chatter can only
+  fill in the parts the admin's body puts `{arg…}` placeholders in.
+- **A global allow-list of hosts**, set with `!admin http allow|deny|list <host>` (and a JSON endpoint
+  for the admin UI in doomtp-web). A host matches exactly; a leading `*.` matches one or more
+  subdomains. There is no "allow everything". The list still matters when an admin wrote the body,
+  because the placeholders in it are chatter input.
+- **Channels choose the commands, not the primitive.** A channel turns an admin's derived command such as
+  `weather` on or off like any other. A bot admin can still `!module disable http` for one channel or
+  globally.
+- **Secrets are admin settings, never variables.** An API key is stored per host with `!admin http secret
+  <host> query <param> <value>` or `!admin http secret <host> header <name> <value>`, and cleared with
+  `!admin http secret <host> clear`. `http` attaches it to every request to that host. It is write-only:
+  nothing in the language, `!admin`, the API or the logs ever shows it back, only that a secret is set.
+  A key therefore can't be read by a placeholder, echoed, stored in a variable or leaked by a URL someone
+  typed. The chat line that sets it is deleted when the bot is a moderator, and the JSON endpoint is the
+  recommended way to set one.
 
 ### What it does
 
 `http get <url> [path]`:
 
-- **GET only**, HTTPS only (HTTP only for hosts an admin marks as such). No request body, no custom
-  headers, no cookies, and no credentials, ever. The user agent names the bot.
+- **GET only**, HTTPS only (HTTP only for hosts an admin marks as such). No request body, no cookies,
+  and no headers except the host's secret header, if one is set. The user agent names the bot.
 - **Timeout** 3 s for the whole request, inside the run's own budget.
-- **Size cap** 64 KB of response body. A bigger body fails instead of being truncated.
+- **Size cap** 128 KB of response body. A bigger body fails instead of being truncated.
 - **JSON only.** The response must parse as JSON; `path` is a bracket path in ADR-0018's syntax
   (`[current][temp_c]`, `[list][0][name]`) that picks one value out. The value becomes the result's data;
   its text form becomes the message.
@@ -71,7 +83,7 @@ A new block, 400–499, as ADR-0018 reserved it:
 
 | Error | Code | When |
 |---|---|---|
-| `E_HTTP_NOT_ALLOWED` | 400 | the host isn't on this channel's allow-list, or the scheme or port isn't allowed |
+| `E_HTTP_NOT_ALLOWED` | 400 | not called from an admin-published derived command, the host isn't on the allow-list, or the scheme or port isn't allowed |
 | `E_HTTP_ADDRESS` | 401 | the name resolves to a refused address |
 | `E_HTTP_TIMEOUT` | 402 | no full response within the timeout |
 | `E_HTTP_TOO_BIG` | 403 | the body is over the size cap |
@@ -82,8 +94,8 @@ A new block, 400–499, as ADR-0018 reserved it:
 ### Logging
 
 Every request is logged to `command_runs` like any other invocation, with the host, the status, the
-size and the time taken, but never the full URL's query string, which may carry an API key the channel
-stored.
+size and the time taken, but never the query string or the secret header. The query string may carry
+a host's secret, and a chatter's arguments besides.
 
 ## Options Considered
 
@@ -91,9 +103,9 @@ stored.
 **Pros:** nothing to secure. **Cons:** `weather`, stock-style readouts and game APIs stay impossible, or
 each becomes its own Python primitive with its own key handling.
 
-### Option B: a gated, read-only JSON GET (proposed)
-**Pros:** one reviewed code path covers every read-only API. Admins decide which hosts exist for which
-channel. **Cons:** SSRF protection has to be right, and its tests have to prove it.
+### Option B: a gated, read-only JSON GET, written by admins only (chosen)
+**Pros:** one reviewed code path covers every read-only API. Admins decide which hosts exist and write
+every body that reaches them. **Cons:** SSRF protection has to be right, and its tests have to prove it.
 
 ### Option C: one Python primitive per service (`weather`, …)
 **Pros:** each is narrow and easy to reason about. **Cons:** every new service is code, a release and an
@@ -102,26 +114,31 @@ is primitive.
 
 ## Consequences
 
-- **Easier:** `weather` becomes a derived command such as `http get api.example/weather?q={arg.1}
-  [current][temp_c] | echo {_1}°C in {arg.1}`, once an admin allows the host in that channel.
+- **Easier:** `weather` becomes a derived command an admin publishes, such as `http get
+  https://api.example/weather?q={arg.1} [current][temp_c] | echo {_1}°C in {arg.1}`, with the API key
+  attached from the host's secret. Each channel turns it on or off.
+- **Narrower:** channels and ordinary publishers can't build their own HTTP commands. If that is wanted
+  later, it needs a new ADR, per-channel allow-lists and a way to keep secrets away from their bodies.
 - **Harder:** the bot gains an outbound path influenced by users. The address checks, the redirect rule
   and the rate limits need tests that try to break them.
 - **Depends on** ADR-0018 item 3 (bracket paths) for `path`, and on ADR-0018 item 1 for the numbered
   error block.
 
-## Open questions for review
+## Review (2026-09-28)
 
-1. Should an API key a channel stores (for example in a `channel.*` variable) be usable in the URL, or
-   should keys be a separate, write-only admin setting per host?
-2. Is 64 KB the right size cap for the common weather and game APIs?
-3. Should `http` be available to derived commands only, never typed directly?
+The open questions were settled by the project owner:
+
+1. **API keys** are a separate, write-only admin setting per host, not something a channel stores.
+2. **The size cap** is 128 KB, not 64 KB.
+3. **`http` runs only from derived commands**, and only when the command's publisher is a bot admin.
+   That also replaced the per-channel allow-lists of the proposal with a single global one.
 
 ## Action Items
 
-1. [ ] Settle the open questions and accept or reject this ADR.
-2. [ ] The `http` module with `http get`, the address rules and redirects, with tests against a local
+1. [x] Settle the open questions and accept or reject this ADR. *(2026-09-28)*
+2. [ ] The `http` module with `http get`, the admin-publisher check, the address rules and redirects, with tests against a local
    server that tries each SSRF trick.
-3. [ ] Allow-lists: the table, `!admin http allow|deny|list`, and the JSON endpoint (plus a doomtp-web
-   PR).
+3. [ ] The host allow-list and secrets: the tables, `!admin http allow|deny|list|secret`, and the JSON
+   endpoints (plus a doomtp-web PR).
 4. [ ] Rate limits, the 60 s cache and the `E_HTTP_*` codes in `runtime/result.py` and spec §6.2.
 5. [ ] A `weather` derived command in the starter pack, off until a channel allows its host.
