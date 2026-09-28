@@ -701,7 +701,7 @@ owner, as `chatlog/queries.py` does for the full-text search the API and `logsea
 
 ```mermaid
 flowchart LR
-    push["git push to main"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
+    push["release merged into main<br/>(dev → main, ADR-0021)"] --> ci["GitHub Actions<br/>ruff · mypy · pytest · vitest · grammar · image build"]
     ci -->|red| none["nothing is published"]
     ci -->|green| ghcr[("ghcr.io/owner/doomtp-bot<br/>:main and :sha")]
 
@@ -731,12 +731,14 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
     only read SQLite.
   - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
     (ADR-0013). The same file builds locally in development and pulls on a server.
-- **How an update reaches the server (ADR-0013):** CI pushes `:main` and `:<sha>` to GHCR on every push to
+- **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
+  `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
+  publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to
   `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
   hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back means pinning `BOT_IMAGE` to a sha tag — but migrations run at startup and
+  chosen under. Rolling back means pinning `BOT_IMAGE` to the previous release tag (or a sha tag) — but migrations run at startup and
   are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
   before the deploy.
 - **What the image holds:** the locked dependency set and the installed package — static files,
