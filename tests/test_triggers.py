@@ -1,4 +1,4 @@
-"""Triggers, listeners and timers (architecture §7)."""
+"""Triggers, listeners and timers (architecture §7), managed by the `automation` module (ADR-0019)."""
 
 from __future__ import annotations
 
@@ -473,3 +473,93 @@ async def test_trigger_commands_need_a_moderator(h: Harness) -> None:
         "!timer add 60s echo nope", h.runtime.make_context(channel=channel, invoker=viewer)
     )
     assert report is not None and report.result.code == Code.DENIED and report.send is None
+
+
+# ── !listen, !event and the old !trigger (ADR-0019) ─────────────────────────
+async def test_a_listener_is_named_and_managed_by_its_name(h: Harness) -> None:
+    added = await h.say("mod", r"!listen add Hello /\bhello\b/ echo hi {$chatter.display}")
+    trigger = h.triggers.in_channel(CHANNEL_ID)[0]
+    assert added == f"listener hello added ({trigger.id})"
+    assert (trigger.name, trigger.regex, trigger.expr) == (
+        "hello",
+        r"\bhello\b",
+        "echo hi {$chatter.display}",
+    )
+    assert (
+        await h.say("mod", "!listen list")
+        == rf"{trigger.id}:hello /\bhello\b/ → echo hi {{$chatter.display}}"
+    )
+
+    assert await h.say("mod", "!listen off hello") == "hello is off"
+    assert h.triggers.listeners_matching(CHANNEL_ID, "hello there") == []
+    assert await h.say("mod", f"!listen on {trigger.id}") == f"{trigger.id} is on"
+    assert await h.say("mod", "!listen rm hello") == "removed hello"
+    assert await h.say("mod", "!listen rm hello") == "no listener called hello here"
+
+
+@pytest.mark.parametrize(
+    ("typed", "regex"),
+    [
+        ("!listen add greet /hi there/ echo hello", "hi there"),
+        ('!listen add greet "hi there" echo hello', "hi there"),
+        (r"!listen add greet \bhi\b echo hello", r"\bhi\b"),
+    ],
+)
+async def test_a_listeners_regex_can_be_slashed_quoted_or_bare(h: Harness, typed: str, regex: str) -> None:
+    await h.say("mod", typed)
+    assert [t.regex for t in h.triggers.in_channel(CHANNEL_ID)] == [regex]
+
+
+async def test_listener_names_are_checked(h: Harness) -> None:
+    await h.say("mod", "!listen add greet /hi/ echo hello")
+    assert (
+        await h.say("mod", "!listen add greet /yo/ echo hey")
+        == "there's already a listener called greet: rm it first"
+    )
+    reply = await h.say("mod", "!listen add 2fast /hi/ echo hello")
+    assert reply is not None and reply.startswith("a listener's name is a letter")
+    assert len(h.triggers.in_channel(CHANNEL_ID)) == 1
+
+
+async def test_listen_test_shows_what_would_fire_without_running_it(h: Harness) -> None:
+    await h.say("mod", r"!listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}")
+    await h.say("mod", r"!trigger listen \bname\b echo names!")
+    assert await h.say("mod", "!listen test well, my name is alice") == (
+        "matches: intro (match.1=alice, match.name=alice); " + str(h.triggers.in_channel(CHANNEL_ID)[1].id)
+    )
+    assert await h.say("mod", "!listen test nothing to see") == "no listener matches that"
+    assert h.sender.sent == []
+
+
+async def test_an_event_is_added_listed_and_run(h: Harness) -> None:
+    added = await h.say("mod", "!event add raid echo welcome {event.user.name} with {event.viewers} raiders")
+    trigger = h.triggers.in_channel(CHANNEL_ID)[0]
+    assert added == f"raid event {trigger.id} added"
+    await h.say("mod", r"!listen add hi /\bhi\b/ echo hello")
+    listing = await h.say("mod", "!event list")
+    assert listing is not None and listing.startswith(f"{trigger.id}:raid") and "hello" not in listing
+
+    payload = {"user": {"id": "500", "name": "raider"}, "viewers": 42}
+    found = h.triggers.event_triggers(CHANNEL_ID, "raid", payload)
+    await h.runner.run(found[0], channel_login=CHANNEL_LOGIN, event=payload, user=("500", "raider", "Raider"))
+    assert h.sender.sent == ["welcome raider with 42 raiders"]
+
+
+@pytest.mark.parametrize(
+    "typed", ["!event add listener echo hi", "!event add timer echo hi", "!event add raid"]
+)
+async def test_event_takes_only_twitch_events(h: Harness, typed: str) -> None:
+    reply = await h.say("mod", typed)
+    assert reply is not None and reply.startswith("usage: event")
+    assert h.triggers.in_channel(CHANNEL_ID) == []
+
+
+async def test_the_old_trigger_command_still_works_and_says_it_is_going(h: Harness) -> None:
+    reply = await h.say("mod", "!trigger add raid echo raid!")
+    assert reply is not None and reply.endswith("use !listen or !event")
+    assert h.triggers.in_channel(CHANNEL_ID)[0].name == ""
+
+
+async def test_the_module_is_called_automation(h: Harness) -> None:
+    names = {"listen", "event", "timer", "trigger"}
+    assert {c.spec.module for c in builtin_registry().all() if c.spec.name in names} == {"automation"}

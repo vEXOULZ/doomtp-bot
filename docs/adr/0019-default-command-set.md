@@ -53,10 +53,11 @@ These stay as they are, plus:
 - **`starter`** keeps `hug`, `lurk`, `roll` and `deaths`. It changes `so` to echo a line, calling
   `shoutout` first when a moderator runs it (`ifelse {$chatter.is_mod} ( shoutout … || true ) && echo …`;
   a command in an `ifelse` branch is refused only if its branch is chosen, spec §6.3). It adds the
-  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, cached like `fetch_live`.
+  readouts `uptime`, `title`, `game`, `viewers`, `time`, `bot` and `nextstream`. `$channel.next_stream` comes from Helix `GET /schedule`, fetched when a command reads it and cached per channel.
 - **Quotes** become a derived pack. `quote` dispatches with `ifelse` to the internal members
-  `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `channel.quotes` and
-  `channel.quote_next`. `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
+  `quote_add`, `quote_del`, `quote_show` and `quote_random`, with the data in `publisher.channel.quotes`
+  and `publisher.channel.quote_next` (the pack's own commands are the only writers, so the data belongs
+  to the bot as their publisher, not to the channel). `modules/quotes.py`, `quotes.py` and the `quotes` table are removed after the
   data is migrated. `quote find` waits for search over values.
 - **Internal pack members** can be called only from bodies in the same pack. They are hidden from
   `help`, and code 127 when typed.
@@ -137,8 +138,9 @@ Rejected again on 2026-09-28 in favour of the startup check.
 1. [x] The link rule in `Outbox.send`, the `bot_badges` cache, and the web site link in `help`. *(The link
    rule and the cache are in `core/links.py`. The `help` link is one global `WEB_SITE_URL`, the same for
    every channel, set on the deploy side.)*
-2. [ ] `random` with a seed, and picking from a list or map. The seed is done; picking waits for the
-   `list` and `map` types (ADR-0018 item 3) and `E_EMPTY`.
+2. [x] `random` with a seed, and picking from a list or map. *(Argument 1 takes a range, a list or a
+   map. A list or map from a lone placeholder arrives through the new `any` param type (spec §7.4);
+   typed, it is JSON. An empty one fails with `E_EMPTY` (254).)*
 3. [x] `shoutout` without a chat line, and the moderation primitives whose endpoints check out.
    `shoutout` is done, and so are the rest (2026-09-28): `ban`, `unban`/`untimeout`, `warn`,
    `announce`, `chatmode`, `clear`, `shield`, and `delete`, `pin` and `unpin` on the replied-to message,
@@ -150,11 +152,29 @@ Rejected again on 2026-09-28 in favour of the startup check.
    joined as `list_items` and `names_per_space`, `!admin listitems|names`, in migration 0004.)*
 5. [x] Internal pack members and system packs, with `false` and `default` moved into `core`
    (amends ADR-0012).
-6. [ ] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
-   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5.)*
-7. [ ] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias.
-8. [ ] `customecho` and the `:template` accessor.
-9. [ ] Quotes as a derived pack, the data migration, and the removal of the table.
+6. [x] The pack script installs `core`, and startup refuses to run without it. Also `ping`, the new
+   starter readouts, and `$channel.next_stream`. *(The `core` part is done with item 5. 2026-09-28:
+   `ping` is `echo pong` in `starter`. `$channel.next_stream` is read from Helix only when a command
+   names it and kept for ten minutes per channel (`core/schedule.py`), rather than polled like the live
+   set, because few commands read it; a failed request reads as nothing scheduled for a minute.
+   `$channel.uptime` and `next_stream[in]` stay seconds, and a new `:human` accessor says them as
+   `1h 2m`. `uptime` and `nextstream` pick their line with `ifelse`, so a channel's own wording is
+   used while the stream is live or a stream is scheduled.)*
+7. [x] `listen`, `event` and `timer` in an `automation` module, with `!trigger` as an alias. *(2026-09-28:
+   a listener's name lives in the row's `match` JSON, so the table is unchanged; `rm`/`on`/`off` take
+   the name or the id, and `listen test <text>` shows what would fire without running it. Alembic
+   revision 0006 moves `triggers` module toggles and callbacks to `automation`. `!trigger` keeps its old
+   grammar and says it is going away.)*
+8. [x] `customecho` and the `:template` accessor. *(2026-09-28: `!customecho` is moderator-only and
+   writes `channel.customecho[<command>]` itself, whatever `channel_var_write_role` says. A placeholder
+   in a template with no value makes the whole template missing, so the readout's own wording shows.)*
+9. [x] Quotes as a derived pack, the data migration, and the removal of the table. *(2026-09-28: the
+   `quotes` pack in `scripts/starter_pack.py`; Alembic revision 0008 moves each channel's live quotes
+   into the bot's `publisher.channel.quotes` (number → `{text, date, game?}`) and the last number given
+   out into `quote_next`, then drops the table, and raises the bot's publisher limits if the copy wouldn't
+   fit. The dispatcher tests `(arg.1 ?? "-")`, since `""` counts as missing (spec §7.3.3). It fits
+   `MAX_INVOCATIONS` because an `ifelse` counts as its larger branch. Lost from the module: word search
+   and `!quote #2`; a non-moderator's `add`/`del` fails with a message instead of silently.)*
 10. [x] An ADR for the HTTP query primitive. *(2026-09-28: ADR-0020, accepted.)*
 11. [x] The reserved-name list in ADR-0010 and the access matrix, with a test against
     `runtime/namespaces.py`.

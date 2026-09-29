@@ -37,7 +37,9 @@ tedious but bounded and fully covered by the suite.
   tables unqualified exactly as it did when these were two files, and nothing joins across the two by
   accident.
 - Each schema keeps **its own `schema_migrations` table** and its own numbered migration files. Postgres
-  has transactional DDL, so a migration and its version row land together or not at all.
+  has transactional DDL, so a migration and its version row land together or not at all. *(2026-09-28,
+  ADR-0022)* Now an Alembic environment per schema, each with its own `alembic_version`; the numbered SQL
+  files are its first revisions, and `schema_migrations` is kept only for images from before that.
 - Access through **psycopg 3** (replacing `aiosqlite`), with the same hand-written repositories and
   numbered SQL files. **Still no ORM** — ADR-0003's reasoning there is untouched.
 - **Full-text search** is a `tsvector` generated column with a GIN index, queried with
@@ -111,7 +113,8 @@ that read-then-write; those places are marked in the code.
   Postgres upgrade is now an operation this project has to care about.
 - **Sharp edge:** ADR-0013's forward-only migrations still apply, and now apply to a database that outlives
   the container. Rolling back to an image from before a migration still means rolling back **within a
-  schema version**, or restoring a `pg_restore` archive taken before the deploy.
+  schema version**, or restoring a `pg_restore` archive taken before the deploy. *(2026-09-28)* Replaced
+  by ADR-0022: every migration has a downgrade, and `deploy/rollback.sh` runs it.
 - **Sharp edge (dev, Windows):** psycopg's async mode refuses to run on the Proactor event loop, which is
   Python's default on Windows. `storage.db.configure_event_loop()` switches to the Selector loop, which in
   exchange cannot spawn asyncio subprocesses. Production is Linux, where none of this applies.
@@ -141,8 +144,12 @@ that read-then-write; those places are marked in the code.
    under the `test` profile, and `pgweb` replacing Datasette. *(2026-09-22)*
 9. [x] Keep `deploy/update.sh` off Postgres: it restarts the bot only, and names the database as a
    dependency so a stopped one still comes up. *(2026-09-22)*
-10. [ ] Run the backup and restore on the real guest. The round-trip is proven locally — the backup
+10. [x] Run the backup and restore on the real guest. The round-trip is proven locally — the backup
     service dumped both schemas from a password-protected server, `DROP SCHEMA bot CASCADE` then
     `pg_restore` brought the schema, its 25 tables and its seeded rows back — but it has never run against
-    the guest's own volume, on its own cron, with the dumps then leaving the machine. Blocked on the same
-    missing guest as ADR-0013 items 4 and 5.
+    the guest's own volume, on its own cron, with the dumps then leaving the machine. *(2026-09-28, guest
+    221: root's crontab runs the backup at 04:15 and alerts on failure; a fresh dump of both schemas
+    restored into a throwaway database with all 37 tables at the live row counts; the nightly vzdump of
+    the guest takes `data/backups/` to another machine. One gap found: a `--schema` dump leaves out the
+    `unaccent` extension that `chatlog.messages` needs, so restoring into an empty database has to create
+    it first. The README says so.)*

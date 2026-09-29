@@ -90,6 +90,7 @@ A new block, 400–499, as ADR-0018 reserved it:
 | `E_HTTP_STATUS` | 404 | the server answered with a non-2xx status (the status is in the data) |
 | `E_HTTP_NOT_JSON` | 405 | the body isn't JSON |
 | `E_HTTP_PATH` | 406 | the path doesn't exist in the response |
+| `E_HTTP_UNREACHABLE` | 407 | the connection failed: refused, reset, or a TLS error *(added 2026-09-28)* |
 
 ### Logging
 
@@ -133,12 +134,26 @@ The open questions were settled by the project owner:
 3. **`http` runs only from derived commands**, and only when the command's publisher is a bot admin.
    That also replaced the per-channel allow-lists of the proposal with a single global one.
 
+### Amendment (2026-09-28): a secret's value is set through the API only
+
+The Decision above lets a bot admin type `!admin http secret <host> query|header <name> <value>` in
+chat. A chat line is public, and the bot keeps it in the chat log (`messages`), in `command_runs` and
+in any third-party history, so a key typed there has already leaked. `!admin http secret <host> clear`
+stays in chat. Setting a value is `PUT /api/v1/http-hosts/<host>/secret` (admins only), and chat
+refuses the other forms and points there. The admin page on the web site (doomtp-web) is the usual way
+to reach that endpoint.
+
 ## Action Items
 
 1. [x] Settle the open questions and accept or reject this ADR. *(2026-09-28)*
-2. [ ] The `http` module with `http get`, the admin-publisher check, the address rules and redirects, with tests against a local
-   server that tries each SSRF trick.
-3. [ ] The host allow-list and secrets: the tables, `!admin http allow|deny|list|secret`, and the JSON
-   endpoints (plus a doomtp-web PR).
-4. [ ] Rate limits, the 60 s cache and the `E_HTTP_*` codes in `runtime/result.py` and spec §6.2.
-5. [ ] A `weather` derived command in the starter pack, off until a channel allows its host.
+2. [x] The `http` module with `http get`, the admin-publisher check, the address rules and redirects, with tests against a local
+   server that tries each SSRF trick. *(2026-09-28: `modules/httpget.py`, `webfetch/`, `tests/test_http.py`)*
+3. [x] The host allow-list and secrets: the tables, `!admin http allow|deny|list|secret`, and the JSON
+   endpoints (plus a doomtp-web PR). *(2026-09-28: `webfetch/hosts.py`, revision 0007,
+   `/api/v1/http-hosts` and `/api/v1/http-limits`, `tests/test_http_hosts.py`; secrets are set through
+   the API only, see the amendment. The doomtp-web admin page is still to do.)*
+4. [x] Rate limits, the 60 s cache and the `E_HTTP_*` codes in `runtime/result.py` and spec §6.2. *(2026-09-28)*
+5. [x] A `weather` derived command in the starter pack, off until a channel allows its host. *(2026-09-28:
+   `scripts/starter_pack.py`, reading wttr.in, which needs no key. With one global allow-list it is off
+   until a bot admin allows `wttr.in` and while the bot account isn't a bot admin; until then it fails
+   with `E_HTTP_NOT_ALLOWED` and fetches nothing.)*

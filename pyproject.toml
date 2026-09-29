@@ -1,6 +1,6 @@
 [project]
 name = "doomtp-bot"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-channel Twitch chat bot with a composable command language"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,6 +8,9 @@ dependencies = [
     "twitchio>=3,<4",
     "aiohttp>=3.9",
     "psycopg[binary]>=3.2",
+    # Schema migrations with a downgrade for every upgrade, so an image rollback can undo them (ADR-0022).
+    "alembic>=1.14",
+    "sqlalchemy>=2.0.36",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "pydantic>=2.7",

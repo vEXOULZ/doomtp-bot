@@ -170,7 +170,7 @@ async def test_publishing_a_pack_refuses_name_clashes_and_changes_nothing(h: Har
     assert await h.say("mod", "!hit") == "mod's hit"  # unchanged
 
 
-@pytest.mark.parametrize("name", ["core_admin", "triggers"])
+@pytest.mark.parametrize("name", ["core_admin", "automation", "triggers"])
 async def test_pack_names_cannot_shadow_a_builtin_module(h: Harness, name: str) -> None:
     refused = await h.run("alice", f"!cc pack create {name}")
     assert refused.result.code == Code.USAGE and "built-in module" in (refused.result.message or "")
@@ -236,9 +236,9 @@ async def test_a_global_pack_reaches_every_channel(h: Harness) -> None:
 
 
 async def test_primitives_always_win(h: Harness) -> None:
-    await h.say("owner", "!cc add ping echo not pong")
-    await h.say("owner", "!cc publish ping global")
-    assert await h.say("bob", "!ping") == "pong"
+    await h.say("owner", "!cc add random echo not a number")
+    await h.say("owner", "!cc publish random global")
+    assert await h.say("bob", "!random 1-1") == "1"
 
 
 async def test_help_lists_pack_and_global_commands(h: Harness) -> None:

@@ -27,6 +27,24 @@ services:
         limits:
           memory: 512m
 
+  # The migrate step (ADR-0022): the schema upgrade and the starter pack, from the bot's own image, before
+  # the bot starts. Every `up` runs it, so no deploy can skip it; if it fails, the bot isn't replaced.
+  migrate:
+    build: .
+    image: doomtp-bot:dev
+    restart: "no"
+    entrypoint: ["sh", "/app/scripts/migrate.sh"]
+    env_file: .env
+    secrets: [postgres_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
   doomtp-bot:
     build: .
     image: doomtp-bot:dev
@@ -39,6 +57,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       # Only the instance lock lives here now; the databases are Postgres's (ADR-0014).
       - ./data:/data
@@ -95,8 +115,8 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # One-shot install of the starter commands (ADR-0012):
-  # docker compose --profile tools run --rm starter-pack [--dry-run]
+  # One-shot install of the starter commands (ADR-0012). The migrate step already runs it on every `up`;
+  # this is for a dry run: docker compose --profile tools run --rm starter-pack --dry-run
   starter-pack:
     profiles: ["tools"]
     build: .

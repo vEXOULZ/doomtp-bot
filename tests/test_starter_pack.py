@@ -8,8 +8,10 @@ import pytest
 
 from doomtp_bot.customcmds.system import CORE_COMMANDS
 from doomtp_bot.policy.roles import GLOBAL
+from doomtp_bot.runtime.result import ErrorCode
 from doomtp_bot.storage.db import Databases, fetch_value
-from scripts.starter_pack import PACK, STARTER, install, run
+from doomtp_bot.webfetch.fetcher import Fetched, HttpError
+from scripts.starter_pack import PACK, QUOTES, STARTER, install, run
 from tests.customcmds.test_customcmds import USERS
 from tests.customcmds.test_packs import Harness, h  # noqa: F401
 
@@ -75,6 +77,51 @@ async def test_every_starter_body_is_documented_and_parses(h: Harness) -> None: 
     assert packs == []  # the commands arrive through the pack, not one publication each
 
 
+WTTR = {
+    "current_condition": [{"temp_C": "21", "temp_F": "70", "weatherDesc": [{"value": "Partly cloudy"}]}],
+    "nearest_area": [{"areaName": [{"value": "Lisbon"}]}],
+}
+
+
+class FakeWeb:
+    """Stands in for the fetcher: the URL a body asked for, and wttr.in's answer."""
+
+    def __init__(self, *allowed: str) -> None:
+        self.allowed = allowed
+        self.urls: list[str] = []
+
+    async def get(self, channel_id: str, url: str) -> Fetched:
+        if not any(url.startswith(f"https://{host}/") for host in self.allowed):
+            raise HttpError("E_HTTP_NOT_ALLOWED", "wttr.in isn't on the list of hosts http may fetch")
+        self.urls.append(url)
+        return Fetched(WTTR, "wttr.in", 200, 400)
+
+
+async def test_weather_waits_for_an_admin_and_its_host(h: Harness) -> None:  # noqa: F811
+    await _install(h)
+    web = FakeWeb()
+    h.runtime.services["http"] = web
+    refused = await h.run("alice", "!weather Lisbon")  # an admin hasn't allowed wttr.in yet
+    assert refused.result is not None and refused.result.code == ErrorCode.E_HTTP_NOT_ALLOWED
+    assert refused.send == "wttr.in isn't on the list of hosts http may fetch" and web.urls == []
+
+    web.allowed = ("wttr.in",)
+    assert await h.say("alice", "!weather New York") == "Lisbon: 21°C / 70°F, Partly cloudy"
+    assert web.urls == ["https://wttr.in/New York?format=j1"]  # one chunk stays one argument
+    usage = await h.say("alice", "!weather")
+    assert usage is not None and "place" in usage and len(web.urls) == 1
+
+
+async def test_weather_runs_only_while_its_publisher_is_a_bot_admin(h: Harness) -> None:  # noqa: F811
+    """The owner here is the bot owner, so a bot admin; installed by anyone else, `http` refuses."""
+    await install(h.dbs.bot, owner_user_id=USERS["bob"]["id"], owner_login="bob")
+    web = FakeWeb("wttr.in")
+    h.runtime.services["http"] = web
+    refused = await h.run("alice", "!weather Lisbon")
+    assert refused.result is not None and refused.result.code == ErrorCode.E_HTTP_NOT_ALLOWED
+    assert web.urls == []
+
+
 def _args(dsn: str, **kwargs: object) -> argparse.Namespace:
     defaults: dict[str, object] = {"owner_id": "", "owner_login": "", "dry_run": False}
     return argparse.Namespace(database_url=dsn, **(defaults | kwargs))
@@ -90,7 +137,7 @@ async def test_the_script_installs_into_the_database_it_is_pointed_at(
     count = await fetch_value(
         dbs.bot, "SELECT count(*) FROM custom_commands WHERE owner_user_id = %s", (OWNER["id"],)
     )
-    assert count == len(STARTER) + len(CORE_COMMANDS)
+    assert count == len(STARTER) + len(CORE_COMMANDS) + len(QUOTES)
 
 
 async def test_the_script_needs_an_owner_before_it_touches_anything(

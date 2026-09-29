@@ -55,7 +55,7 @@ The runtime also has to:
 11. **Cancellation:** the executor checks the ModerationIndex before and between stages. Commands with side effects check it again right before acting. If cancelled, the run gets code 130, variable writes are discarded and queued sends are dropped.
 12. **Variable writes are buffered** and committed atomically at the end of the run unless it was cancelled (ADR-0010).
 13. **Limits:**
-    - 8 invocations
+    - 16 invocations (raised from 8 on 2026-09-28, see the amendment below)
     - 3 s per stage, 6 s in total
     - 4 KB of data per stage
     - 2 chat messages of output
@@ -63,6 +63,10 @@ The runtime also has to:
     - output never re-parsed as a command
 14. **`!explain`** runs the parser, resolver and preflight, then prints the report. `--run` also executes, with writes and sends disabled.
 15. **Logging:** each command's `log_level` (`off | errors | output | invocations | all`) can be overridden per channel and controls `command_runs` rows.
+
+## Amendment (2026-09-28): 16 invocations
+
+The limit was 8 when this ADR was written, with no recorded reason for that number. Derived packs (ADR-0019), such as the quotes pack, spend invocations on routing: a dispatcher's `ifelse` chain and the calls into internal members count before any real work. With 8, `!quote add` used the whole budget. The limit is now 16. Two counting rules come with it (spec §5.2 row 7): a custom command's body counts at every call, and an `ifelse` counts as its larger branch, since only one branch runs. The other limits in item 13 are unchanged; the per-stage and total timeouts still bound how long a run can take.
 
 ## Options Considered
 

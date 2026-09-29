@@ -400,9 +400,18 @@ async def test_crashing_command_is_contained() -> None:
 
 
 async def test_too_many_invocations() -> None:
-    expr = "!" + " | ".join(["echo x"] * 9)
+    expr = "!" + " | ".join(["echo x"] * 17)
     r = await run(make_runtime(), expr)
-    assert r.result.code == ErrorCode.E_TOO_MANY and r.send == "too many commands (max 8)"
+    assert r.result.code == ErrorCode.E_TOO_MANY and r.send == "too many commands (max 16)"
+
+
+async def test_an_ifelse_counts_as_its_larger_branch() -> None:
+    """Only one branch runs, so the limit sees the larger one, not both (spec §5.2 row 7)."""
+    fifteen = " && ".join(["echo x"] * 15)
+    fits = await run(make_runtime(), f"!ifelse {{1 == 1}} ( {fifteen} ) ( {fifteen} ) && echo y")
+    assert fits.result.code == 0
+    over = await run(make_runtime(), f"!ifelse {{1 == 2}} ( echo x ) ( {fifteen} && echo x ) && echo y")
+    assert over.result.code == ErrorCode.E_TOO_MANY
 
 
 async def test_moderation_cancellation_discards_writes() -> None:
@@ -427,8 +436,8 @@ async def test_failures_carry_the_specs_error_identifier() -> None:
     }
     missing = await run(rt, "!echo {chatter.unset}")  # no ?? fallback (spec §7.5)
     assert missing.result.data == {"error": "E_MISSING_VALUE", "reference": "{chatter.unset}"}
-    too_many = await run(rt, " && ".join(["!echo x"] * 9))
-    assert too_many.result.data == {"error": "E_TOO_MANY", "max": 8}
+    too_many = await run(rt, " && ".join(["!echo x"] * 17))
+    assert too_many.result.data == {"error": "E_TOO_MANY", "max": 16}
     parse = await run(rt, "!echo a ; b")
     assert isinstance(parse.result.data, dict) and parse.result.data["error"] == "E_RESERVED_OPERATOR"
 
@@ -479,3 +488,38 @@ async def test_random_with_a_seed_is_repeatable() -> None:
     assert first.result.code == 0 and first.result.data == again.result.data
     assert first.result.data != other.result.data
     assert 1 <= first.result.data <= 1_000_000  # type: ignore[operator]
+
+
+async def test_random_picks_one_item_of_a_list() -> None:
+    store = InMemoryVariableStore()
+    store.data[VarKey("channel", CHANNEL.id, name="pool")] = ["rock", "paper", "scissors"]
+    r = await run(make_runtime(store=store), "!random {channel.pool}")
+    key = random.Random(7).choice(range(3))
+    assert r.result.data == {"key": key, "value": ["rock", "paper", "scissors"][key]}
+    assert r.send == ["rock", "paper", "scissors"][key]
+
+
+async def test_random_picks_one_entry_of_a_map_with_its_key() -> None:
+    store = InMemoryVariableStore()
+    store.data[VarKey("channel", CHANNEL.id, name="quotes")] = {"1": "first", "2": "second"}
+    r = await run(make_runtime(store=store), "!random {channel.quotes} | echo #{_1[key]}: {_1[value]}")
+    assert r.send in ("#1: first", "#2: second")
+
+
+async def test_random_pick_from_a_list_typed_as_json_with_a_seed_is_repeatable() -> None:
+    line = "!random [10,20,30,40,50,60,70,80] alice"
+    first = await run(make_runtime(), line)
+    again = await run(make_runtime(), line, seed=99)
+    assert first.result.ok and first.result.data == again.result.data
+
+
+async def test_random_on_an_empty_collection_fails_with_e_empty() -> None:
+    store = InMemoryVariableStore()
+    store.data[VarKey("channel", CHANNEL.id, name="pool")] = {}
+    r = await run(make_runtime(store=store), "!random {channel.pool}")
+    assert r.result.code == ErrorCode.E_EMPTY and r.result.data == {"error": "E_EMPTY"}
+
+
+async def test_random_rejects_something_that_is_neither_a_range_nor_a_collection() -> None:
+    r = await run(make_runtime(), "!random banana")
+    assert r.result.code == Code.USAGE and "list or map" in (r.send or "")

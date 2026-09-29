@@ -87,7 +87,7 @@ def database_url() -> Iterator[str]:
             await conn.execute(f'CREATE DATABASE "{name}"')
         finally:
             await conn.close()
-        databases = await Databases.open(dsn)
+        databases = await Databases.open(dsn, migrate=True)
         await databases.close()
 
     async def drop() -> None:
@@ -139,7 +139,7 @@ async def committed_database(database_url: str) -> AsyncIterator[tuple[str, Data
         await admin.execute(f'CREATE DATABASE "{name}"')
     finally:
         await admin.close()
-    databases = await Databases.open(dsn)
+    databases = await Databases.open(dsn, migrate=True)
     try:
         yield dsn, databases
     finally:
@@ -149,3 +149,16 @@ async def committed_database(database_url: str) -> AsyncIterator[tuple[str, Data
             await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
         finally:
             await admin.close()
+
+
+@pytest.fixture
+def empty_database() -> Iterator[str]:
+    """A database of this test's own with nothing in it, not even the schemas: for migration tests."""
+    name = f"doomtp_empty_{os.getpid()}_{next(_CASE_IDS)}"
+    with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+        admin.execute(f'CREATE DATABASE "{name}"')
+    try:
+        yield _with_database(ADMIN_URL, name)
+    finally:
+        with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+            admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')

@@ -131,11 +131,11 @@ async def test_link_gives_a_personal_alias_and_unlink_removes_it(h: Harness) -> 
 
 
 async def test_builtins_win_over_publications(h: Harness) -> None:
-    command = await h.add("alice", "ping", "echo custom")
+    command = await h.add("alice", "random", "echo custom")
     await h.service.publish(
-        channel_id=CHANNEL_ID, name="ping", command=command, published_by=USERS["mod"]["id"]
+        channel_id=CHANNEL_ID, name="random", command=command, published_by=USERS["mod"]["id"]
     )
-    assert await h.say("bob", "!ping") == "pong"
+    assert await h.say("bob", "!random 1-1") == "1"
 
 
 # ── live edits and deletes ─────────────────────────────────────────────────
@@ -207,8 +207,8 @@ async def test_nesting_deeper_than_the_limit_fails_preflight(h: Harness) -> None
 
 
 async def test_expanded_invocations_count_toward_the_limit(h: Harness) -> None:
-    await h.add("alice", "five", "echo a && echo b && echo c && echo d && echo e")
-    report = await h.run("alice", "!five && echo x && echo y && echo z")
+    await h.add("alice", "ten", " && ".join(["echo a"] * 10))
+    report = await h.run("alice", "!ten && " + " && ".join(["echo x"] * 6))  # 1 + 10 + 6 = 17
     assert isinstance(report.result.data, dict) and report.result.data["error"] == "E_TOO_MANY"
 
 
@@ -310,6 +310,35 @@ async def test_bodies_are_parsed_in_body_context(h: Harness) -> None:
     assert Context.BODY is Context("body")
 
 
+async def test_raw_args_keep_quotes_and_spacing_as_typed(h: Harness) -> None:
+    """`{arg.N+raw}` is the source from argument N on; `{arg.N+}` is the lexed words (spec §7.3)."""
+    await h.add("alice", "raw", "echo [{arg.2+raw}] [{arg.2+}]")
+    said = await h.say("alice", '!raw first  "he said  hi"   it\\\'s \\"so\\"')
+    assert said == '["he said  hi"   it\\\'s \\"so\\"] [he said  hi it\'s "so"]'
+    missing = await h.run("alice", "!raw only")
+    assert missing.result.data is not None and missing.result.data["error"] == "E_MISSING_VALUE"
+
+
+async def test_raw_args_passed_on_arrive_as_they_expanded(h: Harness) -> None:
+    """A dispatcher handing `{arg.2+raw}` to another command: the callee sees that text verbatim, so its
+    own `+raw` is the caller's typed text again, not a re-lexed copy of it."""
+    await h.add("alice", "inner", "echo <{arg.1+raw}>")
+    await h.add("alice", "outer", "inner {arg.2+raw}")
+    assert await h.say("alice", '!outer add  "keep  me"  as is') == '<"keep  me"  as is>'
+
+
+async def test_raw_args_splice_placeholders_into_the_typed_text(h: Harness) -> None:
+    """Text around a placeholder stays as typed; the placeholder is what it expanded to, once."""
+    await h.add("alice", "inner", "echo <{arg.1+raw}>")
+    await h.add("alice", "outer", 'inner  "a {arg.1}"   b{arg.2}c')
+    assert await h.say("alice", "!outer x  y") == '<"a x"   byc>'
+
+
+async def test_cc_run_keeps_raw_args_after_the_id(h: Harness) -> None:
+    command = await h.add("alice", "raw", "echo {arg.1+raw}")
+    assert await h.say("alice", f'!cc run {command.id}  "a  b"  c') == '"a  b"  c'
+
+
 # ── the !cc chat commands ──────────────────────────────────────────────────
 async def test_cc_add_publish_link_and_run_from_chat(h: Harness) -> None:
     created = await h.say("alice", "!cc add hype echo {$chatter.display} is hyped!")
@@ -389,9 +418,9 @@ async def test_cc_list_and_info(h: Harness) -> None:
 # ── running by id (ADR-0009 action item 6) ─────────────────────────────────
 async def test_cc_run_reaches_a_command_by_id(h: Harness) -> None:
     """The owner's escape hatch: no publication, no alias, and the name is a built-in's."""
-    await h.say("alice", "!cc add ping echo pong from {$publisher.name} to {arg.1 ?? nobody}")
-    assert await h.say("alice", "!ping") == "pong"  # the built-in still wins by name
-    command = await h.service.by_owner(USERS["alice"]["id"], "ping")
+    await h.say("alice", "!cc add random echo pong from {$publisher.name} to {arg.1 ?? nobody}")
+    assert await h.say("alice", "!random 1-1") == "1"  # the built-in still wins by name
+    command = await h.service.by_owner(USERS["alice"]["id"], "random")
     assert command is not None
 
     assert await h.say("alice", f"!cc run {command.id} bob") == "pong from alice to bob"

@@ -6,7 +6,11 @@
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")/.."
-compose=(docker compose -f compose.yaml -f compose.prod.yaml)
+# COMPOSE_FILE names the compose files, from the environment or .env, so a server's own override (a
+# port, a network) stays in place; docker compose reads it itself. Without it, the two every server uses.
+COMPOSE_FILE=${COMPOSE_FILE:-$(sed -n 's/^COMPOSE_FILE=//p' .env | tail -1)}
+export COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml:compose.prod.yaml}
+compose=(docker compose)
 
 # Read the one value we need rather than sourcing .env: it is a compose env file, not a shell script.
 BOT_IMAGE=${BOT_IMAGE:-$(sed -n 's/^BOT_IMAGE=//p' .env | tail -1)}
@@ -23,13 +27,11 @@ if [ "$before" = "$after" ]; then
 fi
 
 echo "updating: ${before:0:19} -> ${after:0:19}"
-# The new bot refuses to start without its `core` pack (ADR-0019), so install it first, from the new image.
-# That leaves the old bot running if it fails. Exit 2 means the bot was never signed in: nothing to install
-# yet, and the bot starts anyway and says so.
-status=0
-"${compose[@]}" --profile tools run --rm starter-pack || status=$?
-if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
-    echo "starter pack failed (exit $status): not updating" >&2
+# The migrate step, from the new image: the schema upgrade and the `core` pack the new bot needs (ADR-0022).
+# `up` below runs it too, but running it here first stops a failed one with the old bot still running and
+# a clear message. It is safe to run twice.
+if ! "${compose[@]}" run --rm migrate; then
+    echo "migrate step failed: not updating. The old bot is still running." >&2
     exit 1
 fi
 # Only the bot. Postgres is named as a dependency so it gets started if it is down, but an unchanged,

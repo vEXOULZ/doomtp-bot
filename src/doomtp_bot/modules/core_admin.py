@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse
-from doomtp_bot.modules._common import actor, command_spec, need, policy_of, rank, user_arg
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse, parse_template
+from doomtp_bot.modules._common import actor, command_spec, need, policy_of, rank, reject_filtered, user_arg
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
     BOT_ADMIN_RANK,
@@ -27,14 +27,17 @@ from doomtp_bot.runtime.context import Args, Chatter, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
-from doomtp_bot.runtime.values import ConversionError, convert
+from doomtp_bot.runtime.values import MISSING, ConversionError, convert
 from doomtp_bot.runtime.variables import (
     LIMIT_FIELDS,
     OWNER_KINDS,
     LimitField,
+    WriteOp,
     format_size,
+    key_for,
     parse_size,
 )
+from doomtp_bot.webfetch.hosts import HostEntry, HostError, HostStore
 
 if TYPE_CHECKING:
     pass
@@ -428,6 +431,11 @@ async def _prefix(ctx: CommandContext, v: list[str], args: Args) -> Result:
 ADMIN_USAGE = (
     "admin add|remove <user> | quota|valuecap|listitems|names default [value]"
     " | quota|valuecap|listitems|names <channel|publisher|chatter> <name> [value|reset]"
+    " | http list|allow|deny|secret|limit …"
+)
+ADMIN_HTTP_USAGE = (
+    "admin http list | allow <host> [http] | deny <host> | secret <host> clear"
+    " | limit [channel|host <per minute>]"
 )
 _LIMITS = {f.command: f for f in LIMIT_FIELDS}
 
@@ -478,6 +486,64 @@ async def _admin_limit(ctx: CommandContext, v: list[str]) -> Result:
     return Result.success(f"{label} {what} is now {_show_limit(limit, size)}", size)
 
 
+def _show_host(entry: HostEntry) -> str:
+    extras = ["http too"] if entry.rule.plain_http else []
+    if entry.secret is not None:
+        extras.append(f"secret in {entry.secret.kind} {entry.secret.name}")
+    return entry.rule.pattern + (f" ({', '.join(extras)})" if extras else "")
+
+
+async def _admin_http(ctx: CommandContext, v: list[str]) -> Result:
+    """`!admin http …`: the hosts `http get` may fetch, their secrets and the limits (ADR-0020). A secret's
+    value is set only through the admin API: a chat line is public and kept in the chat log."""
+    hosts: HostStore = ctx.service("http_hosts")
+    need(v, 2, ADMIN_HTTP_USAGE)
+    action, rest, who = v[1].lower(), v[2:], actor(ctx)
+    try:
+        if action == "list":
+            entries = hosts.entries()
+            shown = ", ".join(_show_host(e) for e in entries) or "none"
+            limits = hosts.limits()
+            return Result.success(
+                f"hosts: {shown} · limits: {limits.channel_per_minute}/min per channel,"
+                f" {limits.host_per_minute}/min per host",
+                {"hosts": [e.public() for e in entries], "limits": limits.as_dict()},
+            )
+        if action == "allow" and len(rest) in (1, 2) and (len(rest) == 1 or rest[1].lower() == "http"):
+            entry = await hosts.allow(rest[0], plain_http=len(rest) == 2, actor=who.user_id, via=who.via)
+            return Result.success(f"http can fetch {_show_host(entry)}")
+        if action == "deny" and len(rest) == 1:
+            if not await hosts.deny(rest[0], actor=who.user_id, via=who.via):
+                return Result.failure(Code.FAIL, f"{rest[0]} isn't on the list")
+            return Result.success(f"http no longer fetches {rest[0].lower()}")
+        if action == "secret" and len(rest) == 2 and rest[1].lower() == "clear":
+            entry = await hosts.set_secret(rest[0], None, actor=who.user_id, via=who.via)
+            return Result.success(f"{entry.rule.pattern} has no secret now")
+        if action == "secret":
+            raise CommandError(
+                "set a secret through the admin API (PUT /api/v1/http-hosts/<host>/secret): chat is public"
+                " and logged, so a key typed here would be leaked already"
+            )
+        if action == "limit" and not rest:
+            limits = hosts.limits()
+            return Result.success(
+                f"{limits.channel_per_minute}/min per channel, {limits.host_per_minute}/min per host",
+                limits.as_dict(),
+            )
+        if (
+            action == "limit"
+            and len(rest) == 2
+            and rest[0].lower() in ("channel", "host")
+            and rest[1].isdigit()
+        ):
+            key = f"{rest[0].lower()}_per_minute"
+            limits = await hosts.set_limits(**{key: int(rest[1])}, actor=who.user_id, via=who.via)
+            return Result.success(f"at most {getattr(limits, key)} a minute per {rest[0].lower()}")
+    except HostError as exc:
+        raise CommandError(str(exc)) from None
+    raise CommandError(f"usage: {ADMIN_HTTP_USAGE}")
+
+
 @_handler
 async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
@@ -485,6 +551,8 @@ async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
     action = v[0].lower()
     if action in _LIMITS:
         return await _admin_limit(ctx, v)
+    if action == "http":
+        return await _admin_http(ctx, v)
     need(v, 2, ADMIN_USAGE)
     if action not in ("add", "remove"):
         raise CommandError(f"usage: {ADMIN_USAGE}")
@@ -526,6 +594,46 @@ async def _callback(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"set {kind} for {scope}")
 
 
+# ── !customecho ─────────────────────────────────────────────────────────────
+CUSTOMECHO_USAGE = "customecho show <command> | set <command> <template> | clear <command>"
+CUSTOMECHO = ("channel", "customecho")
+ECHO_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+@_handler
+async def _customecho(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """A channel's own wording for a readout, kept in `channel.customecho[<command>]` (ADR-0019). The
+    readout renders it with `:template`, so the placeholders are stored as typed, not filled in now."""
+    need(v, 2, CUSTOMECHO_USAGE)
+    action, name = v[0].lower(), v[1].lower().removeprefix(ctx.channel.prefix)
+    if not ECHO_NAME_RE.match(name):
+        raise CommandError(f"usage: {CUSTOMECHO_USAGE}")
+    key = key_for(ctx.exec, *CUSTOMECHO)
+    current = await ctx.variables.get(key)
+    stored = current.get(name) if isinstance(current, dict) else None
+    if action == "show":
+        if stored is None:
+            return Result.failure(Code.NOT_FOUND, f"{name} has no custom wording")
+        return Result.success(f"{name}: {stored}", stored)
+    if action == "clear":
+        if stored is None:
+            return Result.failure(Code.NOT_FOUND, f"{name} has no custom wording")
+        await ctx.variables.buffer(WriteOp("delete", key, path=(name,)))
+        return Result.success(f"{name} is back to its own wording")
+    if action != "set" or not args.raw_tail:
+        raise CommandError(f"usage: {CUSTOMECHO_USAGE}")
+    template = args.raw_tail.strip()
+    try:
+        parse_template(template)
+    except ParseError as exc:
+        raise CommandError(str(exc)) from exc
+    reject_filtered(ctx, template)
+    if current is not MISSING and not isinstance(current, dict):
+        raise CommandError("channel.customecho isn't a map: clear it with !var del channel.customecho")
+    await ctx.variables.buffer(WriteOp("set", key, template, (name,)))
+    return Result.success(f"{name} now says: {template}", template)
+
+
 def _make(name: str, summary: str, usage: str, fn: Any, required_role: str = "moderator") -> Command:
     example = Example(DEFAULT_PREFIX + usage.split(" |")[0], "")
     return command(_spec(name, summary, usage, required_role, examples=(example,)))(fn)
@@ -546,4 +654,20 @@ COMMANDS: tuple[Command, ...] = (
         _spec("callback", "Customize replies for cooldowns and denials", CALLBACK_USAGE),
         raw_tail_subcommands=(("set", 4),),
     )(_callback),
+    command(
+        _spec(
+            "customecho",
+            "Change what a readout command says",
+            CUSTOMECHO_USAGE,
+            writes=("channel.customecho",),
+            examples=(
+                Example(
+                    DEFAULT_PREFIX
+                    + "customecho set uptime {$channel.display} has been streaming {$channel.uptime}",
+                    "uptime now says: {$channel.display} has been streaming {$channel.uptime}",
+                ),
+            ),
+        ),
+        raw_tail_subcommands=(("set", 3),),
+    )(_customecho),
 )

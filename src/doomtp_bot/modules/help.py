@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from doomtp_bot.customcmds.service import CustomCommandService
 
 MODULE = "help"
-HIDDEN_MODULES = frozenset({"core"})
+HIDDEN_MODULES = frozenset({"core", "http"})  # http: only admins' commands can call it
 
 
 def site_link(ctx: CommandContext) -> str | None:
@@ -68,7 +68,7 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
         summary="List commands you can use, or show how to use one",
         params=(Param("1", "command", description="A command name"),),
         examples=(
-            Example("{sign}help", "commands: ping, random, …"),
+            Example("{sign}help", "commands: explain, help, random, …"),
             Example("{sign}help random", "{sign}random [range] — …"),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},

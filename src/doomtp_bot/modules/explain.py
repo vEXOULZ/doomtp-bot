@@ -35,7 +35,7 @@ FLAGS = {"--run", "--as-body"}
                 "{sign}explain random 1-6 | echo you rolled {_1}",
                 "Pipe(random,echo) — 1:random ✓, 2:echo ✓",
             ),
-            Example("{sign}explain --run ping", "ping[] — 1:ping ✓ — ran: code 0, would send: pong"),
+            Example("{sign}explain --run echo hi", 'echo["hi"] — 1:echo ✓ — ran: code 0, would send: hi'),
         ),
     )
 )

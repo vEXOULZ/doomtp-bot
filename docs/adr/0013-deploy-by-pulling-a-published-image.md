@@ -103,6 +103,9 @@ being immediate.
   backup taken before the deploy. *(2026-09-22, ADR-0014)* That backup is now a `pg_dump` archive restored
   with `pg_restore`, and the database lives in its own container on its own volume — so an image rollback
   no longer touches the data at all, which makes it safer and makes the schema mismatch the only hazard.
+  *(2026-09-28, ADR-0022)* Replaced: migrations are Alembic revisions with downgrades, run by a `migrate`
+  step before the bot rather than by the bot at startup, and `deploy/rollback.sh <image>` takes the schema
+  back down with the image.
 - *(2026-09-22, ADR-0014)* `update.sh` restarts the bot alone. Postgres is named as a dependency so a
   stopped one is started, but a healthy one is never bounced for a bot update.
 - **Operational:** the image is only as fresh as its base, so a monthly rebuild of `main` is worth having
@@ -122,6 +125,11 @@ being immediate.
    on this repository, so its `pg_dump` version and its missing `.env` had never been exercised.)*
 5. [ ] Raise the guest's shutdown timeout (`DefaultTimeoutStopSec` and the VM's own) past the 45 s grace
    period, and install `qemu-guest-agent`, so a host reboot isn't recorded as an unclean shutdown.
+   *(2026-09-28: guest 221 is an LXC container, so `qemu-guest-agent` doesn't apply. Proxmox gives it
+   `down=120` and systemd `DefaultTimeoutStopSec=90s`, both past the 45 s grace period. Still to do: a real
+   host-side shutdown, and a check that the bot logged a clean stop.)*
 6. [ ] Run the timed update on the guest itself: `BOT_IMAGE` set, first pull, first `update.sh` tick, and
    a second one that correctly does nothing. The publish half is proven; the pull half has only ever run
-   against a local registry standing in for GHCR.
+   against a local registry standing in for GHCR. *(2026-09-28: guest 221 runs the homelab's
+   `guest-deploy` timer in place of `update.sh`. `BOT_IMAGE` is `:main`, and every five minutes it pulls
+   and correctly does nothing. Still to do: watch a release land through it.)*
