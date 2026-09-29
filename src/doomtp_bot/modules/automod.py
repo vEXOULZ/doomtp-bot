@@ -45,8 +45,8 @@ def _describe(action: str, seconds: int) -> str:
         toggleable=False,
         summary="Delete incoming chat the word list would block",
         description=(
-            f"{USAGE} — acts on messages that a `block` filter entry matches. Moderators and the"
-            " broadcaster are never actioned, and the bot must be a moderator here."
+            f"{USAGE}: acts on messages a `block` filter entry matches. Never acts on moderators or the"
+            " broadcaster. The bot must be a moderator here."
         ),
         params=(Param("1+", "arguments", required=False, description=USAGE),),
         required_role="moderator",

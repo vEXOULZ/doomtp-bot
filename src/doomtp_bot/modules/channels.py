@@ -23,11 +23,10 @@ MODULE = "core_admin"
         toggleable=False,
         summary="Invite the bot to your channel",
         description=(
-            "Type {sign}join in the bot's own chat for the connect link. It is the same link for every"
-            " channel: the broadcaster opens it and signs in to Twitch as their channel, Twitch asks what to"
-            " grant, and the bot joins that channel with it (ADR-0007). Bot admins can type {sign}join basic"
-            " <channel> to join any channel without a grant. The bot leaves a channel that bans it, and a bot"
-            " admin brings it back only by adding rejoin; a broadcaster connecting again is already deliberate."
+            "Type {sign}join in the bot's own chat for the connect link. The broadcaster opens it, signs in"
+            " to Twitch as their channel and picks what to grant; the bot then joins. Bot admins can type"
+            " {sign}join basic <channel> to join without a grant. The bot leaves a channel that bans it;"
+            " a bot admin adds rejoin to bring it back."
         ),
         params=(
             Param("1", "basic", description="basic joins without a grant (bot admins only)"),
@@ -78,8 +77,7 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     if failed:
         return Result.failure(Code.FAIL, f"joined #{login}, but Twitch refused: {', '.join(failed)}")
     return Result.success(
-        f"joined #{login}. The chat log starts now; filling the gaps in it from elsewhere is off until"
-        f" you ask for it. Type {sign_of(ctx, channel_id)}backfill in your channel to read what that means.",
+        f"joined #{login}. Backfill is off; {sign_of(ctx, channel_id)}backfill there explains it.",
         {"channel_id": channel_id, "login": login},
     )
 
@@ -139,11 +137,10 @@ async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         toggleable=False,
         summary="Fill gaps in this channel's chat log from a history service",
         description=(
-            "While the bot is offline nothing reaches the log. With backfill on, what it missed is"
-            " fetched from a third-party history service when it comes back (ADR-0008). Off by default,"
-            " because it means naming this channel to that service; only the broadcaster can change it."
-            " The broadcaster can also queue a backfill by hand: gaps for every hole in the log, or a"
-            " duration such as 6h for that much of the recent past (ADR-0024). One job runs at a time."
+            "With backfill on, chat the bot missed while offline is fetched from a third-party history"
+            " service when it comes back. Off by default, since it names this channel to that service."
+            " The broadcaster can turn it on, or queue a job by hand: gaps fills every hole in the log, a"
+            " duration such as 6h fetches that much of the recent past. One job runs at a time."
         ),
         params=(
             Param(
@@ -172,10 +169,9 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
         provider = ctx.exec.services.get("history")
         where = getattr(provider, "base_url", "") or "a history service"
         return Result.success(
-            f"backfill is {'on' if settings.history_backfill else 'off'}. When it is on, messages this"
-            f" channel saw while the bot was away are fetched from {where} and added to the log, marked"
-            f" as coming from there. They never run commands or triggers."
-            f" {ctx.channel.prefix}backfill on|off changes it; gaps, 6h, queue and cancel queue it by hand.",
+            f"backfill is {'on' if settings.history_backfill else 'off'}. When on, chat missed while the"
+            f" bot was away is fetched from {where} into the log, never running commands."
+            f" {ctx.channel.prefix}backfill on|off, or gaps, 6h, queue, cancel.",
             {"enabled": settings.history_backfill, "provider": where},
         )
     queue: BackfillQueue | None = ctx.exec.services.get("backfill")
