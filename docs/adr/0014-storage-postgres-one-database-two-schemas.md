@@ -144,8 +144,12 @@ that read-then-write; those places are marked in the code.
    under the `test` profile, and `pgweb` replacing Datasette. *(2026-09-22)*
 9. [x] Keep `deploy/update.sh` off Postgres: it restarts the bot only, and names the database as a
    dependency so a stopped one still comes up. *(2026-09-22)*
-10. [ ] Run the backup and restore on the real guest. The round-trip is proven locally — the backup
+10. [x] Run the backup and restore on the real guest. The round-trip is proven locally — the backup
     service dumped both schemas from a password-protected server, `DROP SCHEMA bot CASCADE` then
     `pg_restore` brought the schema, its 25 tables and its seeded rows back — but it has never run against
-    the guest's own volume, on its own cron, with the dumps then leaving the machine. Blocked on the same
-    missing guest as ADR-0013 items 4 and 5.
+    the guest's own volume, on its own cron, with the dumps then leaving the machine. *(2026-09-28, guest
+    221: root's crontab runs the backup at 04:15 and alerts on failure; a fresh dump of both schemas
+    restored into a throwaway database with all 37 tables at the live row counts; the nightly vzdump of
+    the guest takes `data/backups/` to another machine. One gap found: a `--schema` dump leaves out the
+    `unaccent` extension that `chatlog.messages` needs, so restoring into an empty database has to create
+    it first. The README says so.)*
