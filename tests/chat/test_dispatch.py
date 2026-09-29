@@ -32,6 +32,7 @@ from doomtp_bot.runtime.result import Result
 from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.storage.db import Databases
 from tests.fakes import policy_with_channels
+from tests.runtime.helpers import ping
 
 BOT_ID, BOT_LOGIN = "999", "doomtp_bot"
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -121,7 +122,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     writer.start()
     twitch = FakeTwitch()
     registry = builtin_registry()
-    registry.add(slowreply)
+    registry.extend((slowreply, ping))
     commands = CustomCommandService(dbs.bot)
     runtime = Runtime(
         registry,

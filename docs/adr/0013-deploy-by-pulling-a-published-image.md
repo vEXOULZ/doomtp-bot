@@ -103,6 +103,9 @@ being immediate.
   backup taken before the deploy. *(2026-09-22, ADR-0014)* That backup is now a `pg_dump` archive restored
   with `pg_restore`, and the database lives in its own container on its own volume — so an image rollback
   no longer touches the data at all, which makes it safer and makes the schema mismatch the only hazard.
+  *(2026-09-28, ADR-0022)* Replaced: migrations are Alembic revisions with downgrades, run by a `migrate`
+  step before the bot rather than by the bot at startup, and `deploy/rollback.sh <image>` takes the schema
+  back down with the image.
 - *(2026-09-22, ADR-0014)* `update.sh` restarts the bot alone. Postgres is named as a dependency so a
   stopped one is started, but a healthy one is never bounced for a bot update.
 - **Operational:** the image is only as fresh as its base, so a monthly rebuild of `main` is worth having

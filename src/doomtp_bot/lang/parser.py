@@ -57,7 +57,9 @@ VARIATION_SELECTOR = "\ufe0f"  # emoji presentation selector, optional around an
 # The fields the bot supplies, read as `{$root.field}` (ADR-0018 item 5). Read-only, and never a variable.
 BOT_FIELDS: dict[str, frozenset[str]] = {
     "chatter": frozenset({"id", "name", "display", "rank", "roles", "is_sub", "is_vip", "is_mod"}),
-    "channel": frozenset({"id", "name", "display", "prefix", "live", "title", "game", "viewers", "uptime"}),
+    "channel": frozenset(
+        {"id", "name", "display", "prefix", "live", "title", "game", "viewers", "uptime", "next_stream"}
+    ),
     "publisher": frozenset({"id", "name", "display"}),
     "bot": frozenset({"name", "id", "version"}),
     "now": frozenset({"iso", "unix", "date", "time", "weekday"}),
@@ -71,7 +73,7 @@ REGISTERED_ROOTS = frozenset(
 PATH_ROOTS = frozenset({"event", "match", "cooldown", "denied", "run", "cmd"})
 RESULT_FIELDS = ("code", "message", "data")
 # Accessors and casts after `:` (spec §2.7). `choice(a,b)` is handled separately.
-ACCESSORS = ("len", "keys", "values")
+ACCESSORS = ("len", "keys", "values", "template", "human")
 TYPE_NAMES = ("str", "int", "float", "bool", "range", "duration", "user", "url", "list", "map")
 # Commands whose arguments are one expression (ADR-0018 item 6).
 EXPR_COMMANDS = frozenset({"check", "calc"})
@@ -272,6 +274,39 @@ def parse_var_ref(text: str, params: ParserParams | None = None) -> VarRef:
         if any(isinstance(e, Subst) for e in walk_expr(key)):
             raise ParseError(ParseErrorCode.BAD_VARREF, 0, hint="a variable's path can't run a command")
     return ref
+
+
+def parse_template(text: str, params: ParserParams | None = None) -> tuple[Part, ...]:
+    """A stored template for `:template` (ADR-0019): text with placeholders, one level deep.
+
+    `\\` escapes as in a quoted word, and a `}` outside a placeholder is text. A template can't run a
+    command (`{!…}`) or render another template, so what it shows is always a read.
+    """
+    if len(text) > MAX_EXPR_CHARS:
+        raise ParseError(ParseErrorCode.TOO_LONG, MAX_EXPR_CHARS)
+    parser = _Parser(text, params or ParserParams(), Context.BODY)
+    parts: list[Part] = []
+    while not parser.eof():
+        ch = parser.s[parser.pos]
+        if ch == "\\":
+            parts.append(parser.escape())
+        elif ch == "{":
+            at = parser.pos
+            ph = parser.placeholder()
+            for expr in walk_expr(ph):
+                if isinstance(expr, Subst):
+                    raise ParseError(ParseErrorCode.BAD_PLACEHOLDER, at, hint="a template can't run {!…}")
+                if isinstance(expr, Access) and expr.name == "template":
+                    raise ParseError(
+                        ParseErrorCode.BAD_PLACEHOLDER, at, hint="a template can't use :template"
+                    )
+            parts.append(ph)
+        else:
+            start = parser.pos
+            while not parser.eof() and parser.s[parser.pos] not in "\\{":
+                parser.pos += 1
+            parts.append(Text(parser.s[start : parser.pos]))
+    return _merge_text(parts)
 
 
 class _Parser:

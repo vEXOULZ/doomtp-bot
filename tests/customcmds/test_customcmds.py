@@ -131,11 +131,11 @@ async def test_link_gives_a_personal_alias_and_unlink_removes_it(h: Harness) -> 
 
 
 async def test_builtins_win_over_publications(h: Harness) -> None:
-    command = await h.add("alice", "ping", "echo custom")
+    command = await h.add("alice", "random", "echo custom")
     await h.service.publish(
-        channel_id=CHANNEL_ID, name="ping", command=command, published_by=USERS["mod"]["id"]
+        channel_id=CHANNEL_ID, name="random", command=command, published_by=USERS["mod"]["id"]
     )
-    assert await h.say("bob", "!ping") == "pong"
+    assert await h.say("bob", "!random 1-1") == "1"
 
 
 # ── live edits and deletes ─────────────────────────────────────────────────
@@ -207,8 +207,8 @@ async def test_nesting_deeper_than_the_limit_fails_preflight(h: Harness) -> None
 
 
 async def test_expanded_invocations_count_toward_the_limit(h: Harness) -> None:
-    await h.add("alice", "five", "echo a && echo b && echo c && echo d && echo e")
-    report = await h.run("alice", "!five && echo x && echo y && echo z")
+    await h.add("alice", "ten", " && ".join(["echo a"] * 10))
+    report = await h.run("alice", "!ten && " + " && ".join(["echo x"] * 6))  # 1 + 10 + 6 = 17
     assert isinstance(report.result.data, dict) and report.result.data["error"] == "E_TOO_MANY"
 
 
@@ -418,9 +418,9 @@ async def test_cc_list_and_info(h: Harness) -> None:
 # ── running by id (ADR-0009 action item 6) ─────────────────────────────────
 async def test_cc_run_reaches_a_command_by_id(h: Harness) -> None:
     """The owner's escape hatch: no publication, no alias, and the name is a built-in's."""
-    await h.say("alice", "!cc add ping echo pong from {$publisher.name} to {arg.1 ?? nobody}")
-    assert await h.say("alice", "!ping") == "pong"  # the built-in still wins by name
-    command = await h.service.by_owner(USERS["alice"]["id"], "ping")
+    await h.say("alice", "!cc add random echo pong from {$publisher.name} to {arg.1 ?? nobody}")
+    assert await h.say("alice", "!random 1-1") == "1"  # the built-in still wins by name
+    command = await h.service.by_owner(USERS["alice"]["id"], "random")
     assert command is not None
 
     assert await h.say("alice", f"!cc run {command.id} bob") == "pong from alice to bob"

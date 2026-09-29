@@ -88,7 +88,7 @@ A type is either **declared once** in the command's parameter definition, or giv
 | Root | Fields | Available in |
 |------|--------|--------------|
 | `{$chatter.*}` | `id`, `name` (login), `display`, `rank`, `roles`, `is_sub`, `is_vip`, `is_mod` | anywhere |
-| `{$channel.*}` | `id`, `name`, `display`, `prefix`, `live`, `title`, `game`, `viewers`, `uptime` | anywhere |
+| `{$channel.*}` | `id`, `name`, `display`, `prefix`, `live`, `title`, `game`, `viewers`, `uptime` (seconds; `:human` says it for people), `next_stream` (`[title]`, `[category]`, `[start]`, `[in]` seconds from now; missing when nothing is scheduled) | anywhere |
 | `{$publisher.*}` | `id`, `name`, `display` (owner of the custom command) | custom commands |
 | `{$bot.*}` | `name`, `id`, `version` | anywhere |
 | `{$now.*}` | `iso`, `unix`, `date`, `time`, `weekday` (channel timezone) | anywhere |
