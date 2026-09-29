@@ -15,7 +15,7 @@ line, in `messages.raw` (ADR-0008).
 
 Two things now want more than we keep:
 
-- **The chat log API** (ADR-0023) is a contract with the web site and the VOD archive. A replay that
+- **The chat log API** (ADR-0025) is a contract with the web site and the VOD archive. A replay that
   wants name colors or animated emotes cannot have them, and a field we never stored cannot be added
   later.
 - **Backfill** only reaches as far back as recent-messages does: at most 800 lines, recent ones only
@@ -104,8 +104,8 @@ worth more work.
 
 `chatlog/events.py` turns a row into an EventSub-shaped event: `eventsub` as it is, `irc` converted
 field by field as above, `legacy` as stored. IRC-only tags are kept under an `irc` key rather than
-dropped. The `/log` entries (ADR-0023) are built from that, so their shape does not change; new fields
-such as `color` are added to them, which ADR-0023 allows.
+dropped. The `/log` entries (ADR-0025) are built from that, so their shape does not change; new fields
+such as `color` are added to them, which ADR-0025 allows.
 
 Converting on read, not on write, means a better converter improves every old row, and the IRC line is
 never replaced by a guess.

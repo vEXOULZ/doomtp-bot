@@ -38,6 +38,8 @@ ADMIN_ONLY = {
     ("PATCH", "/api/v1/channels/{login}/publications/{name}"),
     ("GET", "/api/v1/channels/{login}/runs"),
     ("GET", "/api/v1/channels/{login}/messages"),
+    ("GET", "/api/v1/channels/{login}/log"),
+    ("GET", "/api/v1/channels/{login}/log/coverage"),
     ("GET", "/api/v1/channels/{login}/backfill"),
     ("POST", "/api/v1/channels/{login}/backfill"),
     ("DELETE", "/api/v1/channels/{login}/backfill/{job_id}"),
