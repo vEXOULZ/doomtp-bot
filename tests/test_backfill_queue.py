@@ -128,3 +128,40 @@ async def test_the_worker_runs_what_is_queued_while_it_waits(dbs: Databases) -> 
     finally:
         await queue.stop()
         await queue.service.writer.stop()
+
+
+class HeldProvider(FakeProvider):
+    """Answers only once the test lets it, so a stop can arrive while a job is running."""
+
+    def __init__(self, response: HistoryResponse) -> None:
+        super().__init__(response)
+        self.asked = asyncio.Event()
+        self.answer = asyncio.Event()
+
+    async def fetch(
+        self, channel_login: str, *, after_ms: int | None = None, limit: int = 800
+    ) -> HistoryResponse:
+        self.asked.set()
+        await self.answer.wait()
+        return await super().fetch(channel_login, after_ms=after_ms, limit=limit)
+
+
+async def test_stopping_lets_the_running_job_finish(dbs: Databases) -> None:
+    # A cancel could land inside psycopg's savepoint bookkeeping and break the shared connection.
+    provider = HeldProvider(HistoryResponse(lines=(PRIVMSG,)))
+    queue = await queue_for(dbs, provider)
+    queue.start()
+    await queue.queue_range(CHANNEL_ID, 1100, 6000, "chat:1")
+    await asyncio.wait_for(provider.asked.wait(), 5)
+
+    stopping = asyncio.create_task(queue.stop())
+    await asyncio.sleep(0)
+    assert not stopping.done()  # waits for the job rather than cutting it short
+    provider.answer.set()
+    await asyncio.wait_for(stopping, 5)
+    await queue.service.writer.stop()
+
+    (job,) = await queue.jobs(CHANNEL_ID)
+    assert job.state == "done"
+    # The connection is still usable, and the fixture's rollback will be at the right nesting level.
+    assert await queue.queue_range(CHANNEL_ID, 7000, 8000, "chat:1") is not None

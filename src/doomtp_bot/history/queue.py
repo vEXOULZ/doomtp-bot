@@ -60,6 +60,7 @@ class BackfillQueue:
         self.service = service
         self.conn = service.conn
         self._wake = asyncio.Event()
+        self._stopping = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
     # ── queueing ──
@@ -198,24 +199,33 @@ class BackfillQueue:
     # ── the worker ──
     def start(self) -> None:
         if self._task is None:
+            self._stopping.clear()
             self._task = asyncio.create_task(self._work(), name="history-backfill-queue")
 
     async def stop(self) -> None:
-        """A job cut short stays `running` and is queued again at the next startup."""
+        """Let the running job finish, if any, then stop; an idle worker stops at once.
+
+        The worker is asked, never cancelled: it shares the connection with the rest of the process, and
+        a cancel that lands while psycopg enters or leaves a savepoint leaves the connection's nesting
+        count wrong, so the next transaction on it fails. The provider's timeout bounds the wait. A job
+        a crash cuts short stays `running` and is queued again at the next startup.
+        """
         if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+            self._stopping.set()
+            self._wake.set()
+            await self._task
             self._task = None
 
     async def _work(self) -> None:
-        while True:
+        while not self._stopping.is_set():
             self._wake.clear()
             try:
                 job = await self.run_next()
             except Exception:
                 log.exception("history.queue_failed")
-                await asyncio.sleep(30)  # the database is in trouble: try again later, without spinning
+                # The database is in trouble: try again later, without spinning, unless asked to stop.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._stopping.wait(), 30)
                 continue
             if job is None:
                 await self._wake.wait()
