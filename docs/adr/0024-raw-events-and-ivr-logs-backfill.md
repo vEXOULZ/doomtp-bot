@@ -183,10 +183,10 @@ stays open for good.
 
 ## Action Items
 
-1. [ ] Migration: `raw jsonb`, `raw_format` and `enrichment jsonb` on `messages`, `chat_notifications`
+1. [x] Migration: `raw jsonb`, `raw_format` and `enrichment jsonb` on `messages`, `chat_notifications`
    and `mod_events`; `provider` on `backfill_runs`; the `emotes` cache; move IRC lines and rebuild
    the other rows as `legacy`.
-2. [ ] Capture the EventSub `event` JSON in the adapter and store it for live messages, notifications
+2. [x] Capture the EventSub `event` JSON in the adapter and store it for live messages, notifications
    and moderation events.
 3. [ ] `chatlog/events.py`: the one reader from `eventsub`, `irc` and `legacy` to the EventSub shape,
    with golden tests from real recent-messages and ivr.fi lines; `/log` built from it.

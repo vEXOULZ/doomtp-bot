@@ -38,7 +38,10 @@ class ChatMessage:
     source_channel_id: str | None = None
     is_self: bool = False
     source: Source = "eventsub"
-    raw: str | None = None  # original IRC line when backfilled
+    #: What the event was made from, kept whole in the chat log (ADR-0024): the EventSub `event` object
+    #: for a live one, or the IRC line for a backfilled one.
+    raw_event: dict[str, Any] | None = None
+    raw_line: str | None = None
 
     @property
     def reply_mentions(self) -> tuple[str, ...]:
@@ -55,6 +58,8 @@ class ChatNotification:
     payload: dict[str, Any]
     sent_at: int
     source: Source = "eventsub"
+    raw_event: dict[str, Any] | None = None
+    raw_line: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +69,8 @@ class MessageDeleted:
     target_user_id: str
     at: int
     source: Source = "eventsub"
+    raw_event: dict[str, Any] | None = None
+    raw_line: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +81,8 @@ class UserMessagesCleared:
     target_user_id: str
     at: int
     source: Source = "eventsub"
+    raw_event: dict[str, Any] | None = None
+    raw_line: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +90,8 @@ class ChatCleared:
     channel_id: str
     at: int
     source: Source = "eventsub"
+    raw_event: dict[str, Any] | None = None
+    raw_line: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
