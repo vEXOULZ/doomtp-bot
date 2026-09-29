@@ -196,7 +196,7 @@ async def _info(ctx: CommandContext, v: list[str], args: Args) -> Result:
         f"{params.describe(params.to_params(command.params))}: {command.body}"
     )
     if publication is not None and publication.last_run_version not in (None, command.version):
-        text += f" — changed since v{publication.last_run_version} by @{command.owner_login}"
+        text += f" (changed since v{publication.last_run_version} by @{command.owner_login})"
     return Result.success(
         text,
         {
@@ -244,7 +244,7 @@ async def _param(ctx: CommandContext, v: list[str], args: Args) -> Result:
     declared = params.to_params(updated.params)
     spec = spec_for(command.name, updated, None)
     return Result.success(
-        f"{ctx.channel.prefix}{spec.usage()} — {params.describe(declared)}",
+        f"{ctx.channel.prefix}{spec.usage()}. {params.describe(declared)}",
         [dict(r) for r in rows],
     )
 
@@ -290,7 +290,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         where = "system pack" if pack.is_system else (", ".join(published) or "not published here")
         shown = [f"{c.name} (internal)" if c.name in internal else c.name for c in members]
         return Result.success(
-            f"{pack.name}: {', '.join(shown) or 'empty'} — {where}",
+            f"{pack.name}: {', '.join(shown) or 'empty'} ({where})",
             {
                 "pack": pack.name,
                 "commands": [c.name for c in members],
@@ -432,7 +432,7 @@ def _grant_warning(ctx: CommandContext, commands: list[CustomCommand], scope: st
     where = " in each channel that enables it" if scope == GLOBAL else ""
     first = next(iter(sorted(wanted)))
     return (
-        f" ⚠ {listed} — those writes are denied{where} until a mod allows them:"
+        f" ⚠ {listed}; those writes are denied{where} until a mod allows them:"
         f" {ctx.channel.prefix}cc grant {first} {wanted[first][0]}."
     )
 
@@ -595,7 +595,7 @@ async def _run(ctx: CommandContext, v: list[str], args: Args) -> Result:
     try:
         params = await runtime.executor.bind(spec, values, body_ctx)
     except UsageError as exc:
-        raise CommandError(f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}") from exc
+        raise CommandError(f"usage: {ctx.channel.prefix}{spec.usage()} ({exc})") from exc
     report = await runtime.run(
         command.body,
         body_ctx,

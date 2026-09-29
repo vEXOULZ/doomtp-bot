@@ -307,11 +307,11 @@ async def test_arg_captures_in_body_context() -> None:
 async def test_argument_validation_usage_message() -> None:
     rt = make_runtime()
     r = await run(rt, "!plus one 2")
-    assert r.result.code == Code.USAGE and r.send == "usage: !plus <a> <b> — a: expected a whole number"
+    assert r.result.code == Code.USAGE and r.send == "usage: !plus <a> <b> (a: expected a whole number)"
     r = await run(rt, "!plus 1")
-    assert r.send == "usage: !plus <a> <b> — b is required"
+    assert r.send == "usage: !plus <a> <b> (b is required)"
     r = await run(rt, "!ping extra")
-    assert r.send == "usage: !ping — takes no arguments"
+    assert r.send == "usage: !ping (takes no arguments)"
 
 
 async def test_random_uses_context_rng() -> None:

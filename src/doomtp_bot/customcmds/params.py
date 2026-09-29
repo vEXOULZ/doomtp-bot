@@ -110,6 +110,6 @@ def describe(params: tuple[Param, ...]) -> str:
         return "takes free arguments"
     return "; ".join(
         f"{p.position} {p.name}: {p.type}{'' if p.required else ' (optional)'}"
-        + (f" — {p.description}" if p.description else "")
+        + (f", {p.description}" if p.description else "")
         for p in params
     )

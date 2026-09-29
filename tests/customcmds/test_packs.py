@@ -186,10 +186,10 @@ async def test_pack_info_lists_members_and_where_it_runs(h: Harness) -> None:
     await h.say("alice", "!cc add hit echo hit me")
     await h.say("alice", "!cc pack create blackjack")
     await h.say("alice", "!cc pack add blackjack hit")
-    assert await h.say("alice", "!cc pack info blackjack") == "blackjack: hit — not published here"
+    assert await h.say("alice", "!cc pack info blackjack") == "blackjack: hit (not published here)"
     await h.say("alice", "!cc pack share blackjack on")
     await h.say("mod", "!cc publish pack @alice blackjack")
-    assert await h.say("alice", "!cc pack info blackjack") == "blackjack: hit — here"
+    assert await h.say("alice", "!cc pack info blackjack") == "blackjack: hit (here)"
 
 
 async def test_a_pack_holds_only_its_owners_commands(h: Harness) -> None:
