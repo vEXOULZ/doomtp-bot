@@ -65,17 +65,18 @@ async def test_an_unknown_channel_is_a_404(client: httpx.AsyncClient) -> None:
 
 async def test_explain_returns_the_structured_report(client: httpx.AsyncClient) -> None:
     response = await client.post(
-        "/api/v1/explain", json={"text": "ping", "context": "body", "channel": CHANNEL_LOGIN}
+        "/api/v1/explain", json={"text": "echo pong", "context": "body", "channel": CHANNEL_LOGIN}
     )
     body = response.json()
-    assert body["ast"] == "ping[]"
-    assert body["invocations"][0]["name"] == "ping" and body["invocations"][0]["allowed"] is True
+    assert body["ast"] == 'echo["pong"]'
+    assert body["invocations"][0]["name"] == "echo" and body["invocations"][0]["allowed"] is True
     assert body["ran"] is False
 
 
 async def test_explain_can_run_without_sending_anything(client: httpx.AsyncClient) -> None:
     response = await client.post(
-        "/api/v1/explain", json={"text": "ping", "context": "body", "channel": CHANNEL_LOGIN, "run": True}
+        "/api/v1/explain",
+        json={"text": "echo pong", "context": "body", "channel": CHANNEL_LOGIN, "run": True},
     )
     body = response.json()
     assert body["ran"] is True and body["result"]["code"] == 0 and body["would_send"] == "pong"
@@ -85,19 +86,25 @@ async def test_language_describes_the_syntax_for_the_editor(client: httpx.AsyncC
     body = (await client.get("/api/v1/language")).json()
     assert body["syntax_version"] == "2.0"
     assert "||" in body["operators"] and "->" in body["operators"] and "$chatter" in body["roots"]
-    assert "display" in body["bot_fields"]["$chatter"] and body["accessors"] == ["len", "keys", "values"]
+    assert "display" in body["bot_fields"]["$chatter"] and body["accessors"] == [
+        "len",
+        "keys",
+        "values",
+        "template",
+        "human",
+    ]
     assert "channel.chatter" in body["variable_namespaces"]
     assert body["roots_by_context"]["body"].count("arg") == 1
     assert body["error_codes"]["E_UNBALANCED_GROUP"] == "unbalanced parentheses"
     assert body["exit_codes"]["E_UNBALANCED_GROUP"] == 205 and body["exit_codes"]["E_LIST_FULL"] == 300
-    assert body["limits"]["MAX_INVOCATIONS"] == 8
+    assert body["limits"]["MAX_INVOCATIONS"] == 16
     assert body["raw_tail_commands"]["explain"] == 1 and body["raw_tail_commands"]["cc add"] == 3
 
 
 async def test_commands_lists_the_built_ins_with_their_usage(client: httpx.AsyncClient) -> None:
     body = (await client.get("/api/v1/commands")).json()
     by_name = {c["name"]: c for c in body["commands"]}
-    assert by_name["ping"]["summary"]
+    assert by_name["random"]["summary"]
     assert by_name["help"]["usage"] == "help [command]"
     assert by_name["role"]["required_role"] == "moderator"
     assert by_name["random"]["params"][0]["name"]

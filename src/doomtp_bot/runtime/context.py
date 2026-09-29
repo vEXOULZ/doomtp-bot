@@ -127,6 +127,9 @@ class Args:
     values: tuple[str, ...]
     params: dict[str, Any]
     raw_tail: str | None = None
+    # The arguments as typed and where each starts in it, for a body run on them (`{arg.N+raw}`).
+    raw_text: str = ""
+    raw_offsets: tuple[int, ...] = ()
 
     def __getitem__(self, name: str) -> Any:
         return self.params[name]

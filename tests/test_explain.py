@@ -151,7 +151,7 @@ async def test_the_chat_command_answers_in_one_line(h: Harness) -> None:
     reply = await h.say("alice", "!explain !random 1-6 | echo {_1}")
     assert reply is not None and reply.startswith("Pipe(random") and "1:random ✓" in reply
 
-    ran = await h.say("alice", "!explain --run !ping")
+    ran = await h.say("alice", "!explain --run !echo pong")
     assert ran is not None and "would send: pong" in ran
 
 
@@ -183,7 +183,7 @@ def test_kept_reports_expire_and_the_oldest_go_first() -> None:
 async def test_the_chat_command_adds_a_missing_command_sign(h: Harness) -> None:
     signed = await h.say("alice", "!explain !random 1-6 | echo {_1}")
     assert await h.say("alice", "!explain random 1-6 | echo {_1}") == signed
-    ran = await h.say("alice", "!explain --run ping")
+    ran = await h.say("alice", "!explain --run echo pong")
     assert ran is not None and "would send: pong" in ran
 
 

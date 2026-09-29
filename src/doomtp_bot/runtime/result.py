@@ -86,6 +86,15 @@ class ErrorCode(enum.IntEnum):
     E_BAD_NAMESPACE = 303
     E_BAD_VAR_NAME = 304
     E_TOO_MANY_NAMES = 305
+    # 400–499: the http command (ADR-0020)
+    E_HTTP_NOT_ALLOWED = 400
+    E_HTTP_ADDRESS = 401
+    E_HTTP_TIMEOUT = 402
+    E_HTTP_TOO_BIG = 403
+    E_HTTP_STATUS = 404
+    E_HTTP_NOT_JSON = 405
+    E_HTTP_PATH = 406
+    E_HTTP_UNREACHABLE = 407
     # 299: a bug in the parser itself, never the user's fault
     E_INTERNAL = 299
 

@@ -43,6 +43,12 @@ ADMIN_ONLY = {
     ("GET", "/api/v1/variable-limits"),
     ("PATCH", "/api/v1/variable-limits/default"),
     ("PATCH", "/api/v1/variable-limits/{kind}/{user}"),
+    ("GET", "/api/v1/http-hosts"),
+    ("PUT", "/api/v1/http-hosts/{pattern}"),
+    ("DELETE", "/api/v1/http-hosts/{pattern}"),
+    ("PUT", "/api/v1/http-hosts/{pattern}/secret"),
+    ("DELETE", "/api/v1/http-hosts/{pattern}/secret"),
+    ("PATCH", "/api/v1/http-limits"),
 }
 
 

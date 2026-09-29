@@ -208,5 +208,24 @@ def values(value: Any) -> list[Any]:
     return list(value.values())
 
 
+def template_text(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ExprError(ErrorCode.E_TYPE, f":template needs text, not {_describe(value)}")
+    return value
+
+
+def human(value: Any) -> str:
+    """`:human`: a number of seconds as short text, its two largest units: 3725 → `1h 2m`."""
+    seconds = as_number(value)
+    if seconds is None or seconds < 0:
+        raise ExprError(ErrorCode.E_TYPE, f":human needs a number of seconds, not {_describe(value)}")
+    rest, parts = int(seconds), list[str]()
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60), ("s", 1)):
+        if rest >= size or (unit == "s" and not parts):
+            parts.append(f"{rest // size}{unit}")
+            rest %= size
+    return " ".join(parts[:2])
+
+
 BINARY_COMMANDS = {"add": "+", "sub": "-", "mul": "*", "div": "/", "idiv": "//", "mod": "%"}
 COMPARE_COMMANDS = {"eq": "==", "ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">=", "in": "in"}

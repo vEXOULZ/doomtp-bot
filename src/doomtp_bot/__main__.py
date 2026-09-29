@@ -23,6 +23,7 @@ from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.core.instance_lock import InstanceLock, InstanceLockError
 from doomtp_bot.core.links import BotBadges
 from doomtp_bot.core.outbox import Outbox, SendResult
+from doomtp_bot.core.schedule import NextStreams
 from doomtp_bot.core.streams import StreamPoller, StreamStatus
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader, SystemResolver
@@ -38,7 +39,6 @@ from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import MODERATOR_RANK
 from doomtp_bot.policy.service import PolicyService
-from doomtp_bot.quotes import QuoteService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.runtime.resolver import BuiltinResolver
@@ -53,6 +53,8 @@ from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.webfetch.fetcher import HttpFetcher
+from doomtp_bot.webfetch.hosts import HostStore
 
 log = structlog.get_logger("doomtp_bot")
 
@@ -77,6 +79,8 @@ async def run(settings: Settings) -> None:
     await access.reload()
     content_filter = FilterService(dbs.bot)
     await content_filter.reload()
+    http_hosts = HostStore(dbs.bot)  # the hosts `http get` may fetch (ADR-0020)
+    await http_hosts.reload()
     customcmds = CustomCommandService(dbs.bot, on_grants_changed=access.reload, filters=content_filter)
     packs = PackService(dbs.bot, customcmds)
     try:
@@ -136,11 +140,13 @@ async def run(settings: Settings) -> None:
         "history": history,  # the backfill command names the service before anything is sent to it
         "explain_reports": explain_reports,
         "site_url": settings.web_site_url,  # `!help` links the channel's command page there
-        "quotes": QuoteService(dbs.bot),
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
+        "chatlog_writer": writer,  # `http` logs each request it makes (ADR-0020)
+        "http_hosts": http_hosts,
+        "http": HttpFetcher(http_hosts),  # fetches nothing until an admin allows a host
     }
     if twitch is not None:
-        services.update(twitch=twitch, login_for=twitch.login_for)
+        services.update(twitch=twitch, login_for=twitch.login_for, schedule=NextStreams(twitch))
     registry = builtin_registry()
     runtime = Runtime(
         registry,
@@ -365,6 +371,7 @@ async def run(settings: Settings) -> None:
             "channels": channels,
             "twitch": twitch,
             "variable_store": store,
+            "http_hosts": http_hosts,
             "bot_db": dbs.bot,
             "chatlog_db": dbs.chatlog,
             "api_keys": ApiKeyService(dbs.bot),
