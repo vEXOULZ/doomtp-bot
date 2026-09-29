@@ -10,7 +10,11 @@
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")/.."
-compose=(docker compose -f compose.yaml -f compose.prod.yaml)
+# COMPOSE_FILE names the compose files, from the environment or .env, so a server's own override (a
+# port, a network) stays in place; docker compose reads it itself. Without it, the two every server uses.
+COMPOSE_FILE=${COMPOSE_FILE:-$(sed -n 's/^COMPOSE_FILE=//p' .env | tail -1)}
+export COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml:compose.prod.yaml}
+compose=(docker compose)
 
 target=${1:?usage: deploy/rollback.sh <image>}
 current=${BOT_IMAGE:-$(sed -n 's/^BOT_IMAGE=//p' .env | tail -1)}
