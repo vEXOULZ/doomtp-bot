@@ -227,7 +227,7 @@ mod_events(id bigint IDENTITY PRIMARY KEY, channel_id text, type text, message_i
            target_user_id text, moderator_user_id text, duration_s integer, reason text,
            source text, raw jsonb, raw_format text, enrichment jsonb, at bigint)
 -- raw: the EventSub `event` object, {"line": <IRC line>}, or a legacy rebuild. The columns it repeats
--- (display name, badges, fragments, payload, ...) are dropped one release after readers use it.
+-- (display name, badges, fragments, payload, ...) are dropped when the readers use it (ADR-0024 item 8).
 users(user_id text PRIMARY KEY, login text, display_name text, first_seen bigint, last_seen bigint)
 user_names(user_id text, login text, display_name text, seen_from bigint, PRIMARY KEY (user_id, login))
 

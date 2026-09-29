@@ -5,8 +5,8 @@
 (`legacy`). `enrichment` holds what a backfilled line lacks and was looked up (item 4); `emotes` caches
 those lookups; `backfill_runs.provider` says which history service filled a gap (item 5).
 
-Additive: the columns that moved into `raw` stay, and are still written, until one release after the
-readers use `raw` (item 8). `raw` stays nullable until then too, for rows written straight into the table.
+Additive: the columns that moved into `raw` stay, and are still written, until the readers use `raw`;
+the revision that switches them drops the columns and makes `raw` required (item 8).
 
 `chatlog.legacy` rebuilds the same objects for an event that arrives with neither source; the two must
 agree (`tests/test_raw_events.py`).
