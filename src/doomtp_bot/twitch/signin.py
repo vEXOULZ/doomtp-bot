@@ -11,6 +11,10 @@ What a user may do follows from who they are:
 
 Both are worked out again at most every `REFRESH_S`, so a moderator who loses the role loses access
 within that window, not at once.
+
+With `SIGNIN_PROVIDER=vexoulz` (ADR-0023) the same flow goes through vexoulz-auth, the sign-in shared by
+the vexoulz sites, instead of straight to Twitch: `VexoulzSignIn` below. Someone already signed in on
+another of those sites isn't asked again, and signing out everywhere there ends the session here too.
 """
 
 from __future__ import annotations
@@ -104,6 +108,7 @@ class Grant:
     login: str
     access_token: str
     refresh_token: str | None
+    sid: str | None = None  # the vexoulz-auth session behind it (VexoulzSignIn); None for Twitch's own
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +170,9 @@ class TwitchSignIn:
         self._states = {s: v for s, v in self._states.items() if now - v[0] < STATE_TTL_S}
         state = secrets.token_urlsafe(24)
         self._states[state] = (now, safe_next(next_path))
+        return self.authorize_url(state), state
+
+    def authorize_url(self, state: str) -> str:
         query = urlencode(
             {
                 "client_id": self.client_id,
@@ -174,7 +182,18 @@ class TwitchSignIn:
                 "state": state,
             }
         )
-        return f"{AUTHORIZE_URL}?{query}", state
+        return f"{AUTHORIZE_URL}?{query}"
+
+    @staticmethod
+    def reason_for(error: str) -> Reason:
+        """The login page's reason for an `error` the provider sent back."""
+        return "denied" if error == "access_denied" else "twitch"
+
+    async def redeem(self, code: str) -> Grant:
+        """The user behind an authorization code."""
+        token = await self.http.exchange_code(code, self.redirect_uri)
+        info = await self.http.validate(token["access_token"])
+        return Grant(info["user_id"], info["login"], token["access_token"], token.get("refresh_token"))
 
     def next_for(self, state: str | None) -> str:
         """Where a callback with this state was headed, even when it failed: the error goes there too."""
@@ -187,8 +206,7 @@ class TwitchSignIn:
         """The signed-in user, what they may do, and where to send them. Raises SignInError."""
         found = self._states.pop(state or "", None)
         if error:
-            reason: Reason = "denied" if error == "access_denied" else "twitch"
-            raise SignInError(reason, f"Twitch returned an error: {error}")
+            raise SignInError(self.reason_for(error), f"sign-in returned an error: {error}")
         if found is None or self.clock() - found[0] >= STATE_TTL_S:
             raise SignInError("expired", "invalid or expired sign-in state")
         if not browser_state or not secrets.compare_digest(browser_state, state or ""):
@@ -196,9 +214,7 @@ class TwitchSignIn:
         if not code:
             raise SignInError("twitch", "missing authorization code")
         try:
-            token = await self.http.exchange_code(code, self.redirect_uri)
-            info = await self.http.validate(token["access_token"])
-            grant = Grant(info["user_id"], info["login"], token["access_token"], token.get("refresh_token"))
+            grant = await self.redeem(code)
             access = await self.access(grant)
         except (OAuthError, aiohttp.ClientError) as exc:
             raise SignInError("twitch", str(exc)) from exc
@@ -245,3 +261,124 @@ class TwitchSignIn:
             return False
         session.role, session.channels = access.role, access.channels
         return True
+
+
+# ── through vexoulz-auth (ADR-0023) ─────────────────────────────────────────
+
+
+class VexoulzHttp(Protocol):
+    async def token(self, code: str, redirect_uri: str) -> dict[str, Any]:
+        """`POST /v1/token`: `{user: {id, login, ...}, sid, expiresAt}`. OAuthError if refused."""
+        ...
+
+    async def session_active(self, sid: str) -> bool:
+        """`GET /v1/sessions/{sid}`: False once the user signed out (or the session ran out)."""
+        ...
+
+    async def moderated_channels(self, user_id: str) -> list[str]:
+        """Broadcaster ids the user moderates, asked of Twitch by vexoulz-auth with the token it keeps.
+        TokenRevoked when there is no usable token any more: the user must sign in again."""
+        ...
+
+
+class VexoulzAuthHttp:
+    """vexoulz-auth's backend API, authenticated as a registered client (HTTP Basic)."""
+
+    def __init__(self, base_url: str, client_id: str, client_secret: str) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.auth = aiohttp.BasicAuth(client_id, client_secret)
+        self.timeout = aiohttp.ClientTimeout(total=15)
+
+    async def _call(self, method: str, path: str, **kwargs: Any) -> tuple[int, dict[str, Any]]:
+        async with (
+            aiohttp.ClientSession(auth=self.auth, timeout=self.timeout) as session,
+            session.request(method, self.base_url + path, **kwargs) as resp,
+        ):
+            try:
+                body: dict[str, Any] = await resp.json(content_type=None)
+            except ValueError:
+                body = {}
+            return resp.status, body
+
+    async def token(self, code: str, redirect_uri: str) -> dict[str, Any]:
+        status, body = await self._call(
+            "POST", "/v1/token", json={"code": code, "redirect_uri": redirect_uri}
+        )
+        if status != 200:
+            raise OAuthError(f"vexoulz-auth refused the code ({status} {body.get('error')})")
+        return body
+
+    async def session_active(self, sid: str) -> bool:
+        status, body = await self._call("GET", f"/v1/sessions/{sid}")
+        if status == 404:
+            return False
+        if status != 200:
+            raise OAuthError(f"vexoulz-auth session check failed ({status})")
+        return bool(body.get("active"))
+
+    async def moderated_channels(self, user_id: str) -> list[str]:
+        status, body = await self._call("GET", f"/v1/users/{user_id}/moderated-channels")
+        if status in (404, 409, 410):  # never signed in here, the scope is gone, or Twitch took it back
+            raise TokenRevoked(f"vexoulz-auth has no usable token ({status} {body.get('error')})")
+        if status != 200:
+            raise OAuthError(f"vexoulz-auth moderated-channels failed ({status})")
+        return [str(c) for c in body.get("channels", [])]
+
+
+class VexoulzSignIn(TwitchSignIn):
+    """The same flow, states and outcomes as TwitchSignIn, with vexoulz-auth in Twitch's place.
+
+    `/authorize` answers at once for someone already signed in on another vexoulz site, and asks Twitch
+    (once) for the moderated-channels scope. Every refresh also checks the vexoulz-auth session, so
+    signing out everywhere ends this one within `REFRESH_S`.
+    """
+
+    http: VexoulzHttp  # type: ignore[assignment]
+
+    def __init__(
+        self,
+        *,
+        auth_url: str,
+        client_id: str,
+        redirect_uri: str,
+        http: VexoulzHttp,
+        policy: Policy,
+        clock: Callable[[], float] = time.monotonic,
+        refresh_s: float = REFRESH_S,
+    ) -> None:
+        super().__init__(
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            http=http,  # type: ignore[arg-type]
+            policy=policy,
+            clock=clock,
+            refresh_s=refresh_s,
+        )
+        self.auth_url = auth_url.rstrip("/")
+
+    def authorize_url(self, state: str) -> str:
+        query = urlencode(
+            {
+                "client_id": self.client_id,
+                "redirect_uri": self.redirect_uri,
+                "scope": " ".join(SIGNIN_SCOPES),
+                "state": state,
+            }
+        )
+        return f"{self.auth_url}/authorize?{query}"
+
+    @staticmethod
+    def reason_for(error: str) -> Reason:
+        return "denied" if error == "denied" else "expired" if error == "expired" else "twitch"
+
+    async def redeem(self, code: str) -> Grant:
+        body = await self.http.token(code, self.redirect_uri)
+        user = body["user"]
+        return Grant(str(user["id"]), str(user["login"]), "", None, sid=str(body["sid"]))
+
+    async def access(self, grant: Grant) -> Access:
+        if grant.sid is None or not await self.http.session_active(grant.sid):
+            raise TokenRevoked("signed out of vexoulz-auth")
+        if self.policy.is_bot_admin(grant.user_id):
+            return Access("admin", None)
+        return access_for(self.policy, grant.user_id, await self.http.moderated_channels(grant.user_id))

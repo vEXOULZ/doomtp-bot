@@ -1,6 +1,6 @@
-# ADR-0023: The chat log as a paged timeline on the API
+# ADR-0025: The chat log as a paged timeline on the API
 
-**Status:** Accepted — 2026-09-28
+**Status:** Accepted — 2026-09-28 (drafted as ADR-0023; renumbered when ADR-0023 went to the shared sign-in)
 **Date:** 2026-09-28
 **Deciders:** Project owner
 

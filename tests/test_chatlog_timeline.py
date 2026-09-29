@@ -1,4 +1,4 @@
-"""`/api/v1/channels/{login}/log` and `/log/coverage`: the chat log as one paged timeline (ADR-0023)."""
+"""`/api/v1/channels/{login}/log` and `/log/coverage`: the chat log as one paged timeline (ADR-0025)."""
 # ruff: noqa: F811  (the imported fixtures are parameters here, which ruff reads as redefinitions)
 
 from __future__ import annotations

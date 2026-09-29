@@ -1,4 +1,4 @@
-"""The chat log read as one timeline, a page at a time, and what that stretch of it covers (ADR-0023).
+"""The chat log read as one timeline, a page at a time, and what that stretch of it covers (ADR-0025).
 
 Two readers want the same thing: the web site's log viewer, which opens on the newest lines and pages
 back, and the VOD archive, which walks a stream's window oldest first to enrich its chat replay. Both get

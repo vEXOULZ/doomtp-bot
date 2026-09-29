@@ -920,7 +920,7 @@ async def channel_log(
     caller: Caller = ADMIN_READ,
 ) -> dict[str, Any]:
     """The channel's log as one timeline of messages, notifications and moderation, a page at a time
-    (ADR-0023). Pass `next` back as `cursor`, with the same filters, for the page after."""
+    (ADR-0025). Pass `next` back as `cursor`, with the same filters, for the page after."""
     settings = _channel(request, login)
     conn = _state(request, "chatlog_db")
     user_ids = None if user is None else await timeline.user_ids_for(conn, user)
@@ -948,7 +948,7 @@ async def channel_log_coverage(
     until: int | None = Query(default=None, ge=0, description="ms since the epoch; now by default"),
     caller: Caller = ADMIN_READ,
 ) -> dict[str, Any]:
-    """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0023)."""
+    """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0025)."""
     if until is not None and until <= since:
         raise HTTPException(status_code=422, detail="until must be after since")
     settings = _channel(request, login)
