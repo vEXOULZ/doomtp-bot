@@ -56,7 +56,9 @@ VARIATION_SELECTOR = "\ufe0f"  # emoji presentation selector, optional around an
 # The fields the bot supplies, read as `{$root.field}` (ADR-0018 item 5). Read-only, and never a variable.
 BOT_FIELDS: dict[str, frozenset[str]] = {
     "chatter": frozenset({"id", "name", "display", "rank", "roles", "is_sub", "is_vip", "is_mod"}),
-    "channel": frozenset({"id", "name", "display", "prefix", "live", "title", "game", "viewers", "uptime"}),
+    "channel": frozenset(
+        {"id", "name", "display", "prefix", "live", "title", "game", "viewers", "uptime", "next_stream"}
+    ),
     "publisher": frozenset({"id", "name", "display"}),
     "bot": frozenset({"name", "id", "version"}),
     "now": frozenset({"iso", "unix", "date", "time", "weekday"}),
@@ -70,7 +72,7 @@ REGISTERED_ROOTS = frozenset(
 PATH_ROOTS = frozenset({"event", "match", "cooldown", "denied", "run", "cmd"})
 RESULT_FIELDS = ("code", "message", "data")
 # Accessors and casts after `:` (spec §2.7). `choice(a,b)` is handled separately.
-ACCESSORS = ("len", "keys", "values", "template")
+ACCESSORS = ("len", "keys", "values", "template", "human")
 TYPE_NAMES = ("str", "int", "float", "bool", "range", "duration", "user", "url", "list", "map")
 # Commands whose arguments are one expression (ADR-0018 item 6).
 EXPR_COMMANDS = frozenset({"check", "calc"})

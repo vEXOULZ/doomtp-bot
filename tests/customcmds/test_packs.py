@@ -236,9 +236,9 @@ async def test_a_global_pack_reaches_every_channel(h: Harness) -> None:
 
 
 async def test_primitives_always_win(h: Harness) -> None:
-    await h.say("owner", "!cc add ping echo not pong")
-    await h.say("owner", "!cc publish ping global")
-    assert await h.say("bob", "!ping") == "pong"
+    await h.say("owner", "!cc add random echo not a number")
+    await h.say("owner", "!cc publish random global")
+    assert await h.say("bob", "!random 1-1") == "1"
 
 
 async def test_help_lists_pack_and_global_commands(h: Harness) -> None:

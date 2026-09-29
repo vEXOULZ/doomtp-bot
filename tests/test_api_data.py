@@ -245,17 +245,17 @@ async def test_modules_and_commands_are_toggled_through_the_same_services(
     )
     assert off.status_code == 200
     commands = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/commands")).json()["commands"]
-    assert {c["name"]: c["enabled"] for c in commands}["ping"] is False
+    assert {c["name"]: c["enabled"] for c in commands}["random"] is False
 
     ruled = await client.patch(
-        f"/api/v1/channels/{CHANNEL_LOGIN}/commands/ping",
+        f"/api/v1/channels/{CHANNEL_LOGIN}/commands/random",
         json={"required_role": "moderator"},
         headers=auth(write_key),
     )
     assert ruled.status_code == 200 and ruled.json()["required_role"] == "moderator"
 
     bad_role = await client.patch(
-        f"/api/v1/channels/{CHANNEL_LOGIN}/commands/ping",
+        f"/api/v1/channels/{CHANNEL_LOGIN}/commands/random",
         json={"required_role": "wizard"},
         headers=auth(write_key),
     )
