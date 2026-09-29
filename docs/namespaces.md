@@ -39,7 +39,7 @@ Only inside **custom command bodies**, trigger expressions (where the arguments 
 |-------------|---------|
 | `{arg.1}`, `{arg.2}` … | Nth argument (quotes removed; a quoted string is one argument) |
 | `{arg.3+}` | Arguments 3..end, joined with single spaces, quotes removed. This is the "rest of the message" capture for unquoted text. *(Stripping quotes is the current choice; verify it in testing. See language proposal §5.)* |
-| `{arg.3+raw}` | Arguments 3..end exactly as typed (original spacing and quotes) |
+| `{arg.3+raw}` | Arguments 3..end exactly as typed (original spacing and quotes; a placeholder there counts as the text it expanded to) |
 | `{arg.count}` | Number of arguments |
 | `{args}` | Same as `{arg.1+}` |
 | `{arg.<name>}` | Alias for a positional argument, if the command declares a name for it (e.g. `arg.1` = `sides` → `{arg.sides}`) |

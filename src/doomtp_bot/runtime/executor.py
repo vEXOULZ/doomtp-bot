@@ -17,6 +17,7 @@ from doomtp_bot.core import metrics
 from doomtp_bot.lang.ast import (
     Access,
     And,
+    ArgSource,
     Binary,
     Compare,
     Expr,
@@ -31,6 +32,7 @@ from doomtp_bot.lang.ast import (
     Pipe,
     Placeholder,
     Ref,
+    Span,
     Store,
     Subst,
     Text,
@@ -143,8 +145,47 @@ class ScopeArgs:
 
     @classmethod
     def of(cls, values: tuple[str, ...], params: dict[str, Any] | None = None) -> ScopeArgs:
-        """Arguments already split into words, as a custom command's own arguments arrive."""
+        """Arguments already split into words, with no source text to keep: `+raw` is `+` here."""
         return cls(values, " ".join(values), _offsets(values), params or {})
+
+    @classmethod
+    def typed(
+        cls,
+        values: tuple[str, ...],
+        params: dict[str, Any],
+        sources: tuple[ArgSource, ...],
+        expanded: dict[Span, str],
+    ) -> ScopeArgs:
+        """An invocation's arguments with the text they were typed as, for `{arg.N+raw}` (spec §7.3).
+
+        Quotes, escapes and the spacing between arguments are kept from the source. A placeholder is
+        replaced by the text it expanded to, so a body that passes `{arg.2+raw}` on hands the next
+        command exactly what it was given. Without a source per argument, it is `of`.
+        """
+        if len(sources) != len(values):
+            return cls.of(values, params)
+        text: list[str] = []
+        offsets: list[int] = []
+        at = 0
+        for i, source in enumerate(sources):
+            if i:
+                text.append(source.gap)
+                at += len(source.gap)
+            offsets.append(at)
+            for part in source.parts:
+                chunk = part if isinstance(part, str) else expanded[part.span]
+                text.append(chunk)
+                at += len(chunk)
+        return cls(values, "".join(text), tuple(offsets), params)
+
+    @classmethod
+    def rest_of(cls, args: Args, first: int, params: dict[str, Any]) -> ScopeArgs:
+        """A handler's arguments from index `first` on, keeping their typed text (`cc run <id> …`)."""
+        values = args.values[first:]
+        if len(args.raw_offsets) != len(args.values) or not values:
+            return cls.of(values, params)
+        cut = args.raw_offsets[first]
+        return cls(values, args.raw_text[cut:], tuple(o - cut for o in args.raw_offsets[first:]), params)
 
 
 def _offsets(values: tuple[str, ...]) -> tuple[int, ...]:
@@ -242,6 +283,7 @@ class Executor:
             OnCooldown.unless_allowed(self.policy.check_cooldown(ctx, spec))
             values: tuple[str, ...]
             params: dict[str, Any]
+            expanded: dict[Span, str] = {}  # what each placeholder in the arguments rendered to
             if inv.expr is not None:
                 # `check` and `calc` take one expression; its value is the argument (ADR-0018 D8e/g).
                 value = await self.evaluate(inv.expr, ctx, scope, prev)
@@ -249,7 +291,7 @@ class Executor:
                     raise MissingValue(render_expr(inv.expr))
                 values, params = (render(value),), {"value": value}
             else:
-                raws = [await self.argument(arg, ctx, scope, prev) for arg in inv.args]
+                raws = [await self.argument(arg, ctx, scope, prev, expanded) for arg in inv.args]
                 values = tuple(render(raw) for raw in raws)
                 params = await self.bind(spec, values, ctx, tuple(raws))
             # And claimed with no await before it runs: expanding the arguments can wait on the database,
@@ -266,12 +308,13 @@ class Executor:
         except UsageError as exc:
             result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
         else:
-            args = Args(values, params, inv.raw_tail)
+            typed = ScopeArgs.typed(values, params, inv.sources, expanded)
+            args = Args(values, params, inv.raw_tail, typed.raw_text, typed.raw_offsets)
             cmd_ctx = CommandContext(ctx, inv.name, prev, spec)
             try:
                 async with asyncio.timeout(self.stage_timeout):
                     if resolved.custom is not None:
-                        result = await self._run_body(resolved, inv, ctx, scope, values, params, stdin)
+                        result = await self._run_body(resolved, inv, ctx, scope, typed, stdin)
                     elif spec.side_effects and ctx.dry_run:
                         # It would act on Twitch, and `!explain --run` changes nothing (spec §9).
                         result = Result.success("", {"not_run": f"{inv.name} acts on Twitch"})
@@ -310,8 +353,7 @@ class Executor:
         inv: Invocation,
         ctx: ExecContext,
         scope: Scope,
-        values: tuple[str, ...],
-        params: dict[str, Any],
+        args: ScopeArgs,
         stdin: Result | None,
     ) -> Result:
         """Run a custom command's body in its own scope (ADR-0009).
@@ -322,9 +364,7 @@ class Executor:
         """
         target = resolved.custom
         assert target is not None
-        body_scope = Scope(
-            scope.bodies.get(target.command_id, {}), ScopeArgs.of(values, params), scope.bodies
-        )
+        body_scope = Scope(scope.bodies.get(target.command_id, {}), args, scope.bodies)
         publisher, context = ctx.publisher, ctx.context
         ctx.publisher, ctx.context = (
             Publisher(
@@ -388,12 +428,24 @@ class Executor:
 
     # ── §7.3 expansion and §2.7 expressions ─────────────────────────────────
     async def argument(
-        self, arg: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
+        self,
+        arg: tuple[Part, ...],
+        ctx: ExecContext,
+        scope: Scope,
+        prev: Result | None,
+        expanded: dict[Span, str] | None = None,
     ) -> Any:
-        """An argument's value: a lone placeholder keeps its value's type, anything else is text."""
+        """An argument's value: a lone placeholder keeps its value's type, anything else is text.
+
+        `expanded` collects the text each placeholder rendered to, by span, for `ScopeArgs.typed`.
+        """
         if _is_lone(arg):
-            return await self.placeholder_value(arg[0], ctx, scope, prev)  # type: ignore[arg-type]
-        return await self.expand(arg, ctx, scope, prev)
+            ph: Placeholder = arg[0]  # type: ignore[assignment]
+            value = await self.placeholder_value(ph, ctx, scope, prev)
+            if expanded is not None:
+                expanded[ph.span] = render(value)
+            return value
+        return await self.expand(arg, ctx, scope, prev, expanded)
 
     async def condition(
         self, cond: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
@@ -402,14 +454,22 @@ class Executor:
         return await self.argument(cond, ctx, scope, prev)
 
     async def expand(
-        self, parts: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
+        self,
+        parts: tuple[Part, ...],
+        ctx: ExecContext,
+        scope: Scope,
+        prev: Result | None,
+        expanded: dict[Span, str] | None = None,
     ) -> str:
         out: list[str] = []
         for part in parts:
             if isinstance(part, Text):
                 out.append(part.value)
             else:
-                out.append(render(await self.placeholder_value(part, ctx, scope, prev)))
+                text = render(await self.placeholder_value(part, ctx, scope, prev))
+                if expanded is not None:
+                    expanded[part.span] = text
+                out.append(text)
         return "".join(out)
 
     async def placeholder_value(

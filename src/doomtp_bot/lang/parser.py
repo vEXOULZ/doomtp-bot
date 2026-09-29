@@ -19,6 +19,7 @@ from doomtp_bot.lang.ast import (
     Access,
     And,
     Arg,
+    ArgSource,
     Binary,
     Compare,
     Expr,
@@ -579,8 +580,8 @@ class _Parser:
             raise self._error(ParseErrorCode.DYNAMIC_NAME, start)
         raise self._error(ParseErrorCode.BAD_NAME, start)
 
-    def arg(self) -> Arg | None:
-        """Arg <- WS !OperatorToken Word"""
+    def arg(self) -> tuple[Arg, ArgSource] | None:
+        """Arg <- WS !OperatorToken Word    (with its source text, for `{arg.N+raw}`)"""
         save = self.pos
         if (
             self.ws()
@@ -592,9 +593,24 @@ class _Parser:
             word = self.word()
             if self.line and self.s[start : self.pos] in (">", ">>"):
                 self._old_store(self.s[start : self.pos], start)
-            return word
+            return word, self._source(save, start, word)
         self.pos = save
         return None
+
+    def _source(self, gap_start: int, start: int, word: Arg) -> ArgSource:
+        """The argument just read as typed: literal source text, cut around its own placeholders."""
+        parts: list[str | Placeholder] = []
+        at = start
+        for part in word:
+            if isinstance(part, Placeholder):
+                ph_start, ph_end = part.span
+                if ph_start > at:
+                    parts.append(self.s[at:ph_start])
+                parts.append(part)
+                at = ph_end
+        if self.pos > at:
+            parts.append(self.s[at : self.pos])
+        return ArgSource(self.s[gap_start:start], tuple(parts))
 
     def _old_store(self, op: str, at: int) -> None:
         """Typed lines only, for one release: `> channel.x` was a store before syntax 2.0 (ADR-0018)."""
@@ -618,12 +634,14 @@ class _Parser:
         if not personal and name in EXPR_COMMANDS:
             return Invocation(0, name, personal, (), None, (start, self.pos), expr=self.expr_args())
         args: list[Arg] = []
+        sources: list[ArgSource] = []
         while (a := self.arg()) is not None:
-            args.append(a)
+            args.append(a[0])
+            sources.append(a[1])
         # RawCheck: a raw-tail command inside a larger expression
         if isinstance(self.params.raw_tail_from(name, [_plain(a) for a in args]), int):
             raise self._error(ParseErrorCode.RAW_TAIL_POSITION, start, name=name)
-        return Invocation(0, name, personal, tuple(args), None, (start, self.pos))
+        return Invocation(0, name, personal, tuple(args), None, (start, self.pos), sources=tuple(sources))
 
     def expr_args(self) -> Expr | None:
         """ExprArgs <- WS Expression &(_ (EOF / OperatorToken / '}' in {!…})) / (nothing: a usage error later)"""
@@ -659,13 +677,15 @@ class _Parser:
             return None
 
         args: list[Arg] = []
+        sources: list[ArgSource] = []
         plain: list[str] = []
         while self._needs_more_lead(name, plain):
             a = self.arg()
             if a is None:
                 break
-            args.append(a)
-            plain.append(_plain(a))
+            args.append(a[0])
+            sources.append(a[1])
+            plain.append(_plain(a[0]))
         if not isinstance(raw_tail_from(name, plain), int):
             self.pos = start
             return None
@@ -677,7 +697,7 @@ class _Parser:
             self.pos = self.n
         else:
             self.pos = save
-        return Invocation(0, name, personal, tuple(args), raw, (start, self.pos))
+        return Invocation(0, name, personal, tuple(args), raw, (start, self.pos), sources=tuple(sources))
 
     def _needs_more_lead(self, name: str, lead: Sequence[str]) -> bool:
         r = self.params.raw_tail_from(name, lead)
