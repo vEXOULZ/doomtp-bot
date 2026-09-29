@@ -91,4 +91,18 @@ are safest anyway.
    adoption of `schema_migrations` databases, and a CI test of every downgrade.
 2. [x] The startup check, `doomtp-bot db`, the `migrate` one-shot in compose, `update.sh` using it, and
    `deploy/rollback.sh`.
-3. [ ] The first real rollback on the server, and its notes back into this ADR.
+3. [x] The first real rollback on the server, and its notes back into this ADR. *(2026-09-28, guest 221.
+   v0.3.0 went out through `guest-deploy`: its migrate step took `bot` from 0005 to 0008 and installed
+   `core`, `starter` and `quotes`. `deploy/rollback.sh` then took it back to v0.2.0's image in 11 s. That
+   covered the backup, the downgrade to `bot=0005 chatlog=0001` with v0.3.0's image, and the restart
+   without the migrate step. The old `quotes` table came back, both channels reconnected, and the LAN
+   port from `compose.guest.yaml` stayed, thanks to PR #71. Setting `BOT_IMAGE` back to `:main` rolled
+   forward on the next deploy, with the migrate step, in about 17 s before `post_up`. Notes:*
+   - *There was no `:v0.2.0` image. That tag was made on `main` before the version bump reached it, so the
+     tag build refused it (`__version__ 0.1.0`), and the rollback used the `:<sha>` tag of the `main`
+     commit that did run v0.2.0. The script failed before changing anything. CONTRIBUTING now says to
+     tag after the release merge and to check that the tag build published.*
+   - *Pause `guest-deploy@doomtp-bot.timer` during a rollback. The script doesn't take guest-deploy's
+     lock, and a tick between the downgrade and the restart would run the migrate step and upgrade again.*
+   - *The `quotes` table was empty, so a downgrade moving real quotes back out of `channel.quotes` is still
+     proven only by the CI downgrade test.)*

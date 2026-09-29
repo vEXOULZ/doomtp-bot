@@ -25,7 +25,7 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0010](adr/0010-variables-scopes.md) | Seven namespaces, exact-name write grants | 4/4 | Complete |
 | [0011](adr/0011-parser-and-web-editor.md) | One server-side PEG parser, a local highlighter | 6/6 | Complete |
 | [0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications | 6/6 | Complete |
-| [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
+| [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 6/6 | Complete: proven on guest 221 |
 | [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 10/10 | Complete: backup and restore proven on guest 221 |
 | [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
@@ -34,43 +34,25 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 11/11 | Complete: the link rule, storage limits, `random` picking, moderation primitives, internal and system packs, automation, quotes as a pack, `customecho` and the readouts |
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 5/5 | Complete: `http get`, the host allow-list with its secrets and limits, and the `weather` starter command |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
-| [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 2/3 | Built; the first real rollback on the server is next |
+| [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 3/3 | Complete: rolled back and forward on guest 221 |
 | [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 0/8 | Accepted; nothing built yet |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**121 of 133 ADR action items are closed.** Four are waiting on a person or a server, not on code;
-the other eight are ADR-0024, accepted on 2026-09-28 and not yet started; ADR-0018, ADR-0019, ADR-0020 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
+**124 of 133 ADR action items are closed.** One (ADR-0008 item 4) is waiting on a person, not on code;
+the other eight are ADR-0024, accepted on 2026-09-28 and not yet started. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
 ## What is left, and why
 
-### Waiting on the server — ADR-0013 items 5 and 6, ADR-0022 item 3
+### Done on the server (2026-09-28)
 
-The publish half is now real. The repository is at
-[github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot), and a green run pushes `:main`
-and `:<sha>` to GHCR; both tags resolve to one digest, and the published image pulls, migrates and serves
-against Postgres 17. It took five runs to get there, because CI had never executed on this project at all
-— the first four found a `pg_dump` too old for the server, then a missing apt repo, then a PATH that
-preferred the old client anyway, then a compose check reading a gitignored `.env`. Worth recording: none
-of those were in the application, and all four were invisible until something other than a dev box ran
-the suite.
-
-The pull half is still tested only against a local registry standing in for GHCR: a directory holding
-only the compose files pulls the image rather than building it, `deploy/update.sh` does nothing when the
-tag hasn't moved and restarts cleanly when it has, and the packaged tools run from the image. What has
-never run is the real thing:
-- **Raise the guest's shutdown timeouts** past the 45 s stop grace period, and install
-  `qemu-guest-agent`. Until that is done, a host reboot can kill the bot mid-flush and the next startup
-  records an unclean shutdown — a wider gap in the chat log than the deploy needed to cost.
-- **Prove a restore on the guest.** The round-trip works locally: the backup service dumps both schemas
-  from a password-protected server, and dropping the `bot` schema and running `pg_restore` brings it
-  back whole. What has not happened is the same thing on the guest's own volume, on its own cron, with a
-  copy then leaving the machine — and a backup nobody has carried off the box is half a backup.
-- **Roll back once on purpose** with `deploy/rollback.sh` (ADR-0022), to an image one migration behind,
-  and write down what it took. A deploy on 2026-09-28 failed forward (no `core` pack) and then failed
-  back (a schema the old image didn't know); the migrate step and the downgrades are the fix for both,
-  and neither has run on the guest yet.
+Guest 221 runs the published image and has proven every step of its deploy path. That covers the nightly
+backup and a restore into a scratch database, the shutdown timeouts, and v0.3.0 landing through
+`guest-deploy` with its migrate step. It also covers a rollback with `deploy/rollback.sh` to v0.2.0's
+image, downgrade included, and a roll forward. The notes are in ADR-0013, ADR-0014 and ADR-0022. Two
+lessons: a tag made before the version bump reached `main` publishes nothing, and a server's own compose
+override has to reach the deploy scripts through `COMPOSE_FILE`.
 
 ### Waiting on a reply — ADR-0008 item 4
 
@@ -138,19 +120,16 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 
 ## Next, in the order it makes sense
 
-1. **Finish on the guest.** Guest 221 runs v0.2.0, and ADR-0014 item 10 closed there on 2026-09-28. Still
-   to do: a host-side shutdown that the bot logs as clean (ADR-0013 item 5), then release v0.3.0 and watch
-   `guest-deploy` take it (item 6), then roll it back and forward once (ADR-0022 item 3).
-2. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
+1. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
    and read what `scripts/coverage.py` says the next morning.
-3. **Sign the bot in again** once it runs there: `!shoutout` needs `moderator:manage:shoutouts`, which a
+2. **Sign the bot in again** once it runs there: `!shoutout` needs `moderator:manage:shoutouts`, which a
    token from before 2026-09-23 doesn't carry, and `!warn`, `!announce`, `!chatmode` and `!shield` need
    the scopes added 2026-09-28. A broadcaster who wants `!settitle`, `!setgame`, `!marker` or `!raid`
    connects the channel again at `/auth/connect`.
-4. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
+3. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.
-5. **Install the default command set on the server** (ADR-0019 is complete in code). Run
-   `scripts/migrate_v2.py` once when the server first takes `v0.2.0`, and let the migrate step move
-   the old quotes table into `channel.quotes`; then run `scripts/starter_pack.py` to install `core`, `starter`
-   and `quotes`.
+4. **Turn on the commands that need a grant or an admin**, now that v0.3.0 installed `core`, `starter`
+   and `quotes`. `!cc grant deaths channel.deaths` in each channel that wants `!deaths`. For
+   `!weather`, `!admin add` the bot account and `!admin http allow wttr.in`.
+   If custom commands were stored before the server took v0.2.0, run `scripts/migrate_v2.py` once too.
