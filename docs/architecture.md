@@ -668,7 +668,9 @@ token stays with the session, in memory, and nothing is written to the database.
 worked out again at most every five minutes, on the next request (`current_session` in
 `api/access.py`): channels the user lost go at once, and a user Twitch no longer vouches for, or who
 manages nothing any more, is signed out. A request to Twitch that merely failed keeps what the session
-had until the next try. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it
+had until the next try. With `SIGNIN_PROVIDER=vexoulz` (ADR-0023), `VexoulzSignIn` sends the person to
+vexoulz-auth instead, gets the user and a session id for the code, and asks vexoulz-auth for the moderated
+channels; the refresh also checks that session, so signing out everywhere reaches the bot too. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it
 would have guessed at is now designed, and the seam came with it.)*
 
 ---
