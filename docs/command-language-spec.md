@@ -376,7 +376,7 @@ For each resolved invocation, in this order:
 | 4 | Placeholder validity for this context (§7.2), and `_N` with 1 ≤ N < this invocation's index | 222 (`E_BAD_REFERENCE`) |
 | 5 | Store targets: namespace valid for the context, and write permitted per variable-access-matrix.md | the variable error (§6.2) for an invalid target, 126 for denied |
 | 6 | Custom command expansion: depth ≤ `MAX_CC_DEPTH`, no cycles | 224 (`E_CC_DEPTH`) / 223 (`E_CC_CYCLE`) |
-| 7 | Total invocations after expansion ≤ `MAX_INVOCATIONS (8)`; sentinels count | 220 (`E_TOO_MANY`) |
+| 7 | Total invocations after expansion ≤ `MAX_INVOCATIONS (16)`; sentinels count, a custom command's body counts at every call, and an `ifelse` counts as its larger branch | 220 (`E_TOO_MANY`) |
 
 If any check fails, **no invocation executes.** The expression's result is the first failure in source order. Output rules for these codes are in §6.6.
 
@@ -447,8 +447,9 @@ Codes run from 0 to 1023. Commands MUST use 1–99 for their own failures (4 inc
 | 250–269 values | 250 `E_INDEX`, 251 `E_KEY`, 252 `E_NOT_A_LIST`, 253 `E_NOT_A_MAP`, 254 `E_EMPTY`, 255 `E_NOT_A_NUMBER` |
 | 299 | `E_INTERNAL`: the parser failed without a named error, which is a bug |
 | 300–399 storage (§6.5) | 300 `E_LIST_FULL`, 301 `E_QUOTA`, 302 `E_VALUE_TOO_BIG`, 303 `E_BAD_NAMESPACE`, 304 `E_BAD_VAR_NAME`, 305 `E_TOO_MANY_NAMES` |
+| 400–499 http (ADR-0020) | 400 `E_HTTP_NOT_ALLOWED`, 401 `E_HTTP_ADDRESS`, 402 `E_HTTP_TIMEOUT`, 403 `E_HTTP_TOO_BIG`, 404 `E_HTTP_STATUS`, 405 `E_HTTP_NOT_JSON`, 406 `E_HTTP_PATH`, 407 `E_HTTP_UNREACHABLE` |
 
-Each block leaves gaps for related errors, and the rest of 100–1023 is free for new blocks (400–499 is planned for the gated HTTP query primitive). A script branches on the code of the previous result: `!var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty ) ( echo {_.message} )`.
+Each block leaves gaps for related errors, and the rest of 100–1023 is free for new blocks. A script branches on the code of the previous result: `!var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty ) ( echo {_.message} )`.
 
 ### 6.3 Evaluation
 
@@ -467,7 +468,7 @@ Each block leaves gaps for related errors, and the rest of 100–1023 is free fo
 - **Pipe vs. and:** both stop on failure and both expose the left result as `_`. Only a pipe *also* delivers it as `stdin` to the command. Commands that accept input act on `stdin` without placeholders (e.g. `!upper`).
 - **Pipe stdin into a group:** `L | ( A && B )` delivers stdin to the **first invocation evaluated** inside the group, which is `A`.
 - The whole expression is bounded by `EXPR_TIMEOUT (6 s)`. When it expires, the running invocation is cancelled and the expression returns code 124.
-- **`ifelse`** is checked up front like any other node: both branches go through preflight (§5), count toward `MAX_INVOCATIONS`, and appear in `!explain`, but only the chosen branch runs. The invocations of the other branch never execute, so their `_N` are missing.
+- **`ifelse`** is checked up front like any other node: both branches go through preflight (§5) and appear in `!explain`, and the larger one counts toward `MAX_INVOCATIONS`, but only the chosen branch runs. The invocations of the other branch never execute, so their `_N` are missing.
 - **A branch's permissions wait for the branch.** Inside an `ifelse` branch, a command the invoker may not run (126, or 127 for a missing capability, §5.2 check 2) doesn't stop the line up front. It returns that refusal when, and only if, its branch is chosen, so a condition can guard it: `ifelse {$chatter.is_mod} ( shoutout {arg.1} || true )`. Unknown names, bad references and every other check still fail the whole line before anything runs.
 
 ### 6.4 Scopes, `_` and `_N`
@@ -606,6 +607,7 @@ Placeholders are expanded **immediately before their invocation executes** (§6.
 | `url` | absolute `http`/`https` URL passing the URL safety policy | str | — |
 | `list` | a single placeholder whose value is a list passes through; otherwise JSON text `[…]` | list | `[i]`, `[-i]`, `:len` |
 | `map` | a single placeholder whose value is a map passes through; otherwise JSON text `{…}` | map | `[key]`, `:len`, `:keys`, `:values` |
+| `any` | anything: a single placeholder's value passes through with its type, anything else is text | any | whatever the value has |
 
 `int`, `float` and `duration` params MAY declare `min`/`max`. `str` MAY declare `max_len`.
 
@@ -734,7 +736,7 @@ With `--run`, it also evaluates the expression with a **discarded** write buffer
 | `MAX_INT_DIGITS` | 18 | §2.8 |
 | `MAX_EXPR_OPS` | 1000 per run | §7.8 |
 | `MAX_SUBST_DEPTH` | 3 | §7.7 |
-| `MAX_INVOCATIONS` | 8 (after expansion) | §5.2 |
+| `MAX_INVOCATIONS` | 16 (after expansion) | §5.2 |
 | `MAX_CC_DEPTH` | 3 | §5 |
 | `STAGE_TIMEOUT` | 3 s | §6.3 |
 | `EXPR_TIMEOUT` | 6 s | §6.3 |

@@ -1,28 +1,13 @@
 import asyncio
 
-from doomtp_bot.storage.db import (
-    Databases,
-    current_version,
-    execute,
-    fetch_all,
-    fetch_value,
-    load_migrations,
-    migrate,
-    transaction,
-)
+from doomtp_bot.storage import schema
+from doomtp_bot.storage.db import Databases, execute, fetch_all, fetch_value, schema_revision, transaction
 
 
-async def test_migrations_apply_and_are_idempotent(dbs: Databases) -> None:
-    assert await current_version(dbs.bot) == len(load_migrations("bot"))
-    assert await current_version(dbs.chatlog) == len(load_migrations("chatlog"))
-    # Running again is a no-op.
-    assert await migrate(dbs.bot, "bot") == len(load_migrations("bot"))
-
-
-async def test_each_migration_is_recorded_by_name(dbs: Databases) -> None:
-    """`PRAGMA user_version` held one number; the table keeps the whole history (ADR-0014)."""
-    rows = await fetch_all(dbs.bot, "SELECT version, name FROM schema_migrations ORDER BY version")
-    assert [r["name"] for r in rows] == [m.name for m in load_migrations("bot")]
+async def test_both_schemas_are_at_this_builds_head(dbs: Databases) -> None:
+    """Migrations themselves are tested in test_schema.py (ADR-0022)."""
+    assert await schema_revision(dbs.bot) == schema.head("bot")
+    assert await schema_revision(dbs.chatlog) == schema.head("chatlog")
 
 
 async def test_the_two_schemas_cannot_see_each_other(dbs: Databases) -> None:
