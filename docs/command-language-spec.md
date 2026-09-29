@@ -139,7 +139,7 @@ sum         = product , { ( "+" | "-" ) , product } ;
 product     = unary , { ( "*" | "//" | "/" | "%" ) , unary } ;
 unary       = "-" , unary | postfix ;
 postfix     = atom , { ":" , accessor | "[" , key , "]" } ;
-accessor    = "len" | "keys" | "values" | type ;
+accessor    = "len" | "keys" | "values" | "template" | type ;
 key         = ident | expression ;                          (* a bare word is a literal key *)
 atom        = number | string | "true" | "false" | "(" , expression , ")" | placeholder
             | bot_field | result_ref | arg_ref | "args" | path_ref | variable ;
@@ -174,7 +174,7 @@ ident       = ( letter | "_" ) , { letter | digit | "_" } ;
 | # | Operators | Associativity |
 |---|-----------|---------------|
 | 1 | literals, references, `( … )`, placeholders, `{! … }` | — |
-| 2 | `[ … ]`, `:len` `:keys` `:values` `:int` … | left |
+| 2 | `[ … ]`, `:len` `:keys` `:values` `:template` `:int` … | left |
 | 3 | unary `-` | right |
 | 4 | `*` `/` `//` `%` | left |
 | 5 | `+` `-` | left |
@@ -328,7 +328,7 @@ Lit(value: int | float | str | bool)
 Ref(root: str, path: list[str])      # $chatter.name, _, _2.code, arg.1, args, event.user.name
 VarRef(namespace: str, name: str, path: list[Expr])   # channel.stats[kills]; path only in store targets
 Index(target: Expr, key: Expr)       # x[key]
-Access(target: Expr, name: str, choices: list[str])   # :len :keys :values, or a type such as :int
+Access(target: Expr, name: str, choices: list[str])   # :len :keys :values :template, or a type such as :int
 Unary(op: "-" | "not", operand: Expr)
 Binary(op: "+" | "-" | "*" | "/" | "//" | "%" | "and" | "or" | "??", left: Expr, right: Expr)
 Compare(first: Expr, rest: list[tuple[op, Expr]])     # a < b <= c
@@ -654,6 +654,7 @@ A reference is **missing** when:
 - **Arithmetic** needs numbers. Numeric text counts as a number (`"10"` is 10), `true` and `false` don't. `+` also joins two lists. Anything else fails with 232 (`E_TYPE`). `/` always gives a float, `//` and `%` round toward minus infinity as in Python, and all three fail with 233 (`E_DIV_ZERO`) on zero. An int past 18 digits, or a float past the finite range, fails with 234 (`E_OVERFLOW`).
 - **Comparisons** are case-sensitive. `==`, `!=`, `<`, `<=`, `>`, `>=` compare as numbers when both sides are numbers, otherwise as rendered text (§7.6). Lists and maps are equal only to an equal list or map, and can't be ordered (232). `a in b` looks for an item of a list, a key of a map, or a piece of text; anything else is 232. Comparisons chain: `a < b < c` is `a < b and b < c` with `b` evaluated once.
 - **Accessors.** `:len` counts a list, a map or text. `:keys` and `:values` need a map (253 `E_NOT_A_MAP`). A type (`:int`, `:user`, …) converts per §7.4.
+- **`:template`** renders stored text as if it were the text of an argument: `{channel.customecho[uptime]:template ?? live for {$channel.uptime}}`. It needs text (232). The text may hold escapes and placeholders, and a `}` outside a placeholder is plain text. It may not hold `{!…}` or another `:template` (201 `E_BAD_PLACEHOLDER`): templates are written by moderators and read by everyone, so a template only reads. A placeholder in it with no value and no `??` of its own makes the whole template missing, so the outer `??` shows instead.
 - **Budget.** One run evaluates at most `MAX_EXPR_OPS (1000)` operators, accessors and index steps across all its expressions. The one that passes the limit fails with 235 (`E_EXPR_BUDGET`).
 - **No `eval`.** Expressions are evaluated by the language's own evaluator over the AST; nothing is handed to a host language.
 
@@ -1096,7 +1097,7 @@ Postfix         <- Atom (Accessor / '[' _ Key _ ']')*
 Key             <- !('_' Digit* _ ']') Ident &(_ ']')   # a bare word is a literal key
                  / Expression
 Accessor        <- ':' _ ( 'choice(' _ ChoiceItem (_ ',' _ ChoiceItem)* _ ')'
-                         / ('len' / 'keys' / 'values' / TypeName) !IdentChar
+                         / ('len' / 'keys' / 'values' / 'template' / TypeName) !IdentChar
                          / %E_UNKNOWN_OP )
 ChoiceItem      <- (!(',' / ')' / '}' / WSChar) .)+
 TypeName        <- 'str' / 'int' / 'float' / 'bool' / 'range' / 'duration' / 'user' / 'url'
@@ -1204,7 +1205,7 @@ Sum         ::= Product ( ( '+' | '-' ) Product )*
 Product     ::= Unary ( ( '*' | '/' | '//' | '%' ) Unary )*
 Unary       ::= '-' Unary | Postfix
 Postfix     ::= Atom ( ':' Accessor | '[' Key ']' )*
-Accessor    ::= 'len' | 'keys' | 'values' | Type
+Accessor    ::= 'len' | 'keys' | 'values' | 'template' | Type
 Key         ::= Identifier | Expression
 Atom        ::= Number | String | 'true' | 'false' | '(' Expression ')' | Placeholder | Reference
 Reference   ::= '$' BotRoot '.' Identifier

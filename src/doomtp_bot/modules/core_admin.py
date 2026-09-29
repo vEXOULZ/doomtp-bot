@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
-from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse
-from doomtp_bot.modules._common import actor, command_spec, need, policy_of, rank, user_arg
+from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse, parse_template
+from doomtp_bot.modules._common import actor, command_spec, need, policy_of, rank, reject_filtered, user_arg
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
     BOT_ADMIN_RANK,
@@ -27,12 +27,14 @@ from doomtp_bot.runtime.context import Args, Chatter, CommandContext
 from doomtp_bot.runtime.registry import Command, CommandRegistry, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
-from doomtp_bot.runtime.values import ConversionError, convert
+from doomtp_bot.runtime.values import MISSING, ConversionError, convert
 from doomtp_bot.runtime.variables import (
     LIMIT_FIELDS,
     OWNER_KINDS,
     LimitField,
+    WriteOp,
     format_size,
+    key_for,
     parse_size,
 )
 from doomtp_bot.webfetch.hosts import HostEntry, HostError, HostStore
@@ -592,6 +594,46 @@ async def _callback(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"set {kind} for {scope}")
 
 
+# ── !customecho ─────────────────────────────────────────────────────────────
+CUSTOMECHO_USAGE = "customecho show <command> | set <command> <template> | clear <command>"
+CUSTOMECHO = ("channel", "customecho")
+ECHO_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+@_handler
+async def _customecho(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """A channel's own wording for a readout, kept in `channel.customecho[<command>]` (ADR-0019). The
+    readout renders it with `:template`, so the placeholders are stored as typed, not filled in now."""
+    need(v, 2, CUSTOMECHO_USAGE)
+    action, name = v[0].lower(), v[1].lower().removeprefix(ctx.channel.prefix)
+    if not ECHO_NAME_RE.match(name):
+        raise CommandError(f"usage: {CUSTOMECHO_USAGE}")
+    key = key_for(ctx.exec, *CUSTOMECHO)
+    current = await ctx.variables.get(key)
+    stored = current.get(name) if isinstance(current, dict) else None
+    if action == "show":
+        if stored is None:
+            return Result.failure(Code.NOT_FOUND, f"{name} has no custom wording")
+        return Result.success(f"{name}: {stored}", stored)
+    if action == "clear":
+        if stored is None:
+            return Result.failure(Code.NOT_FOUND, f"{name} has no custom wording")
+        await ctx.variables.buffer(WriteOp("delete", key, path=(name,)))
+        return Result.success(f"{name} is back to its own wording")
+    if action != "set" or not args.raw_tail:
+        raise CommandError(f"usage: {CUSTOMECHO_USAGE}")
+    template = args.raw_tail.strip()
+    try:
+        parse_template(template)
+    except ParseError as exc:
+        raise CommandError(str(exc)) from exc
+    reject_filtered(ctx, template)
+    if current is not MISSING and not isinstance(current, dict):
+        raise CommandError("channel.customecho isn't a map: clear it with !var del channel.customecho")
+    await ctx.variables.buffer(WriteOp("set", key, template, (name,)))
+    return Result.success(f"{name} now says: {template}", template)
+
+
 def _make(name: str, summary: str, usage: str, fn: Any, required_role: str = "moderator") -> Command:
     example = Example(DEFAULT_PREFIX + usage.split(" |")[0], "")
     return command(_spec(name, summary, usage, required_role, examples=(example,)))(fn)
@@ -612,4 +654,20 @@ COMMANDS: tuple[Command, ...] = (
         _spec("callback", "Customize replies for cooldowns and denials", CALLBACK_USAGE),
         raw_tail_subcommands=(("set", 4),),
     )(_callback),
+    command(
+        _spec(
+            "customecho",
+            "Change what a readout command says",
+            CUSTOMECHO_USAGE,
+            writes=("channel.customecho",),
+            examples=(
+                Example(
+                    DEFAULT_PREFIX
+                    + "customecho set uptime {$channel.display} has been streaming {$channel.uptime}",
+                    "uptime now says: {$channel.display} has been streaming {$channel.uptime}",
+                ),
+            ),
+        ),
+        raw_tail_subcommands=(("set", 3),),
+    )(_customecho),
 )

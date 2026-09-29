@@ -208,5 +208,11 @@ def values(value: Any) -> list[Any]:
     return list(value.values())
 
 
+def template_text(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ExprError(ErrorCode.E_TYPE, f":template needs text, not {_describe(value)}")
+    return value
+
+
 BINARY_COMMANDS = {"add": "+", "sub": "-", "mul": "*", "div": "/", "idiv": "//", "mod": "%"}
 COMPARE_COMMANDS = {"eq": "==", "ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">=", "in": "in"}

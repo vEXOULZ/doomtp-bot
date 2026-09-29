@@ -159,7 +159,9 @@ Rejected again on 2026-09-28 in favour of the startup check.
    the name or the id, and `listen test <text>` shows what would fire without running it. Alembic
    revision 0006 moves `triggers` module toggles and callbacks to `automation`. `!trigger` keeps its old
    grammar and says it is going away.)*
-8. [ ] `customecho` and the `:template` accessor.
+8. [x] `customecho` and the `:template` accessor. *(2026-09-28: `!customecho` is moderator-only and
+   writes `channel.customecho[<command>]` itself, whatever `channel_var_write_role` says. A placeholder
+   in a template with no value makes the whole template missing, so the readout's own wording shows.)*
 9. [x] Quotes as a derived pack, the data migration, and the removal of the table. *(2026-09-28: the
    `quotes` pack in `scripts/starter_pack.py`; Alembic revision 0008 moves each channel's live quotes
    into the bot's `publisher.channel.quotes` (number → `{text, date, game?}`) and the last number given
