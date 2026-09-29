@@ -984,13 +984,20 @@ async def set_publication(
 # ── variables, logs and the audit trail ─────────────────────────────────────
 @router.get("/channels/{login}/variables")
 async def channel_variables(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """The channel's own variables. Writing them belongs to the runtime, where the access rules live."""
+    """The channel's own variables, with the login of whoever last set each when it's known."""
     settings = _channel(request, login)
     store = _state(request, "variable_store")
     entries = await store.entries(Space("channel", settings.channel_id, "", ""))
+    known = {c.channel_id: c.login for c in _policy(request).channels()}
     return {
         "variables": [
-            {"name": e.key.name, "value": e.value, "updated_at": e.updated_at, "updated_by": e.updated_by}
+            {
+                "name": e.key.name,
+                "value": e.value,
+                "updated_at": e.updated_at,
+                "updated_by": e.updated_by,
+                "updated_by_login": await _login_of(request, e.updated_by, known),
+            }
             for e in entries
         ]
     }
