@@ -8,6 +8,7 @@ Requires=docker.service
 Type=oneshot
 WorkingDirectory=/srv/doomtp-bot
 ExecStart=/srv/doomtp-bot/deploy/update.sh
-# The coverage check at the end exits 1 on a gap no backfill run closed, which leaves the unit failed on
+# The coverage check at the end waits up to five minutes for queued backfill jobs, then exits 1 on a gap
+# no backfill run closed, which leaves the unit failed on
 # purpose: `systemctl status doomtp-bot-update` is then the alarm. The bot itself is already running.
 TimeoutStartSec=15min

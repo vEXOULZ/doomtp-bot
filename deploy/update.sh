@@ -42,6 +42,7 @@ fi
 "${compose[@]}" up -d doomtp-bot
 docker image prune --force >/dev/null  # dangling images: after an update, the one it replaced
 
-# Give backfill its pass before asking what it covered.
+# Give the bot a minute to connect and queue its backfill jobs (ADR-0024 §5), then ask what they covered,
+# waiting up to five minutes for jobs still in the queue. That stays well inside the unit's TimeoutStartSec.
 sleep 60
-"${compose[@]}" --profile tools run --rm coverage
+"${compose[@]}" --profile tools run --rm coverage --wait 300

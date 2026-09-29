@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import time
 
-from doomtp_bot.storage.db import Databases
-from scripts.coverage import report
+import pytest
+
+import scripts.coverage
+from doomtp_bot.storage.db import Databases, fetch_value
+from scripts.coverage import main, report
 
 HOUR = 3_600_000
 NOW = int(time.time() * 1000)
@@ -38,9 +41,9 @@ async def test_it_names_the_gaps_backfill_never_closed(committed_database: tuple
         (NOW - 4 * HOUR, NOW - 3 * HOUR, NOW),
     )
 
-    lines, open_gaps = report(dsn, recent_days=7)
+    lines, open_gaps, waiting = report(dsn, recent_days=7)
 
-    assert open_gaps == 1
+    assert (open_gaps, waiting) == (1, 0)
     assert lines[0].startswith("alice: listening since ")
     assert lines[0].endswith("backfill on")
     assert lines[1].endswith(": filled")
@@ -56,9 +59,9 @@ async def test_gaps_are_counted_not_listed_where_backfill_is_off(
     await _session(dbs, "c2", NOW - 5 * HOUR, NOW - 4 * HOUR, "shutdown")
     await _session(dbs, "c2", NOW - 3 * HOUR, NOW - 2 * HOUR, "unclean_shutdown")
 
-    lines, open_gaps = report(dsn, recent_days=7)
+    lines, open_gaps, waiting = report(dsn, recent_days=7)
 
-    assert open_gaps == 0  # a channel that didn't ask for backfill can't fail the check
+    assert (open_gaps, waiting) == (0, 0)  # a channel that didn't ask for backfill can't fail the check
     assert len(lines) == 1
     assert "(unclean_shutdown), backfill off (1 gaps, none filled)" in lines[0]
 
@@ -72,8 +75,49 @@ async def test_old_gaps_and_silent_channels_stay_out_of_the_way(
     await _session(dbs, "c3", NOW - 800 * HOUR, NOW - 799 * HOUR, "shutdown")  # gap, but months ago
     await _channel(dbs, "c4", "dave", backfill=True)  # joined, never logged a line
 
-    lines, open_gaps = report(dsn, recent_days=7)
+    lines, open_gaps, waiting = report(dsn, recent_days=7)
 
-    assert open_gaps == 0
+    assert (open_gaps, waiting) == (0, 0)
     assert lines[-1] == "dave: never logged"
     assert not any("OPEN" in line for line in lines)
+
+
+async def _queued_gap(dbs: Databases) -> int:
+    """A channel with one gap that a queued backfill job is waiting to fill; the job's id."""
+    await _channel(dbs, "c5", "erin", backfill=True)
+    await _session(dbs, "c5", NOW - 5 * HOUR, NOW - 4 * HOUR, "shutdown")
+    await _session(dbs, "c5", NOW - 3 * HOUR, None, "")
+    job_id = await fetch_value(
+        dbs.chatlog,
+        "INSERT INTO backfill_jobs (channel_id, from_ms, to_ms, requested_by, requested_at)"
+        " VALUES ('c5', %s, %s, 'startup', %s) RETURNING id",
+        (NOW - 5 * HOUR, NOW - 3 * HOUR, NOW),
+    )
+    return int(job_id)
+
+
+async def test_a_gap_a_job_is_still_to_fill_says_so(committed_database: tuple[str, Databases]) -> None:
+    dsn, dbs = committed_database
+    job_id = await _queued_gap(dbs)
+
+    lines, open_gaps, waiting = report(dsn, recent_days=7)
+
+    assert (open_gaps, waiting) == (1, 1)
+    assert lines[1].endswith(f": OPEN — queued as backfill job #{job_id}")
+    assert lines[-1] == "1 gap(s) still open in the last 7 days, 1 waiting on backfill jobs"
+
+
+async def test_wait_gives_up_on_a_job_that_never_runs(
+    committed_database: tuple[str, Databases],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dsn, dbs = committed_database
+    await _queued_gap(dbs)
+    monkeypatch.setattr(scripts.coverage, "POLL_S", 0.1)
+
+    started = time.monotonic()
+    assert main(["--database-url", dsn, "--wait", "1"]) == 1
+
+    assert 1 <= time.monotonic() - started < 10
+    assert "waiting on backfill jobs" in capsys.readouterr().out

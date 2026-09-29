@@ -1,19 +1,22 @@
 """What the chat log covers, and whether the last restart left a hole (ADR-0008).
 
-Run it after a deploy, when the bot is back up and backfill has had its pass:
+Run it after a deploy, when the bot is back up and has queued its backfill:
 
     python scripts/coverage.py --database-url postgresql://doomtp@postgres/doomtp
-    docker compose --profile tools run --rm coverage
+    docker compose --profile tools run --rm coverage --wait 300
 
 It reads both schemas and prints, per channel, how the last session ended and every gap
-between sessions that no complete backfill run covers. Exit code 1 means a gap is still open in a
-channel that asked for backfill — the deploy runbook in the README says what to do about it.
+between sessions that no complete backfill run covers. A gap a backfill job is still waiting to fill
+(ADR-0024 §5) is open too, and says so; `--wait` checks again until no gap is waiting or the time is up.
+Exit code 1 means a gap is still open in a channel that asked for backfill — the deploy runbook in the
+README says what to do about it.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Sequence
 from contextlib import closing
 from datetime import UTC, datetime
@@ -25,6 +28,7 @@ from doomtp_bot.config import Settings
 from doomtp_bot.history.backfill import gaps_between
 
 RECENT_DEFAULT = 7
+POLL_S = 5
 
 
 def _open(dsn: str, schema: str) -> psycopg.Connection[dict[str, object]]:
@@ -65,6 +69,13 @@ def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap:
         " WHERE channel_id = %s AND gap_from = %s AND gap_to = %s ORDER BY at DESC LIMIT 1",
         (channel_id, *gap),
     ).fetchone()
+    job = chatlog.execute(
+        "SELECT id, state FROM backfill_jobs WHERE channel_id = %s AND from_ms <= %s AND to_ms >= %s"
+        " AND state IN ('queued', 'running') ORDER BY id LIMIT 1",
+        (channel_id, *gap),
+    ).fetchone()
+    if job is not None and not (row is not None and row["complete"] and not row["error"]):
+        return f"{job['state']} as backfill job #{job['id']}"
     if row is None:
         return "no backfill run"
     if row["error"]:
@@ -74,12 +85,13 @@ def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap:
     return ""
 
 
-def report(dsn: str, recent_days: int) -> tuple[list[str], int]:
-    """The lines to print, and how many gaps are still open in channels that asked for backfill."""
+def report(dsn: str, recent_days: int) -> tuple[list[str], int, int]:
+    """The lines to print, how many gaps are still open in channels that asked for backfill, and how many
+    of those a backfill job is still to fill."""
     lines: list[str] = []
     say = lines.append
     since_ms = int(datetime.now(UTC).timestamp() * 1000) - recent_days * 86_400_000
-    open_gaps = 0
+    open_gaps = waiting = 0
     with closing(_open(dsn, "bot")) as bot, closing(_open(dsn, "chatlog")) as chatlog:
         channels = bot.execute(
             "SELECT channel_id, login, history_backfill FROM channels WHERE active ORDER BY login"
@@ -106,10 +118,12 @@ def report(dsn: str, recent_days: int) -> tuple[list[str], int]:
                 why = filled(chatlog, channel["channel_id"], gap)
                 where = f"  {_when(gap[0])} + {_duration(gap[1] - gap[0])}"
                 open_gaps += bool(why)
+                waiting += " as backfill job #" in why
                 say(f"{where}: OPEN — {why}" if why else f"{where}: filled")
     if open_gaps:
-        say(f"{open_gaps} gap(s) still open in the last {recent_days} days")
-    return lines, open_gaps
+        queued = f", {waiting} waiting on backfill jobs" if waiting else ""
+        say(f"{open_gaps} gap(s) still open in the last {recent_days} days{queued}")
+    return lines, open_gaps, waiting
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -125,10 +139,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=RECENT_DEFAULT,
         help=f"how far back to look for gaps (default {RECENT_DEFAULT})",
     )
+    parser.add_argument(
+        "--wait",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="while a backfill job is still to fill a gap, check again for up to this long (default 0)",
+    )
     args = parser.parse_args(argv)
     dsn = args.database_url or Settings().database_dsn()
+    deadline = time.monotonic() + args.wait
     try:
-        lines, open_gaps = report(dsn, args.days)
+        lines, open_gaps, waiting = report(dsn, args.days)
+        while waiting and time.monotonic() < deadline:
+            time.sleep(POLL_S)
+            lines, open_gaps, waiting = report(dsn, args.days)
     except psycopg.OperationalError as exc:
         print(f"cannot reach the database: {exc}", file=sys.stderr)
         return 2
