@@ -8,6 +8,8 @@ Entries are held in memory per scope and rebuilt on write, the same shape as the
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import structlog
 
 from doomtp_bot.audit.log import write_audit
@@ -149,6 +151,52 @@ class FilterService:
         if cur.rowcount:
             await self.reload()
         return bool(cur.rowcount)
+
+    async def update(
+        self,
+        *,
+        channel_id: str,
+        entry_id: int,
+        fields: dict[str, str],
+        actor_user_id: str | None,
+        via: str,
+    ) -> FilterEntry | None:
+        """Change an entry's pattern, kind, action, category or replacement, checked as `add` checks a new
+        one. None when there's no such entry in `channel_id`. Audited as `filter.edit`, before and after."""
+        current = next((e for e in self._entries.get(channel_id, ()) if e.id == entry_id), None)
+        if current is None:
+            return None
+        unknown = set(fields) - {"pattern", "kind", "action", "category", "replacement"}
+        if unknown:
+            raise FilterError(f"can't change {', '.join(sorted(unknown))}")
+        entry = replace(current, **fields)  # type: ignore[arg-type]
+        if entry.kind not in KINDS:
+            raise FilterError(f"kind must be one of: {', '.join(KINDS)}")
+        if entry.action not in ACTIONS:
+            raise FilterError(f"action must be one of: {', '.join(ACTIONS)}")
+        _compile(entry)
+        changed = {k: v for k, v in fields.items() if getattr(current, k) != v}
+        if not changed:
+            return current
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE filters SET pattern = %s, kind = %s, action = %s, category = %s, replacement = %s"
+                " WHERE id = %s AND channel_id = %s",
+                (entry.pattern, entry.kind, entry.action, entry.category or None, entry.replacement or None,
+                 entry_id, channel_id),
+            )  # fmt: skip
+            await write_audit(
+                self.conn,
+                action="filter.edit",
+                actor_user_id=actor_user_id,
+                via=via,
+                channel_id=channel_id,
+                target=str(entry_id),
+                before={k: getattr(current, k) for k in changed},
+                after=changed,
+            )
+        await self.reload()
+        return entry
 
     async def set_enabled(
         self, *, channel_id: str, entry_id: int, enabled: bool, actor_user_id: str | None, via: str

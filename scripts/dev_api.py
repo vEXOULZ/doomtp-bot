@@ -14,7 +14,8 @@ There is no Twitch sign-in either, so the signed-in views (ADR-0017, ADR-0026) c
 `/dev/login-as?user=<login>` instead, a session made exactly as the sign-in makes one, for any made-up user:
   * a channel's own login (vexoulz, doomtp) is its broadcaster;
   * a user named with `--moderator` (alice, of vexoulz, by default) moderates those channels;
-  * anyone else (friendlychannel, whose channel the bot isn't in yet) is a plain user.
+  * anyone else is a plain user: newcomer, whose channel the bot isn't in yet, or friendlychannel, whose
+    channel banned the bot.
 That route is added here, to this script's app, and exists nowhere else.
 """
 
@@ -54,7 +55,14 @@ from doomtp_bot.variables.store import PostgresVariableStore
 SERVER = "postgresql://postgres:postgres@127.0.0.1:55432"
 SETUP = Actor(None, "system")
 # Made-up Twitch users: the channels below, and a few people to ignore, join or explain as.
-USERS = {"vexoulz": "1001", "doomtp": "1002", "friendlychannel": "1003", "alice": "2001", "pest": "2002"}
+USERS = {
+    "vexoulz": "1001",
+    "doomtp": "1002",
+    "friendlychannel": "1003",
+    "newcomer": "1004",
+    "alice": "2001",
+    "pest": "2002",
+}
 JOINED = ("vexoulz", "doomtp")
 DEFAULT_MODERATORS = ("alice:vexoulz",)
 

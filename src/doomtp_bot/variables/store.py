@@ -94,6 +94,26 @@ class PostgresVariableStore:
                 for r in await cur.fetchall()
             ]
 
+    async def entries_of_user(self, user_id: str, limit: int = 1000) -> list[Entry]:
+        """Everything one user owns: their `chatter.*`, their `channel.chatter.*` in every channel, and the
+        `publisher.*` spaces of their commands. For their own page (ADR-0026)."""
+        async with await self.conn.execute(
+            "SELECT ns, key1, key2, key3, name, value, updated_at, updated_by FROM variables"
+            " WHERE (key1 = %s AND (ns = 'chatter' OR ns LIKE 'publisher%%'))"
+            " OR (ns = 'channel.chatter' AND key2 = %s)"
+            " ORDER BY ns, key1, key2, key3, name LIMIT %s",
+            (user_id, user_id, limit),
+        ) as cur:
+            return [
+                Entry(
+                    VarKey(r["ns"], r["key1"], r["key2"], r["key3"], r["name"]),
+                    json.loads(r["value"]),
+                    r["updated_at"],
+                    r["updated_by"],
+                )
+                for r in await cur.fetchall()
+            ]
+
     async def top(self, ns: str, key1: str, key2: str, name: str, limit: int = 10) -> list[tuple[str, Any]]:
         """Leaderboard over the chatter-keyed column of a space prefix, numeric values only, highest first."""
         column = CHATTER_KEY.get(ns)

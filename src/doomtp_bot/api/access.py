@@ -78,16 +78,16 @@ class Caller:
     def rank_in(self, policy: Any, login: str) -> int:
         """The rank chat would give the caller in `login` (ADR-0026): their Twitch role there as a badge,
         raised by any custom role they hold. An admin has the bot-admin rank (a bot owner, the owner's)
-        everywhere; a channel the caller doesn't manage gives 0."""
+        everywhere. In a channel the caller doesn't manage only a custom role counts (a subscriber or VIP
+        badge isn't known outside chat); an unknown channel, or a caller without a user, gives 0."""
         if self.is_admin:
             return BOT_OWNER_RANK if self.user_id in getattr(policy, "owners", ()) else BOT_ADMIN_RANK
         role = self.channel_role(policy, login)
         settings = policy.channel_by_login(login)
-        if role is None or settings is None or self.user_id is None:
+        if settings is None or self.user_id is None:
             return 0
-        chatter = policy.build_chatter(
-            settings.channel_id, self.user_id, self.login or "", badges=frozenset({role})
-        )
+        badges = frozenset({role}) if role is not None else frozenset[str]()
+        chatter = policy.build_chatter(settings.channel_id, self.user_id, self.login or "", badges=badges)
         return int(chatter.rank)
 
 
@@ -171,6 +171,19 @@ def check_rank(request: Request, caller: Caller, login: str, min_rank: int, what
     if caller.rank_in(policy, login) < min_rank:
         who = RANK_NAMES.get(min_rank, f"rank {min_rank}")
         raise HTTPException(status_code=403, detail=f"only {who} can {what} in {login}")
+
+
+def check_setting_role(request: Request, caller: Caller, login: str, setting: str, what: str) -> None:
+    """403 unless the caller reaches the role a channel setting names (`publish_min_role` and the like),
+    as `cc` and `!var` check it in chat; a bot admin always does. An unknown channel passes (404 later)."""
+    policy = getattr(request.app.state, "policy", None)
+    settings = None if policy is None else policy.channel_by_login(login)
+    if caller.is_admin or policy is None or settings is None:
+        return
+    role = getattr(settings, setting)
+    required = policy.rank_of(settings.channel_id, role)
+    if required is None or caller.rank_in(policy, login) < required:
+        raise HTTPException(status_code=403, detail=f"only {role} or above can {what} in {settings.login}")
 
 
 def require(
