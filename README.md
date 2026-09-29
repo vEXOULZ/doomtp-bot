@@ -511,6 +511,13 @@ docker compose exec -T postgres psql -U doomtp -d doomtp -c 'DROP SCHEMA bot CAS
 docker compose exec -T postgres pg_restore -U doomtp -d doomtp < data/backups/bot-20260922T041500Z.dump
 ```
 
+Into a new, empty database (a rebuilt server), create the one extension first. The `chatlog` dump uses
+`unaccent`, which lives in `public` and so isn't in either archive:
+
+```bash
+docker compose exec -T postgres psql -U doomtp -d doomtp -c 'CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public'
+```
+
 The archives are in `custom` format, so `pg_restore --list` shows what is in one and `--table=` pulls a
 single table out without touching the rest. Keep a copy off the host: the backups sit on the same disk as
 the originals, so they survive mistakes, not drive failures.
