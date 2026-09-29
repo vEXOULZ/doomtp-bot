@@ -385,7 +385,7 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
 
 
 def _going_away(sign: str) -> str:
-    return f" — {sign}trigger is going away: use {sign}listen or {sign}event"
+    return f". {sign}trigger is going away: use {sign}listen or {sign}event"
 
 
 COMMANDS: tuple[Command, ...] = (listen_cmd, event_cmd, timer_cmd, trigger_cmd)

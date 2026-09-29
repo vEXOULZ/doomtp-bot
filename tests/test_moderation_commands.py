@@ -309,7 +309,7 @@ async def test_a_raid_is_the_broadcasters_alone(h: Harness) -> None:
     await h.moderator_here(True, RAIDS)
     assert (await h.run("mod", "!raid @friend")).result.code == Code.DENIED
     report = await h.run("doomtp", "!raid @friend")
-    assert report.send == "raiding Friend — Twitch sends it after the countdown"
+    assert report.send == "raiding Friend, Twitch sends it after the countdown"
     assert h.twitch.actions[-1] == ("start_raid", (CHANNEL_ID, "600"))
 
 

@@ -269,7 +269,7 @@ async def _usage(ctx: CommandContext, ns: str) -> Result:
     detail = ", ".join(f"{name} {format_size(size)}" for name, size in sorted(used.items()))
     return Result.success(
         f"{kind} storage: {format_size(total)} of {format_size(quota)}{percent}"
-        + (f" — {detail}" if len(used) > 1 else ""),
+        + (f"; {detail}" if len(used) > 1 else ""),
         {"owner": kind, "used": total, "quota": quota, "namespaces": used},
     )
 

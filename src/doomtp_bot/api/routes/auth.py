@@ -72,7 +72,7 @@ async def callback(
         account = await auth.complete(code, state, error)
     except OAuthError as exc:
         return _page(
-            "Authorization failed", html.escape(str(exc)) + " — <a href='/auth/login'>try again</a>", 400
+            "Authorization failed", html.escape(str(exc)) + ". <a href='/auth/login'>try again</a>", 400
         )
     if account.flow == "broadcaster":
         granted = ", ".join(sorted(account.scopes)) or "nothing"

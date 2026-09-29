@@ -190,7 +190,7 @@ class TwitchAuth:
         scopes = tuple(info.get("scopes") or token.get("scope") or ())
         if not set(scopes) & set(BROADCASTER_SCOPES):
             raise OAuthError(
-                "nothing was granted, so the channel stays as it was — start again and accept the"
+                "nothing was granted, so the channel stays as it was. Start again and accept the"
                 " permissions you want the bot to have"
             )
         if not token.get("refresh_token"):

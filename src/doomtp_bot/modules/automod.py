@@ -78,7 +78,7 @@ async def automod_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         patterns = ", ".join(result.patterns())
         would = "delete it" if action != "timeout" else f"delete it and time them out for {seconds}s"
         if action == "off":
-            would = "do nothing — automod is off"
+            would = "do nothing, since automod is off"
         return Result.success(f"blocked by {patterns}: automod would {would}", {"blocked": True})
 
     wanted = "delete" if values[0] == "on" else values[0]

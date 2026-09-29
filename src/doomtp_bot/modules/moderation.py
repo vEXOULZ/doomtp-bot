@@ -125,7 +125,7 @@ async def timeout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
 
     ctx.ensure_not_cancelled()  # the last look before Twitch acts (architecture §4.3)
     if not await twitch.timeout_user(ctx.channel.id, user["id"], seconds, reason):
-        raise CommandError("Twitch refused the timeout — is the bot still a moderator here?")
+        raise CommandError("Twitch refused the timeout. Is the bot still a moderator here?")
     return Result.success(
         f"{_name(user)} is timed out for {_span(seconds)}", {"user": user["name"], "seconds": seconds}
     )
@@ -512,7 +512,7 @@ async def marker_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         requires=(RAIDS,),
         side_effects=True,
         log_level=LogLevel.INVOCATIONS,
-        examples=(Example("{sign}raid @friend", "raiding Friend — Twitch sends it after the countdown"),),
+        examples=(Example("{sign}raid @friend", "raiding Friend, Twitch sends it after the countdown"),),
     )
 )
 async def raid_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
@@ -521,7 +521,7 @@ async def raid_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         raise CommandError("that's this channel")
     await _act(ctx, lambda t: t.start_raid(ctx.channel.id, user["id"]))
     return Result.success(
-        f"raiding {_name(user)} — Twitch sends it after the countdown", {"user": user["name"]}
+        f"raiding {_name(user)}, Twitch sends it after the countdown", {"user": user["name"]}
     )
 
 

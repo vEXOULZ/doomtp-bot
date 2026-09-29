@@ -198,7 +198,7 @@ async def test_var_usage_counts_every_namespace_of_the_owner(h: Harness) -> None
         ctx,
     )
     report = await h.run("alice", "!var usage channel.chatter")
-    assert report.send == "channel storage: 2.1 KB of 1 MB (0%) — channel 100 B, channel.chatter 2 KB"
+    assert report.send == "channel storage: 2.1 KB of 1 MB (0%); channel 100 B, channel.chatter 2 KB"
     assert report.result is not None and report.result.data == {
         "owner": "channel",
         "used": 2148,

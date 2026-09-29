@@ -236,7 +236,7 @@ async def test_help_links_the_channel_page_when_the_site_is_set(h: Harness) -> N
     h.clock.now += 100
     report = await h.say("viewer", "!help")
     assert report is not None and report.send is not None
-    assert report.send.endswith(f" — more at https://site.example/channels/{CHANNEL_LOGIN}")
+    assert report.send.endswith(f"; more at https://site.example/channels/{CHANNEL_LOGIN}")
 
 
 @pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)

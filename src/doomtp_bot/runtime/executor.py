@@ -306,7 +306,7 @@ class Executor:
         except (MissingValue, ExprError, SubstFailed) as exc:
             result = expression_failure(exc)
         except UsageError as exc:
-            result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} — {exc}")
+            result = Result.failure(Code.USAGE, f"usage: {ctx.channel.prefix}{spec.usage()} ({exc})")
         else:
             typed = ScopeArgs.typed(values, params, inv.sources, expanded)
             args = Args(values, params, inv.raw_tail, typed.raw_text, typed.raw_offsets)

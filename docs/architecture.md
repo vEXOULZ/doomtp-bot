@@ -567,9 +567,9 @@ A **race window** remains: a mod can act after the message has already been sent
 
 | Tier | How the channel gets it | What works |
 |------|-------------------------|------------|
-| **basic** | A bot owner or admin runs `!join <channel>`, or the broadcaster types `!join` in the bot's own channel. **No broadcaster OAuth.** | Chat, deletes, clears and chat notifications (subs, resubs, gifts, raids, announcements), reading and sending chat, commands, the log, variables and custom commands. Stream online/offline comes from Helix polling (see ADR-0007). |
+| **basic** | A bot owner or admin runs `!join basic <channel>`. **No broadcaster OAuth.** | Chat, deletes, clears and chat notifications (subs, resubs, gifts, raids, announcements), reading and sending chat, commands, the log, variables and custom commands. Stream online/offline comes from Helix polling (see ADR-0007). |
 | **moderator** | The broadcaster mods the bot | Everything in basic, plus timeouts, bans and deletes by the bot, higher send limits, follows, `channel.moderate` details (who, why), the `automod` module and the `moderation` module (`!timeout`, `!ban`, `!unban`, `!warn`, `!shoutout`, `!announce`, `!chatmode`, `!clear`, `!shield`, `!delete`, `!pin`, `!unpin`) |
-| **full** | The broadcaster completes OAuth at `/auth/connect` | Everything in moderator, plus channel point redemptions, subscription and cheer event details, the chat bot badge (`channel:bot`) and other broadcaster-scoped features |
+| **full** | The broadcaster completes OAuth at `/auth/connect`, the link `!join` answers with in the bot's own channel; completing it joins the channel | Everything in moderator, plus channel point redemptions, subscription and cheer event details, the chat bot badge (`channel:bot`) and other broadcaster-scoped features |
 
 - The **CapabilityProbe** runs at join and hourly, and updates `channels.capabilities` and `channels.tier`. It measures mod status by *asking for* the moderator-only `channel.follow` subscription: no endpoint tells the bot's own token whether it is a mod without a scope the broadcaster would have to grant anyway, and that subscription is what a follow trigger needs in any case. What the broadcaster granted (redemptions, subs, bits) is never taken away by a probe — only the broadcaster flow (ADR-0007 item 5) sets it.
 - **The broadcaster flow** (`/auth/connect`) is one link a broadcaster follows. It asks for `channel:bot`, `channel:read:redemptions`, `channel:read:subscriptions`, `bits:read`, `channel:manage:broadcast` and `channel:manage:raids`, and none of them is required: whatever comes back becomes that channel's capabilities, and the rest stays unavailable with a reason. The token is stored as `broadcaster:<user_id>` alongside the bot's own, the channel is joined if it wasn't, and the redemption and cheer subscriptions are created with it. Both OAuth flows return to the one `/auth/callback` Twitch has registered, and are told apart by the `state` — which is doing its anti-forgery job at the same time. At startup, every stored broadcaster token is handed back to the Twitch client and its subscriptions are recreated.
@@ -603,9 +603,9 @@ A **race window** remains: a mod can act after the message has already been sent
     actor (so the audit log has it) with `status='banned'` rather than `parted`. The rest of that message
     is not sent. The bot's own channel is never left this way: nobody can be banned from their own chat,
     so a 403 there is logged as a token problem. The flag shows on the web admin and as `banned` in
-    `/api/v1/channels`, and coming back is deliberate: `!join <channel> rejoin` for a bot admin, the
+    `/api/v1/channels`, and coming back is deliberate: `!join basic <channel> rejoin` for a bot admin, the
     web admin's rejoin button, `"rejoin": true` on `POST /api/v1/channels` (409 without it), or the
-    broadcaster inviting the bot again themselves (`!join` in the bot's chat, or `/auth/connect`).
+    broadcaster inviting the bot again themselves (through `/auth/connect`, which `!join` in the bot's chat links to).
   - Never send unsolicited messages in basic-tier channels. Timers and alerts there require an explicit opt-in by a mod.
 - **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (opt-in), `log_enabled`, `quiet_errors`, `cc_edit_notice` (off by default) and the callback defaults.
 - **Prefix validation:** a prefix can't start with `/` or `.`, because Twitch clients treat those as chat commands. Its length is 1–3 characters and it can't contain whitespace.

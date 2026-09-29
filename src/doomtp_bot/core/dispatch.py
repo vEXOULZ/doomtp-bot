@@ -299,7 +299,7 @@ class Dispatcher:
             if settings is not None and settings.cc_edit_notice and seen not in (None, target.version):
                 await self.outbox.send(
                     msg.channel_id,
-                    f"heads up: {target.publication} changed since v{seen} —"
+                    f"heads up: {target.publication} changed since v{seen},"
                     f" @{command.owner_login} edited it (now v{target.version})",
                 )
             await self.customcmds.touch_run(publication, target.version)
