@@ -394,6 +394,8 @@ async def run(settings: Settings) -> None:
             "health": health,
             "channels": channels,
             "twitch": twitch,
+            "variable_access": access,
+            "capabilities": probe,
             "variable_store": store,
             "http_hosts": http_hosts,
             "bot_db": dbs.bot,

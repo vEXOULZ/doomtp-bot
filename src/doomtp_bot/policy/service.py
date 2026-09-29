@@ -329,6 +329,14 @@ class PolicyService:
         return Decision.allow()
 
     # ── callbacks (ADR-0006 §3) ─────────────────────────────────────────────
+    def callbacks_in(self, channel_id: str) -> dict[tuple[str, str], str]:
+        """One scope's callbacks (a channel, or `GLOBAL`) as {(scope, kind): expr}, without the other."""
+        return {(s, k): e for (ch, s, k), e in self._snapshot.callbacks.items() if ch == channel_id}
+
+    def global_admin_ids(self) -> frozenset[str]:
+        """The bot admins added with `!admin add`; the owners (`BOT_OWNER_IDS`) are `owners`."""
+        return self._snapshot.global_admins
+
     def callback_expr(
         self, ctx: ExecContext, command: str | None, module: str | None, kind: str
     ) -> str | None:

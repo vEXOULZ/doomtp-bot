@@ -132,6 +132,10 @@ def match_fields(pattern: Pattern, text: str) -> dict[str, Any] | None:
     return fields
 
 
+def _plain(value: Any) -> Any:
+    return value.value if isinstance(value, LogLevel) else value
+
+
 class TriggerService:
     """Storage plus an in-memory copy, like the policy snapshot."""
 
@@ -279,6 +283,68 @@ class TriggerService:
         await self.reload()
         found = next(t for t in self.in_channel(channel_id) if t.id == int(trigger_id or 0))
         return found
+
+    async def update(
+        self,
+        *,
+        channel_id: str,
+        trigger_id: int,
+        expr: str | None = None,
+        match: dict[str, Any] | None = None,
+        schedule: dict[str, Any] | None = None,
+        run_as_rank: int | None = None,
+        log_level: LogLevel | None = None,
+        actor_user_id: str | None,
+        prefix: str,
+        via: str,
+    ) -> Trigger | None:
+        """Change a trigger in place, checked as `add` checks a new one; a field left None stays. Its type
+        can't change. None when there's no such trigger in `channel_id`. Audited as `trigger.edit`."""
+        current = next((t for t in self.in_channel(channel_id) if t.id == trigger_id), None)
+        if current is None:
+            return None
+        new: dict[str, Any] = {
+            "expr": current.expr if expr is None else expr,
+            "match": current.match if match is None else match,
+            "schedule": current.schedule if schedule is None else schedule,
+            "run_as_rank": current.run_as_rank if run_as_rank is None else run_as_rank,
+            "log_level": current.log_level if log_level is None else log_level,
+        }
+        if current.type == "listener":
+            compile_listener(str(new["match"].get("regex", "")))
+        if current.type == "timer" and not new["schedule"].get("every_s"):
+            raise TriggerError("a timer needs an interval, e.g. every 15m")
+        if current.type == "cron":
+            try:
+                parse_cron(str(new["schedule"].get("cron", "")))
+            except CronError as exc:
+                raise TriggerError(str(exc)) from exc
+        if expr is not None:
+            context = Context.LISTENER if current.type == "listener" else Context.TRIGGER
+            self._check_expression(channel_id, expr, context, prefix)
+        before = {k: getattr(current, k) for k in new}
+        changed = {k: v for k, v in new.items() if before[k] != v}
+        if not changed:
+            return current
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE triggers SET expr = %s, match = %s, schedule = %s, run_as_rank = %s, log_level = %s,"
+                " syntax_version = %s, updated_at = %s WHERE id = %s AND channel_id = %s",
+                (new["expr"], json.dumps(new["match"]), json.dumps(new["schedule"]), new["run_as_rank"],
+                 new["log_level"].value, SYNTAX_VERSION, now_ms(), trigger_id, channel_id),
+            )  # fmt: skip
+            await write_audit(
+                self.conn,
+                action="trigger.edit",
+                actor_user_id=actor_user_id,
+                via=via,
+                channel_id=channel_id,
+                target=f"{current.type}:{trigger_id}",
+                before={k: _plain(before[k]) for k in changed},
+                after={k: _plain(v) for k, v in changed.items()},
+            )
+        await self.reload()
+        return next(t for t in self.in_channel(channel_id) if t.id == trigger_id)
 
     async def remove(self, *, channel_id: str, trigger_id: int, actor_user_id: str | None, via: str) -> bool:
         async with transaction(self.conn):
