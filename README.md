@@ -437,6 +437,10 @@ back to that data. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR
 An image from before ADR-0022 has no migrate step. After rolling back to one, start it with `up -d --no-deps
 doomtp-bot`, not a bare `up -d`, which would run the step and fail.
 
+Both scripts use `compose.yaml` and `compose.prod.yaml`. A server with an override file of its own lists
+all of them in `COMPOSE_FILE` in `.env` (`COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.local.yaml`),
+which the scripts and a bare `docker compose` both read, so a rollback keeps the override.
+
 ### If something is wrong
 
 | Symptom | Cause |
