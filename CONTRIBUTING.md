@@ -94,6 +94,14 @@ Merging into `dev` deploys nothing. Production changes only when a release reach
    gh release create vX.Y.Z --target main --generate-notes
    ```
 
+4. Merge `main` back into `dev`. The release's merge commit exists only on `main`, and `main` accepts
+   a pull request only from a branch that is up to date with it, so without this the next release
+   pull request shows as out of date.
+
+   ```bash
+   gh pr create --base dev --head main --title "Bring release vX.Y.Z back into dev"
+   ```
+
 To roll back, set `BOT_IMAGE` on the server to the previous `:vX.Y.Z` and run the update unit (README).
 
 **A hotfix** branches from `main` (`hotfix/…`), merges into `main`, and then `main` merges back into
