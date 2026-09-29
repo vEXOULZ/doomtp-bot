@@ -10,19 +10,23 @@ The CLI cannot trigger `channel.chat.*`, so chat messages and notices are not co
 
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from twitchio import eventsub
 from twitchio.eventsub.subscriptions import _SUB_MAPPING
+from twitchio.eventsub.websockets import Websocket
 from twitchio.models.eventsub_ import create_event_instance
 
-from doomtp_bot.core.events import ChatNotification
+from doomtp_bot.core.events import ChatNotification, Event
+from doomtp_bot.twitch import client as client_module
 from doomtp_bot.twitch import mapping
-from doomtp_bot.twitch.client import _BotClient
+from doomtp_bot.twitch.client import TwitchService, _BotClient
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "eventsub"
 #: What the bot subscribes to, and the handler TwitchIO is expected to call for it.
@@ -104,3 +108,28 @@ def test_an_anonymous_cheer_names_nobody() -> None:
 
     assert event.user_id is None and event.payload["user"] is None
     assert event.payload["anonymous"] and event.payload["system_message"] == "someone cheered 250 bits"
+
+
+@pytest.mark.parametrize("subscription_type", [s.type for s, _ in SUBSCRIPTIONS])
+async def test_the_event_json_reaches_the_sink_as_twitch_sent_it(subscription_type: str) -> None:
+    """ADR-0024 item 2. TwitchIO parses a notification into models and drops its JSON; the adapter wraps
+    `Websocket._process_notification`, the one place it is still whole. A TwitchIO upgrade that renames
+    that method, or stops running handlers in tasks it creates there, fails here."""
+    received: asyncio.Queue[Event] = asyncio.Queue()
+
+    async def sink(event: Event) -> None:
+        received.put_nowait(event)
+
+    service = TwitchService(client_id="c", client_secret="s", tokens=None, sink=sink)  # type: ignore[arg-type]
+    client = _BotClient(service, client_id="c", client_secret="s", bot_id="80730642")
+    socket = SimpleNamespace(_client=client, _http=None)
+    recorded = envelope(subscription_type)
+    try:
+        await Websocket._process_notification(socket, deepcopy(recorded))  # type: ignore[arg-type]
+        event = await asyncio.wait_for(received.get(), 5)
+    finally:
+        await client.close(save_tokens=False)
+
+    assert isinstance(event, ChatNotification)
+    assert event.raw_event == recorded["payload"]["event"]
+    assert client_module._RAW_EVENT.get() is None  # nothing is left behind for the next notification

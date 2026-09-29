@@ -98,11 +98,11 @@ def test_legacy_revisions_keep_schema_migrations_in_step(empty_database: str) ->
 
 
 def test_a_database_from_before_alembic_is_adopted(empty_database: str) -> None:
-    """The SQL runner's database: the tables of its last file (0005), `schema_migrations` rows and no
+    """The SQL runner's database: the tables of its last files (bot 0005, chatlog 0001), `schema_migrations` rows and no
     `alembic_version`. Adopted there, it takes the later revisions like any other database."""
     schema.upgrade(empty_database)
     before = _catalog(empty_database)
-    schema.downgrade(empty_database, {"bot": "0005"})
+    schema.downgrade(empty_database, {"bot": "0005", "chatlog": "0001"})
     with psycopg.connect(empty_database) as conn:
         conn.execute("DROP TABLE bot.alembic_version")
         conn.execute("DROP TABLE chatlog.alembic_version")

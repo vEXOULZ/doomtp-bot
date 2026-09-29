@@ -203,6 +203,7 @@ async def test_the_welcome_names_a_session_and_events_reach_the_sink(
     followed = await listener.next_notification("follow")
     assert followed.channel_id == BROADCASTER and followed.user_id == BOT
     assert followed.payload["system_message"] == "testFromUser followed"
+    assert followed.raw_event is not None and followed.raw_event["user_id"] == BOT  # kept whole (ADR-0024)
 
 
 async def test_a_reconnect_message_moves_the_session_without_losing_events(

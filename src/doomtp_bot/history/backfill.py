@@ -101,7 +101,7 @@ def to_events(
             reply_parent_login=line.tag("reply-parent-user-login") or None,
             reply_parent_display=line.tag("reply-parent-display-name") or None,
             source="recent-messages",
-            raw=raw,
+            raw_line=raw,
         )
     if line.command == "CLEARMSG":
         return MessageDeleted(
@@ -110,12 +110,15 @@ def to_events(
             target_user_id=line.tag("target-user-id") or line.tag("login"),
             at=sent_at,
             source="recent-messages",
+            raw_line=raw,
         )
     if line.command == "CLEARCHAT":
         target = line.params[1] if len(line.params) > 1 else ""
         if target:
-            return UserCleared(channel_id, line.tag("target-user-id") or target, sent_at, "recent-messages")
-        return ChatCleared(channel_id, sent_at, "recent-messages")
+            return UserCleared(
+                channel_id, line.tag("target-user-id") or target, sent_at, "recent-messages", raw_line=raw
+            )
+        return ChatCleared(channel_id, sent_at, "recent-messages", raw_line=raw)
     if line.command == "USERNOTICE":
         return ChatNotification(
             id=line.tag("id"),
@@ -125,6 +128,7 @@ def to_events(
             payload={k: v for k, v in line.tags.items() if k.startswith("msg-param") or k == "system-msg"},
             sent_at=sent_at,
             source="recent-messages",
+            raw_line=raw,
         )
     return None
 
