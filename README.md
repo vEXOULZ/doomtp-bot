@@ -472,7 +472,9 @@ To work on the site without Twitch, run `scripts/dev_api.py` here. It serves the
 data, and doomtp-web's `npm run dev` forwards to it. Its README has the details.
 
 **Admin sign-in.** Bot owners and admins sign in with Twitch, and so do broadcasters and moderators, who
-get only their own channels (ADR-0017). `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
+get only their own channels (ADR-0017). With `SIGNIN_PROVIDER=vexoulz` that sign-in goes through
+vexoulz-auth, shared with the other vexoulz sites, instead of straight to Twitch (ADR-0023); the routes and
+sessions are the same. `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
 Without it the password login is off. It is taken only from `ADMIN_PASSWORD_NETWORKS` (this host and the
 private ranges by default; `*` for anywhere), so from outside the site offers Twitch alone. A request that
 came through a proxy the bot doesn't trust is never local, since its address is the proxy's. Failed logins are limited per client address. Behind a proxy, set
