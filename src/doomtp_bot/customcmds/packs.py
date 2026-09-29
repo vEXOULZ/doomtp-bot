@@ -23,16 +23,18 @@ if TYPE_CHECKING:
 # share. Importing the registry here instead would be circular.
 RESERVED_PACK_NAMES = frozenset(
     {
+        "automation",
         "core",
         "core_admin",
         "custom",
         "customcmds",
         "help",
+        "http",
         "basic",
         "logsearch",
         "moderation",
-        "quotes",
-        "triggers",
+        "quotes",  # the quotes module, now the bot's derived pack of that name (ADR-0019)
+        "triggers",  # the automation module's old name (ADR-0019), still in audit rows
         "variables",
     }
 )
@@ -236,13 +238,16 @@ class PackService:
         summary: str = "",
         actor_via: str = "chat",
         system_version: int | None = None,
+        replaces_module: bool = False,
     ) -> Pack:
         """A new, empty pack. `system_version` makes it a system pack, which only the pack script does: a
-        system pack joins the built-in module of its name, so the reserved names don't apply to it."""
+        system pack joins the built-in module of its name, so the reserved names don't apply to it. Nor do
+        they to a pack that took a module's place (`replaces_module`, also the script's: `quotes`), which
+        keeps the module's name so its channels' toggles still apply."""
         name = name.lower()
         if not NAME_RE.match(name):
             raise CustomCommandError("pack names: lowercase letters, digits, _ and -, up to 32")
-        if name in RESERVED_PACK_NAMES and system_version is None:
+        if name in RESERVED_PACK_NAMES and system_version is None and not replaces_module:
             raise CustomCommandError(f"{name} is a built-in module name")
         if await self.by_owner(owner_user_id, name) is not None:
             raise CustomCommandError(f"you already have a pack named {name}")

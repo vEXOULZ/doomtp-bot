@@ -1,23 +1,20 @@
-"""The `quotes` and `logsearch` modules (architecture §12)."""
+"""The `logsearch` module (architecture §12). Quotes are a derived pack now: tests/test_quotes_pack.py."""
 
 from __future__ import annotations
 
 import dataclasses
 import random
-import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from doomtp_bot.audit.log import read_audit
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.modules.logsearch import ago
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
-from doomtp_bot.quotes import QuoteService
 from doomtp_bot.runtime.engine import RunReport, Runtime
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.storage.db import Databases
@@ -75,61 +72,10 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
         services={
             "policy": policy,
             "filters": filters,
-            "quotes": QuoteService(dbs.bot),
             "chatlog_db": dbs.chatlog,
         },
     )
     yield Harness(dbs, policy, runtime)
-
-
-# ── quotes ─────────────────────────────────────────────────────────────────
-async def test_quotes_are_numbered_read_back_and_searched(h: Harness) -> None:
-    assert (await h.run("alice", "!quote")).result.code == Code.NOT_FOUND
-    h.live = True
-    assert (await h.run("mod", '!quote add I meant   to do "that"')).send == "added #1"
-    h.live = False
-    assert (await h.run("mod", "!quote add second one, meant too")).send == "added #2"
-
-    first = await h.run("alice", "!quote 1")
-    assert first.send is not None and first.send.startswith('#1: I meant   to do "that" [Doom, ')
-    second = await h.run("alice", "!quote #2")  # not live when added: the date alone
-    assert second.send is not None and re.fullmatch(
-        r"#2: second one, meant too \[\d{4}-\d\d-\d\d\]", second.send
-    )
-    searched = await h.run("alice", "!quote MEANT")
-    assert (
-        searched.send is not None and searched.send.startswith("#2: ") and searched.send.endswith("(1 of 2)")
-    )
-    assert (await h.run("alice", "!quote nothing like it")).result.code == Code.NOT_FOUND
-    assert (await h.run("alice", "!quote", seed=1)).result.data["number"] in (1, 2)
-
-
-async def test_only_moderators_change_quotes_and_numbers_are_never_reused(h: Harness) -> None:
-    denied = await h.run("alice", "!quote add mine")
-    assert denied.result.code == Code.DENIED and denied.send is None
-    await h.run("mod", "!quote add one")
-    await h.run("mod", "!quote add two")
-    assert (await h.run("alice", "!quote del 2")).result.code == Code.DENIED
-    assert (await h.run("mod", "!quote del 2")).send == "deleted #2"
-    assert (await h.run("mod", "!quote del 2")).result.code == Code.NOT_FOUND
-    assert (await h.run("alice", "!quote 2")).result.code == Code.NOT_FOUND
-    assert (await h.run("mod", "!quote add three")).send == "added #3"  # #2 stays taken
-
-    actions = [(row["action"], row["target"]) for row in await read_audit(h.dbs.bot, limit=10)]
-    assert ("quote.delete", "2") in actions and ("quote.add", "3") in actions
-
-
-async def test_a_quote_goes_through_the_filter_before_it_is_kept(h: Harness) -> None:
-    report = await h.run("mod", "!quote add what a slur")
-    assert report.result.code != 0 and "filter" in (report.result.message or "")
-    assert await QuoteService(h.dbs.bot).get(CHANNEL_ID, 1) is None
-
-
-async def test_quotes_are_kept_per_channel(h: Harness) -> None:
-    service = QuoteService(h.dbs.bot)
-    await service.add("elsewhere", "not here", Actor(None, "test"))
-    assert (await h.run("alice", "!quote")).result.code == Code.NOT_FOUND
-    assert (await service.add(CHANNEL_ID, "here", Actor(None, "test"))).number == 1
 
 
 # ── logsearch ──────────────────────────────────────────────────────────────

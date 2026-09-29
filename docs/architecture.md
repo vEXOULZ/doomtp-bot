@@ -132,7 +132,7 @@ flowchart TB
 
     subgraph DATA["postgres — one database, a schema each (ADR-0014)"]
         direction LR
-        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · quotes · audit · oauth_tokens")]:::store
+        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · audit · oauth_tokens")]:::store
         CHAT[("schema chatlog<br/>messages + tsvector · mod_events<br/>log_sessions · backfill_runs<br/>command_runs · outbound_msgs")]:::store
     end
 ```
@@ -203,7 +203,7 @@ Deletions are flags, never row removals. Queries and the web UI choose whether t
 
 ### 3.2 Schema (schema `chatlog`)
 
-Sketch only — `storage/migrations/chatlog/0001_init.sql` is the truth. Timestamps are `bigint`
+Sketch only — `storage/migrations/chatlog/sql/0001_init.sql` and the revisions after it are the truth. Timestamps are `bigint`
 milliseconds since the epoch throughout.
 
 ```sql
@@ -331,7 +331,7 @@ async def weather(ctx: Ctx, args: Args, stdin: Result | None) -> Result: ...
 | Rule | Default |
 |------|---------|
 | Preflight | Every command in the expression is resolved and policy-checked **before anything runs**. Commands on an operator branch that may never run are still checked, which keeps `!explain` predictable. |
-| Limits | 8 commands per expression, 3 s per stage, 6 s in total, 4 KB of data per stage, final message up to 2 chat messages, custom command nesting depth 3, cycle detection |
+| Limits | 16 commands per expression (after expansion), 3 s per stage, 6 s in total, 4 KB of data per stage, final message up to 2 chat messages, custom command nesting depth 3, cycle detection |
 | Operators | `\|` stops on failure. `&&`/`\|\|` branch on the exit code. There is no `;` (reserved). `>`/`>>` store only on success. |
 | Output shown | Only the **message of the last executed command**, and only if it isn't empty |
 | Arguments | Declared param types and inline `{arg.N:type}` are validated before the body runs. Failure returns code 2 with generated usage text. |
@@ -454,7 +454,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - **Packs** group a user's commands so they publish and unpublish as one unit, and the pack's name is the module name for `!module` toggles (ADR-0012). A command added to a published pack appears immediately.
 - **Derived commands** are custom commands published to the global scope by a bot owner or admin: available in every channel, still overridable by a channel publication, and never able to shadow a Python built-in (a *primitive*).
 - The **`core` system pack** (the derived sentinels `false` and `default`) is installed by the same script, resolves in every channel without a publication, and is checked at startup: the bot refuses to start without it at the expected version (ADR-0012 amendment, ADR-0019).
-- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`) is installed by `scripts/starter_pack.py` (compose: `--profile tools run --rm starter-pack`), not seeded at boot: it creates the commands under the bot's own account and publishes the `starter` pack globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication.
+- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`, `weather`) and the **quotes pack** (`quote`, with its internal members, keeping each channel's quotes in the bot's `publisher.channel.quotes`, ADR-0019) are installed by `scripts/starter_pack.py` (the `migrate` step runs it on every compose `up`, ADR-0022), not seeded at boot: it creates the commands under the bot's own account and publishes both packs globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication. `weather` works once the bot account is a bot admin and an admin has run `!admin http allow wttr.in` (ADR-0020).
 
 ### Variables, briefly
 
@@ -478,7 +478,7 @@ Resolution runs in this order, and the first rule that matches decides:
 
 ## 7. Triggers, timers and listeners
 
-Sketch only — `storage/migrations/bot/0001_init.sql` is the truth.
+Sketch only — `storage/migrations/bot/sql/0001_init.sql` and the revisions after it are the truth.
 
 ```sql
 triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
@@ -504,7 +504,7 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
 
 - **Crons** are timers told *when* instead of *how often*: the five standard fields (`minute hour day month weekday`, with `*`, lists, ranges, steps and names) evaluated in the channel's `timezone`. The scheduler keeps both clocks — monotonic for intervals, so correcting the machine's clock can't skip a timer, and wall clock for crons, which is the whole point of them. A matching minute fires once, and the minute is marked handled even when `only_live` holds it back, so a cron waits for its next time instead of firing late.
 
-**Built so far:** `!trigger listen <regex> <expression>`, `!trigger add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron "<m h dom mon dow>" <expression>`, each with `list`, `rm` and `on`/`off`. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
+**Built so far** (the `automation` module, ADR-0019): `!listen add <name> </regex/> <expression>` with `!listen test <text>`, `!event add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron "<m h dom mon dow>" <expression>`, each with `list`, `rm` and `on`/`off` (a listener by name or id). `!trigger` is the old name for listeners and events, kept for one release. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
 
 ---
 
@@ -617,7 +617,7 @@ A **race window** remains: a mod can act after the message has already been sent
 | `POST /api/v1/explain` | **Now** | Same output as `!explain`. Public, as the editor's preview. The optional `as_user` (with the `badges` to assume) needs an API key or an admin session (§4.4). |
 | `GET /api/v1/language` | **Now** | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
 | `GET /api/v1/channels/{login}/commands`, `/publications`, `GET /api/v1/custom-commands` | **Now** | Public, like the pages that already show them |
-| `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables and their storage use, message search, command runs, `/api/v1/audit`, and the storage limits (`/api/v1/variable-limits`, admins only) | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
+| `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables and their storage use, message search, command runs, `/api/v1/audit`, the storage limits (`/api/v1/variable-limits`) and the hosts `http get` may fetch (`/api/v1/http-hosts`, `/api/v1/http-limits`), admins only | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked with an admin session through `/api/v1/keys` (the web admin), and the key is in the response that creates it and nowhere else. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
 | `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a Twitch sign-in (ADR-0017, `/auth/admin/login`) is an admin for a bot owner or bot admin and a moderator otherwise, and a moderator session reaches only the `channel` routes of the channels it lists, and its writes are audited as `via="web"` under the user's id. Keys are for admins. The CSRF token comes from `GET /session`, and `twitch_login` there says whether the Twitch sign-in is set up. Keys are managed with a session only, never with a key. Failed logins are limited per client address; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
@@ -690,12 +690,13 @@ src/doomtp_bot/
 ├─ variables/   store.py access.py                                         ✔
 ├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
+├─ webfetch/    addresses.py fetcher.py hosts.py                           ✔ ADR-0020: allowed hosts, public addresses only
 ├─ audit/       log.py                                                     ✔
-├─ quotes.py    numbered per channel, never renumbered                     ✔ the quotes module's table
-├─ storage/     db.py migrations/bot/ migrations/chatlog/                  ✔ connections and migrations only
+├─ storage/     db.py schema.py migrations/{bot,chatlog}/                  ✔ connections and Alembic migrations
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
-│               moderation.py quotes.py logsearch.py                       ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); quotes; log search
+│               moderation.py logsearch.py                                 ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); log search
+│               httpget.py                                                 ✔ `http get`, only in bot admins' commands (ADR-0020)
 └─ api/         app.py keys.py sessions.py access.py grammar.py            ✔ no pages: those are doomtp-web's (ADR-0016)
                 routes/ (health auth language data session site)          ✔
                 static/editor/editor.js                                    ✔ the built editor bundle, committed
@@ -728,9 +729,10 @@ flowchart LR
         timer["systemd timer<br/>nightly"] --> upd["deploy/update.sh"]
         upd --> moved{"digest<br/>moved?"}
         moved -->|no| done["exit 0, nothing touched"]
-        moved -->|yes| restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
-        restart --> migrate["migrations run at startup<br/>forward-only"]
-        migrate --> cov["coverage check<br/>its exit code is the unit's"]
+        moved -->|yes| migrate["migrate step, new image<br/>db upgrade + starter pack (ADR-0022)"]
+        migrate -->|failed| old["old bot keeps running"]
+        migrate --> restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
+        restart --> cov["coverage check<br/>its exit code is the unit's"]
         pg[("postgres<br/>never restarted by an update")]
         migrate -.-> pg
     end
@@ -743,7 +745,9 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **Docker Compose:**
   - `doomtp-bot`: non-root, read-only root filesystem, `/data` volume (the instance lock; the
     databases are Postgres's), LAN-bound port. It waits for the database's healthcheck before it
-    starts (ADR-0014).
+    starts (ADR-0014), and for the `migrate` one-shot to finish (ADR-0022).
+  - `migrate`: runs `doomtp-bot db upgrade` and the starter pack from the bot's own image, on every `up`.
+    The bot only checks that each schema is at its own head revision, and refuses to start otherwise.
   - `postgres`: the database, on a named volume, published to nothing — only the compose network
     reaches it. To look at it from outside, tunnel in over SSH (§11).
   - `pgweb`: optional, read-only, for browsing the log by hand. It replaced Datasette, which could
@@ -757,9 +761,9 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back means pinning `BOT_IMAGE` to the previous release tag (or a sha tag) — but migrations run at startup and
-  are forward-only, so roll back only within a schema version, or restore a `pg_restore` archive taken
-  before the deploy.
+  chosen under. Rolling back is `deploy/rollback.sh <image>`: it backs up, downgrades the schema with the
+  image running now (the only one that has the downgrade), pins `BOT_IMAGE` to the target and starts it
+  without the migrate step (ADR-0022).
 - **What the image holds:** the locked dependency set and the installed package — static files,
   the built editor bundle and the copy of the grammar the language page shows (force-included into the
   wheel, since `docs/` isn't installed). There is no Node in the image, which is why `web-editor/`'s
