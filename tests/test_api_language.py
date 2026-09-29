@@ -97,7 +97,7 @@ async def test_language_describes_the_syntax_for_the_editor(client: httpx.AsyncC
     assert body["roots_by_context"]["body"].count("arg") == 1
     assert body["error_codes"]["E_UNBALANCED_GROUP"] == "unbalanced parentheses"
     assert body["exit_codes"]["E_UNBALANCED_GROUP"] == 205 and body["exit_codes"]["E_LIST_FULL"] == 300
-    assert body["limits"]["MAX_INVOCATIONS"] == 8
+    assert body["limits"]["MAX_INVOCATIONS"] == 16
     assert body["raw_tail_commands"]["explain"] == 1 and body["raw_tail_commands"]["cc add"] == 3
 
 

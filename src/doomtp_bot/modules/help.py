@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from doomtp_bot.customcmds.service import CustomCommandService
 
 MODULE = "help"
-HIDDEN_MODULES = frozenset({"core"})
+HIDDEN_MODULES = frozenset({"core", "http"})  # http: only admins' commands can call it
 
 
 def site_link(ctx: CommandContext) -> str | None:

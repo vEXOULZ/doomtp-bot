@@ -37,6 +37,7 @@ from doomtp_bot.runtime.variables import (
     key_for,
     parse_size,
 )
+from doomtp_bot.webfetch.hosts import HostEntry, HostError, HostStore
 
 if TYPE_CHECKING:
     pass
@@ -430,6 +431,11 @@ async def _prefix(ctx: CommandContext, v: list[str], args: Args) -> Result:
 ADMIN_USAGE = (
     "admin add|remove <user> | quota|valuecap|listitems|names default [value]"
     " | quota|valuecap|listitems|names <channel|publisher|chatter> <name> [value|reset]"
+    " | http list|allow|deny|secret|limit …"
+)
+ADMIN_HTTP_USAGE = (
+    "admin http list | allow <host> [http] | deny <host> | secret <host> clear"
+    " | limit [channel|host <per minute>]"
 )
 _LIMITS = {f.command: f for f in LIMIT_FIELDS}
 
@@ -480,6 +486,64 @@ async def _admin_limit(ctx: CommandContext, v: list[str]) -> Result:
     return Result.success(f"{label} {what} is now {_show_limit(limit, size)}", size)
 
 
+def _show_host(entry: HostEntry) -> str:
+    extras = ["http too"] if entry.rule.plain_http else []
+    if entry.secret is not None:
+        extras.append(f"secret in {entry.secret.kind} {entry.secret.name}")
+    return entry.rule.pattern + (f" ({', '.join(extras)})" if extras else "")
+
+
+async def _admin_http(ctx: CommandContext, v: list[str]) -> Result:
+    """`!admin http …`: the hosts `http get` may fetch, their secrets and the limits (ADR-0020). A secret's
+    value is set only through the admin API: a chat line is public and kept in the chat log."""
+    hosts: HostStore = ctx.service("http_hosts")
+    need(v, 2, ADMIN_HTTP_USAGE)
+    action, rest, who = v[1].lower(), v[2:], actor(ctx)
+    try:
+        if action == "list":
+            entries = hosts.entries()
+            shown = ", ".join(_show_host(e) for e in entries) or "none"
+            limits = hosts.limits()
+            return Result.success(
+                f"hosts: {shown} · limits: {limits.channel_per_minute}/min per channel,"
+                f" {limits.host_per_minute}/min per host",
+                {"hosts": [e.public() for e in entries], "limits": limits.as_dict()},
+            )
+        if action == "allow" and len(rest) in (1, 2) and (len(rest) == 1 or rest[1].lower() == "http"):
+            entry = await hosts.allow(rest[0], plain_http=len(rest) == 2, actor=who.user_id, via=who.via)
+            return Result.success(f"http can fetch {_show_host(entry)}")
+        if action == "deny" and len(rest) == 1:
+            if not await hosts.deny(rest[0], actor=who.user_id, via=who.via):
+                return Result.failure(Code.FAIL, f"{rest[0]} isn't on the list")
+            return Result.success(f"http no longer fetches {rest[0].lower()}")
+        if action == "secret" and len(rest) == 2 and rest[1].lower() == "clear":
+            entry = await hosts.set_secret(rest[0], None, actor=who.user_id, via=who.via)
+            return Result.success(f"{entry.rule.pattern} has no secret now")
+        if action == "secret":
+            raise CommandError(
+                "set a secret through the admin API (PUT /api/v1/http-hosts/<host>/secret): chat is public"
+                " and logged, so a key typed here would be leaked already"
+            )
+        if action == "limit" and not rest:
+            limits = hosts.limits()
+            return Result.success(
+                f"{limits.channel_per_minute}/min per channel, {limits.host_per_minute}/min per host",
+                limits.as_dict(),
+            )
+        if (
+            action == "limit"
+            and len(rest) == 2
+            and rest[0].lower() in ("channel", "host")
+            and rest[1].isdigit()
+        ):
+            key = f"{rest[0].lower()}_per_minute"
+            limits = await hosts.set_limits(**{key: int(rest[1])}, actor=who.user_id, via=who.via)
+            return Result.success(f"at most {getattr(limits, key)} a minute per {rest[0].lower()}")
+    except HostError as exc:
+        raise CommandError(str(exc)) from None
+    raise CommandError(f"usage: {ADMIN_HTTP_USAGE}")
+
+
 @_handler
 async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
@@ -487,6 +551,8 @@ async def _admin(ctx: CommandContext, v: list[str], args: Args) -> Result:
     action = v[0].lower()
     if action in _LIMITS:
         return await _admin_limit(ctx, v)
+    if action == "http":
+        return await _admin_http(ctx, v)
     need(v, 2, ADMIN_USAGE)
     if action not in ("add", "remove"):
         raise CommandError(f"usage: {ADMIN_USAGE}")

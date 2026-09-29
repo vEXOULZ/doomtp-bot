@@ -170,7 +170,7 @@ async def test_publishing_a_pack_refuses_name_clashes_and_changes_nothing(h: Har
     assert await h.say("mod", "!hit") == "mod's hit"  # unchanged
 
 
-@pytest.mark.parametrize("name", ["core_admin", "triggers"])
+@pytest.mark.parametrize("name", ["core_admin", "automation", "triggers"])
 async def test_pack_names_cannot_shadow_a_builtin_module(h: Harness, name: str) -> None:
     refused = await h.run("alice", f"!cc pack create {name}")
     assert refused.result.code == Code.USAGE and "built-in module" in (refused.result.message or "")
