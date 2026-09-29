@@ -206,6 +206,13 @@ class CustomCommandService:
             last_run_version=row["pub_version"],
         )
 
+    async def publications_of(self, command_id: str) -> list[Publication]:
+        """Where one command is published, under which names, active or not."""
+        async with await self.conn.execute(
+            f"{self._SELECT_PUB} WHERE c.id = %s ORDER BY p.channel_id, p.name", (command_id,)
+        ) as cur:
+            return [self._publication(r) for r in await cur.fetchall()]
+
     async def publication(self, channel_id: str, name: str) -> tuple[Publication, CustomCommand] | None:
         row = await fetch_one(
             self.conn,

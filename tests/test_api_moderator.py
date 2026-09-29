@@ -11,7 +11,7 @@ import pytest
 from fastapi.routing import APIRoute
 
 from doomtp_bot.api.keys import ApiKeyService
-from doomtp_bot.api.routes.data import router
+from doomtp_bot.api.routes import bot, commands, data, manage
 from doomtp_bot.api.sessions import SESSION_COOKIE, ReadLimiter
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import BROADCASTER_RANK, GLOBAL, MODERATOR_RANK
@@ -39,7 +39,44 @@ PUBLIC_WHEN_OPEN = {
     ("GET", "/api/v1/channels/{login}/log/coverage"),
 }
 # Routes for anyone signed in, about themselves.
-PERSONAL = {("POST", "/api/v1/me/channel")}
+OWN = {
+    ("POST", "/api/v1/me/channel"),
+    ("GET", "/api/v1/me/custom-commands"),
+    ("POST", "/api/v1/me/custom-commands"),
+    ("PATCH", "/api/v1/me/custom-commands/{name}"),
+    ("DELETE", "/api/v1/me/custom-commands/{name}"),
+    ("GET", "/api/v1/me/custom-commands/{name}/versions"),
+    ("POST", "/api/v1/me/custom-commands/{name}/revert"),
+    ("PUT", "/api/v1/me/custom-commands/{name}/params/{position}"),
+    ("DELETE", "/api/v1/me/custom-commands/{name}/params/{position}"),
+    ("PUT", "/api/v1/me/links/{alias}"),
+    ("DELETE", "/api/v1/me/links/{alias}"),
+    ("GET", "/api/v1/me/packs"),
+    ("POST", "/api/v1/me/packs"),
+    ("PATCH", "/api/v1/me/packs/{name}"),
+    ("DELETE", "/api/v1/me/packs/{name}"),
+    ("PUT", "/api/v1/me/packs/{name}/commands/{command}"),
+    ("DELETE", "/api/v1/me/packs/{name}/commands/{command}"),
+    ("GET", "/api/v1/me/variables"),
+    ("GET", "/api/v1/me/runs"),
+    # Filtered to what the caller may see: their own entries, or the channels they manage.
+    ("GET", "/api/v1/audit"),
+}
+# Channel routes for whoever reaches the role a channel setting names (`publish_min_role` and the like),
+# which a channel may set below moderator, so the route checks it rather than the area (ADR-0026).
+SETTING_ROLE = {
+    ("PATCH", "/api/v1/channels/{login}/publications/{name}"),
+    ("POST", "/api/v1/channels/{login}/publications"),
+    ("DELETE", "/api/v1/channels/{login}/publications/{name}"),
+    ("POST", "/api/v1/channels/{login}/packs"),
+    ("DELETE", "/api/v1/channels/{login}/packs/{name}"),
+    ("GET", "/api/v1/channels/{login}/grants"),
+    ("PUT", "/api/v1/channels/{login}/grants/{name}/{variable}"),
+    ("DELETE", "/api/v1/channels/{login}/grants/{name}/{variable}"),
+    ("PUT", "/api/v1/channels/{login}/variables/{name}"),
+    ("DELETE", "/api/v1/channels/{login}/variables/{name}"),
+}
+PERSONAL = OWN | SETTING_ROLE
 # Channel routes that need the broadcaster's rank, as their chat commands do.
 BROADCASTER_ONLY = {
     ("DELETE", "/api/v1/channels/{login}"),
@@ -58,7 +95,27 @@ ADMIN_ONLY = {
     ("PUT", "/api/v1/http-hosts/{pattern}/secret"),
     ("DELETE", "/api/v1/http-hosts/{pattern}/secret"),
     ("PATCH", "/api/v1/http-limits"),
+    ("POST", "/api/v1/channels/{login}/capabilities/probe"),
+    ("GET", "/api/v1/admins"),
+    ("POST", "/api/v1/admins"),
+    ("DELETE", "/api/v1/admins/{user_id}"),
+    ("GET", "/api/v1/global/modules"),
+    ("PUT", "/api/v1/global/modules/{module}"),
+    ("DELETE", "/api/v1/global/modules/{module}"),
+    ("GET", "/api/v1/global/commands"),
+    ("PATCH", "/api/v1/global/commands/{name}"),
+    ("DELETE", "/api/v1/global/commands/{name}"),
+    ("GET", "/api/v1/global/filters"),
+    ("POST", "/api/v1/global/filters"),
+    ("PATCH", "/api/v1/global/filters/{entry_id}"),
+    ("DELETE", "/api/v1/global/filters/{entry_id}"),
+    ("GET", "/api/v1/ignored"),
+    ("POST", "/api/v1/global/publications"),
+    ("DELETE", "/api/v1/global/publications/{name}"),
+    ("POST", "/api/v1/global/packs"),
+    ("DELETE", "/api/v1/global/packs/{name}"),
 }
+ROUTES = [r for m in (data, manage, commands, bot) for r in m.router.routes]
 
 
 def test_every_private_route_says_who_may_use_it() -> None:
@@ -66,7 +123,7 @@ def test_every_private_route_says_who_may_use_it() -> None:
     areas: dict[tuple[str, str], str] = {}
     ranks: dict[tuple[str, str], int | None] = {}
     public: set[tuple[str, str]] = set()
-    for route in router.routes:
+    for route in ROUTES:
         assert isinstance(route, APIRoute)
         found = [d.call for d in route.dependant.dependencies if hasattr(d.call, "area")]
         for method in route.methods:

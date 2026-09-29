@@ -29,6 +29,7 @@ from doomtp_bot.api.access import (
     ADMIN_WRITE,
     API_ACTOR,
     BROADCASTER_WRITE,
+    PERSONAL_READ,
     PERSONAL_WRITE,
     RANK_NAMES,
     READ,
@@ -38,6 +39,7 @@ from doomtp_bot.api.access import (
     Caller,
     authenticate,
     check_area,
+    check_setting_role,
     current_session,
 )
 from doomtp_bot.api.routes.session import client_address
@@ -52,7 +54,7 @@ from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.queue import BackfillQueue, BackfillRefused
-from doomtp_bot.policy.roles import GLOBAL
+from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
 from doomtp_bot.runtime.spec import CommandSpec, LogLevel
@@ -296,6 +298,34 @@ async def cancel_backfill(
     return job.to_json()
 
 
+async def _module_specs(request: Request, channel_id: str) -> dict[str, tuple[CommandSpec, str]]:
+    """Every module `!module` knows in a channel: the built-in ones, then the packs published there or
+    globally and `custom` (ADR-0012). For `GLOBAL`, the packs published globally."""
+    specs: dict[str, tuple[CommandSpec, str]] = {
+        c.spec.module: (c.spec, "builtin") for c in _state(request, "runtime").registry.all()
+    }
+    services = request.app.state
+    found = await custom_modules(
+        channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None)
+    )
+    for name, kind in found.items():
+        specs.setdefault(name, (CommandSpec(name="", module=name, summary=""), kind))
+    return specs
+
+
+async def toggle_module(
+    request: Request, scope: str, module: str, enabled: bool | None, caller: Caller
+) -> dict[str, Any]:
+    """`!module enable|disable|reset` in `scope` (a channel, or `GLOBAL`); `None` goes back to inheriting."""
+    specs = await _module_specs(request, scope)
+    if module not in specs:
+        raise HTTPException(status_code=404, detail=f"no module named {module}")
+    if not specs[module][0].toggleable:
+        raise HTTPException(status_code=400, detail=f"{module} can't be turned off")
+    await _policy(request).mutate(lambda repo: repo.set_module_toggle(scope, module, enabled, caller.actor))
+    return {"module": module, "enabled": enabled}
+
+
 @router.get("/channels/{login}/modules")
 async def list_modules(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
     """Each module, whether it is on here, and whether it can be turned off at all.
@@ -306,15 +336,7 @@ async def list_modules(request: Request, login: str, caller: Caller = READ) -> d
     then on. Turn any of them off with `PUT …/modules/{module}`, as `!module disable` does in chat.
     """
     settings, policy = _channel(request, login), _policy(request)
-    specs: dict[str, tuple[CommandSpec, str]] = {
-        c.spec.module: (c.spec, "builtin") for c in _state(request, "runtime").registry.all()
-    }
-    services = request.app.state
-    found = await custom_modules(
-        settings.channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None)
-    )
-    for name, kind in found.items():
-        specs.setdefault(name, (CommandSpec(name="", module=name, summary=""), kind))
+    specs = await _module_specs(request, settings.channel_id)
     return {
         "modules": [
             {
@@ -445,18 +467,66 @@ async def set_module(
     request: Request, login: str, module: str, body: Enabled, caller: Caller = WRITE
 ) -> dict[str, Any]:
     settings = _channel(request, login)
-    policy = _policy(request)
-    await policy.mutate(
-        lambda repo: repo.set_module_toggle(settings.channel_id, module, body.enabled, caller.actor)
-    )
-    return {"module": module, "enabled": body.enabled}
+    return await toggle_module(request, settings.channel_id, module, body.enabled, caller)
+
+
+@router.delete("/channels/{login}/modules/{module}")
+async def reset_module(request: Request, login: str, module: str, caller: Caller = WRITE) -> dict[str, Any]:
+    """Back to what the bot-wide toggle says, as `!module reset` does."""
+    settings = _channel(request, login)
+    return await toggle_module(request, settings.channel_id, module, None, caller)
 
 
 # ── commands ────────────────────────────────────────────────────────────────
+LogLevelName = Literal["off", "errors", "output", "invocations", "all"]
+
+
+class CooldownBody(BaseModel):
+    tier_s: int = Field(ge=0, le=86_400)  # shared by everyone at that role
+    user_s: int = Field(ge=0, le=86_400)  # per user
+
+
 class CommandRule(BaseModel):
+    """Only the fields sent change. `enabled: null` goes back to the module's setting; `required_role:
+    null` clears the rule here (and its `allowed_roles`); a role's cooldown set to `null` is cleared."""
+
     enabled: bool | None = None
     required_role: str | None = None
-    log_level: Literal["off", "errors", "output", "invocations", "all"] | None = None
+    allowed_roles: list[str] | None = Field(default=None, max_length=20)
+    cooldowns: dict[str, CooldownBody | None] | None = None
+    log_level: LogLevelName | None = None
+
+
+def command_spec(request: Request, name: str) -> CommandSpec:
+    """A command as `!perm` and `!cmd` find it: in the registry, then among the system packs' members."""
+    runtime = _state(request, "runtime")
+    wanted = name.lower()
+    found = runtime.registry.get(wanted)
+    if found is not None:
+        return found.spec  # type: ignore[no-any-return]
+    for spec in system_specs(runtime.resolver):
+        if spec.name == wanted:
+            return spec
+    raise HTTPException(status_code=404, detail=f"no command named {name}")
+
+
+def rule_json(policy: PolicyService, scope: str, spec: CommandSpec) -> dict[str, Any]:
+    required, allowed = policy.required_role(scope, spec)
+    return {
+        "name": spec.name,
+        "module": spec.module,
+        "summary": spec.summary,
+        "enabled": policy.is_enabled(scope, spec),
+        "toggleable": spec.toggleable,
+        "fixed_policy": spec.fixed_policy,
+        "required_role": required,
+        "allowed_roles": list(allowed) if allowed else None,
+        "cooldowns": {
+            role: {"tier_s": cd.tier_s, "user_s": cd.user_s}
+            for role, cd in policy.cooldown_rules(scope, spec).items()
+        },
+        "log_level": policy.log_level(scope, spec).value,
+    }
 
 
 @router.get("/channels/{login}/commands")
@@ -464,92 +534,140 @@ async def channel_commands(request: Request, login: str) -> dict[str, Any]:
     """What this channel's chat can actually run, with the rules that apply here. Public, like the page."""
     settings = _channel(request, login)
     policy, runtime = _policy(request), _state(request, "runtime")
-    listing = []
-    for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver):
-        required, allowed = policy.required_role(settings.channel_id, spec)
-        listing.append(
-            {
-                "name": spec.name,
-                "module": spec.module,
-                "summary": spec.summary,
-                "enabled": policy.is_enabled(settings.channel_id, spec),
-                "required_role": required,
-                "allowed_roles": list(allowed) if allowed else None,
-                "cooldowns": {
-                    role: {"tier_s": cd.tier_s, "user_s": cd.user_s}
-                    for role, cd in policy.cooldown_rules(settings.channel_id, spec).items()
-                },
-                "requires": list(spec.requires),
-                "missing": sorted(set(spec.requires) - set(settings.capabilities)),
-            }
-        )
+    listing = [
+        {
+            **rule_json(policy, settings.channel_id, spec),
+            "requires": list(spec.requires),
+            "missing": sorted(set(spec.requires) - set(settings.capabilities)),
+        }
+        for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver)
+    ]
     return {"channel": settings.login, "prefix": settings.prefix, "commands": listing}
+
+
+async def apply_command_rule(
+    request: Request, scope: str, spec: CommandSpec, body: CommandRule, caller: Caller, rank: int
+) -> None:
+    """`!cmd`, `!perm` and `!cooldown` in one change, each checked the way chat checks it (ADR-0026)."""
+    policy = _policy(request)
+    fields = body.model_dump(exclude_unset=True)
+    rules = {"required_role", "allowed_roles", "cooldowns"} & set(fields)
+    if rules and spec.fixed_policy:
+        raise HTTPException(status_code=400, detail=f"{spec.name} is always allowed for everyone")
+    if rules and spec.module == "core_admin" and rank < BOT_ADMIN_RANK:
+        raise HTTPException(status_code=403, detail="only a bot admin can change an admin command's rules")
+    if "enabled" in fields and not spec.toggleable:
+        raise HTTPException(status_code=400, detail=f"{spec.name} can't be turned off")
+    if fields.get("allowed_roles") == []:
+        raise HTTPException(status_code=400, detail="allowed_roles needs a role, or null to clear it")
+    named = [fields.get("required_role"), *(body.allowed_roles or []), *(body.cooldowns or {})]
+    unknown = sorted({r for r in named if r is not None and policy.rank_of(scope, r) is None})
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"no role named {', '.join(unknown)}")
+
+    async def write(repo: Any) -> None:
+        if "enabled" in fields or "log_level" in fields:
+            await repo.set_command_toggle(
+                scope,
+                spec.name,
+                caller.actor,
+                enabled=fields.get("enabled"),
+                log_level=fields.get("log_level"),
+                clear_enabled="enabled" in fields and fields["enabled"] is None,
+            )
+        if "required_role" in fields or "allowed_roles" in fields:
+            current, allowed = policy.required_role(scope, spec)
+            required = fields.get("required_role", current)
+            roles = fields.get("allowed_roles", list(allowed) if allowed else None)
+            if required is None:
+                roles = None
+            await repo.set_command_rule(scope, spec.name, required, roles, caller.actor)
+        for role, cooldown in (body.cooldowns or {}).items():
+            tier, user = (None, None) if cooldown is None else (cooldown.tier_s, cooldown.user_s)
+            await repo.set_cooldown(scope, spec.name, role, tier, user, caller.actor)
+
+    await policy.mutate(write)
 
 
 @router.patch("/channels/{login}/commands/{name}")
 async def patch_command(
     request: Request, login: str, name: str, body: CommandRule, caller: Caller = WRITE
 ) -> dict[str, Any]:
+    """Turn a command on or off here, set who may use it, its cooldowns per role and how much of its runs
+    is logged: `!cmd`, `!perm` and `!cooldown` in one call."""
     settings, policy = _channel(request, login), _policy(request)
-    runtime = _state(request, "runtime")
-    if runtime.registry.get(name) is None:
-        raise HTTPException(status_code=404, detail=f"no command named {name}")
-    fields = body.model_dump(exclude_unset=True)
-    if "enabled" in fields or "log_level" in fields:
-        await policy.mutate(
-            lambda repo: repo.set_command_toggle(
-                settings.channel_id,
-                name,
-                caller.actor,
-                enabled=fields.get("enabled"),
-                log_level=fields.get("log_level"),
-                clear_enabled="enabled" in fields and fields["enabled"] is None,
-            )
-        )
-    if "required_role" in fields:
-        role = fields["required_role"]
-        if role is not None and policy.rank_of(settings.channel_id, role) is None:
-            raise HTTPException(status_code=400, detail=f"no role named {role}")
-        await policy.mutate(
-            lambda repo: repo.set_command_rule(settings.channel_id, name, role, None, caller.actor)
-        )
-    required, allowed = policy.required_role(settings.channel_id, runtime.registry.get(name).spec)
-    return {
-        "name": name,
-        "enabled": policy.is_enabled(settings.channel_id, runtime.registry.get(name).spec),
-        "required_role": required,
-        "allowed_roles": list(allowed) if allowed else None,
-    }
+    spec = command_spec(request, name)
+    rank = caller.rank_in(policy, settings.login)
+    await apply_command_rule(request, settings.channel_id, spec, body, caller, rank)
+    return rule_json(policy, settings.channel_id, spec)
+
+
+def reset_rule(policy: PolicyService, scope: str, spec: CommandSpec) -> CommandRule:
+    """What `DELETE` sends: `!cmd reset`, `!perm clear` and every cooldown cleared, where each applies."""
+    fields: dict[str, Any] = {"enabled": None} if spec.toggleable else {}
+    if not spec.fixed_policy:
+        fields["required_role"] = None
+        fields["cooldowns"] = dict.fromkeys(policy.cooldown_rules(scope, spec))
+    return CommandRule(**fields)
+
+
+@router.delete("/channels/{login}/commands/{name}")
+async def reset_command(request: Request, login: str, name: str, caller: Caller = WRITE) -> dict[str, Any]:
+    """Back to the command's own rules here. The log level stays."""
+    settings, policy = _channel(request, login), _policy(request)
+    spec = command_spec(request, name)
+    rank = caller.rank_in(policy, settings.login)
+    body = reset_rule(policy, settings.channel_id, spec)
+    await apply_command_rule(request, settings.channel_id, spec, body, caller, rank)
+    return rule_json(policy, settings.channel_id, spec)
 
 
 # ── filters ─────────────────────────────────────────────────────────────────
+FilterKind = Literal["word", "wildcard", "regex", "allow"]
+FilterAction = Literal["mask", "replace", "tag", "block"]
+
+
 class FilterBody(BaseModel):
     pattern: str = Field(min_length=1, max_length=200)
-    kind: Literal["word", "wildcard", "regex", "allow"] = "word"
-    action: Literal["mask", "replace", "tag", "block"] = "mask"
-    category: str = ""
-    replacement: str = ""
+    kind: FilterKind = "word"
+    action: FilterAction = "mask"
+    category: str = Field(default="", max_length=40)
+    replacement: str = Field(default="", max_length=200)
+
+
+class FilterPatch(BaseModel):
+    """Only the fields sent change."""
+
+    enabled: bool | None = None
+    pattern: str | None = Field(default=None, min_length=1, max_length=200)
+    kind: FilterKind | None = None
+    action: FilterAction | None = None
+    category: str | None = Field(default=None, max_length=40)
+    replacement: str | None = Field(default=None, max_length=200)
+
+
+def filter_json(e: Any) -> dict[str, Any]:
+    return {
+        "id": e.id,
+        "pattern": e.pattern,
+        "kind": e.kind,
+        "action": e.action,
+        "category": e.category,
+        "replacement": e.replacement,
+        "enabled": e.enabled,
+        "global": e.channel_id == GLOBAL,
+    }
+
+
+def _where(scope: str) -> str:
+    return "everywhere" if scope == GLOBAL else "here"
 
 
 @router.get("/channels/{login}/filters")
 async def list_filters(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
     settings = _channel(request, login)
     filters: FilterService = _state(request, "filters")
-    return {
-        "filters": [
-            {
-                "id": e.id,
-                "pattern": e.pattern,
-                "kind": e.kind,
-                "action": e.action,
-                "category": e.category,
-                "replacement": e.replacement,
-                "enabled": e.enabled,
-                "global": e.channel_id == GLOBAL,
-            }
-            for e in filters.entries_for(settings.channel_id)
-        ]
-    }
+    return {"filters": [filter_json(e) for e in filters.entries_for(settings.channel_id)]}
 
 
 @router.post("/channels/{login}/filters", status_code=201)
@@ -557,10 +675,14 @@ async def add_filter(
     request: Request, login: str, body: FilterBody, caller: Caller = WRITE
 ) -> dict[str, Any]:
     settings = _channel(request, login)
+    return await add_filter_to(request, settings.channel_id, body, caller)
+
+
+async def add_filter_to(request: Request, scope: str, body: FilterBody, caller: Caller) -> dict[str, Any]:
     filters: FilterService = _state(request, "filters")
     try:
         entry = await filters.add(
-            channel_id=settings.channel_id,
+            channel_id=scope,
             pattern=body.pattern,
             kind=body.kind,
             action=body.action,
@@ -571,25 +693,50 @@ async def add_filter(
         )
     except FilterError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"id": entry.id, "pattern": entry.pattern, "kind": entry.kind, "action": entry.action}
+    return filter_json(entry)
 
 
 @router.patch("/channels/{login}/filters/{entry_id}")
-async def set_filter_enabled(
-    request: Request, login: str, entry_id: int, body: Enabled, caller: Caller = WRITE
+async def patch_filter(
+    request: Request, login: str, entry_id: int, body: FilterPatch, caller: Caller = WRITE
 ) -> dict[str, Any]:
+    """Turn an entry on or off, or change it, checked as a new one is. Audited as `filter.edit`."""
     settings = _channel(request, login)
+    return await patch_filter_in(request, settings.channel_id, entry_id, body, caller)
+
+
+async def patch_filter_in(
+    request: Request, scope: str, entry_id: int, body: FilterPatch, caller: Caller
+) -> dict[str, Any]:
     filters: FilterService = _state(request, "filters")
-    changed = await filters.set_enabled(
-        channel_id=settings.channel_id,
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    enabled = fields.pop("enabled", None)
+    if not fields and enabled is None:
+        raise HTTPException(status_code=400, detail="nothing to change")
+    missing = HTTPException(status_code=404, detail=f"no filter {entry_id} {_where(scope)}")
+    if fields:
+        try:
+            entry = await filters.update(
+                channel_id=scope,
+                entry_id=entry_id,
+                fields=fields,
+                actor_user_id=caller.actor.user_id,
+                via=caller.actor.via,
+            )
+        except FilterError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if entry is None:
+            raise missing
+    if enabled is not None and not await filters.set_enabled(
+        channel_id=scope,
         entry_id=entry_id,
-        enabled=body.enabled,
+        enabled=enabled,
         actor_user_id=caller.actor.user_id,
         via=caller.actor.via,
-    )
-    if not changed:
-        raise HTTPException(status_code=404, detail=f"no filter {entry_id} here")
-    return {"id": entry_id, "enabled": body.enabled}
+    ):
+        raise missing
+    found = next(e for e in filters.entries_for(scope) if e.id == entry_id)
+    return filter_json(found)
 
 
 @router.delete("/channels/{login}/filters/{entry_id}")
@@ -597,14 +744,18 @@ async def remove_filter(
     request: Request, login: str, entry_id: int, caller: Caller = WRITE
 ) -> dict[str, Any]:
     settings = _channel(request, login)
+    return await remove_filter_from(request, settings.channel_id, entry_id, caller)
+
+
+async def remove_filter_from(request: Request, scope: str, entry_id: int, caller: Caller) -> dict[str, Any]:
     filters: FilterService = _state(request, "filters")
     if not await filters.remove(
-        channel_id=settings.channel_id,
+        channel_id=scope,
         entry_id=entry_id,
         actor_user_id=caller.actor.user_id,
         via=caller.actor.via,
     ):
-        raise HTTPException(status_code=404, detail=f"no filter {entry_id} here")
+        raise HTTPException(status_code=404, detail=f"no filter {entry_id} {_where(scope)}")
     return {"id": entry_id, "removed": True}
 
 
@@ -614,8 +765,19 @@ class TriggerBody(BaseModel):
     expr: str = Field(min_length=1)
     match: dict[str, Any] | None = None
     schedule: dict[str, Any] | None = None
-    run_as_rank: int = Field(default=80, ge=0, le=10_000)
-    log_level: Literal["off", "errors", "output", "invocations", "all"] = "output"
+    run_as_rank: int | None = Field(default=None, ge=0, le=10_000)  # the creator's own rank by default
+    log_level: LogLevelName = "output"
+
+
+class TriggerPatch(BaseModel):
+    """Only the fields sent change; the type can't."""
+
+    enabled: bool | None = None
+    expr: str | None = Field(default=None, min_length=1)
+    match: dict[str, Any] | None = None
+    schedule: dict[str, Any] | None = None
+    run_as_rank: int | None = Field(default=None, ge=0, le=10_000)
+    log_level: LogLevelName | None = None
 
 
 def _trigger_json(trigger: Any) -> dict[str, Any]:
@@ -627,7 +789,19 @@ def _trigger_json(trigger: Any) -> dict[str, Any]:
         "schedule": trigger.schedule,
         "enabled": trigger.enabled,
         "run_as_rank": trigger.run_as_rank,
+        "log_level": trigger.log_level.value,
+        "created_by": trigger.created_by,
     }
+
+
+def _run_as(request: Request, caller: Caller, login: str, wanted: int | None) -> int:
+    """A trigger runs at its creator's rank at most, as `!trigger add` sets it (ADR-0026)."""
+    rank = caller.rank_in(_policy(request), login)
+    if wanted is None:
+        return rank
+    if wanted > rank:
+        raise HTTPException(status_code=403, detail=f"a trigger can't run above your own rank ({rank})")
+    return wanted
 
 
 @router.get("/channels/{login}/triggers")
@@ -652,9 +826,9 @@ async def add_trigger(
             expr=body.expr,
             match=body.match,
             schedule=body.schedule,
-            run_as_rank=body.run_as_rank,
+            run_as_rank=_run_as(request, caller, settings.login, body.run_as_rank),
             log_level=LogLevel(body.log_level),
-            created_by=None,
+            created_by=caller.actor.user_id,
             prefix=settings.prefix,
             via=caller.actor.via,
         )
@@ -664,21 +838,46 @@ async def add_trigger(
 
 
 @router.patch("/channels/{login}/triggers/{trigger_id}")
-async def set_trigger_enabled(
-    request: Request, login: str, trigger_id: int, body: Enabled, caller: Caller = WRITE
+async def patch_trigger(
+    request: Request, login: str, trigger_id: int, body: TriggerPatch, caller: Caller = WRITE
 ) -> dict[str, Any]:
+    """Turn a trigger on or off, or change it, checked as a new one is. Audited as `trigger.edit`."""
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
-    changed = await triggers.set_enabled(
+    fields = {k for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="nothing to change")
+    missing = HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
+    if fields - {"enabled"}:
+        run_as = (
+            None if body.run_as_rank is None else _run_as(request, caller, settings.login, body.run_as_rank)
+        )
+        try:
+            updated = await triggers.update(
+                channel_id=settings.channel_id,
+                trigger_id=trigger_id,
+                expr=body.expr,
+                match=body.match,
+                schedule=body.schedule,
+                run_as_rank=run_as,
+                log_level=None if body.log_level is None else LogLevel(body.log_level),
+                actor_user_id=caller.actor.user_id,
+                prefix=settings.prefix,
+                via=caller.actor.via,
+            )
+        except TriggerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise missing
+    if body.enabled is not None and not await triggers.set_enabled(
         channel_id=settings.channel_id,
         trigger_id=trigger_id,
         enabled=body.enabled,
         actor_user_id=caller.actor.user_id,
         via=caller.actor.via,
-    )
-    if not changed:
-        raise HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
-    return {"id": trigger_id, "enabled": body.enabled}
+    ):
+        raise missing
+    return _trigger_json(next(t for t in triggers.in_channel(settings.channel_id) if t.id == trigger_id))
 
 
 @router.delete("/channels/{login}/triggers/{trigger_id}")
@@ -762,9 +961,13 @@ async def publications(request: Request, login: str) -> dict[str, Any]:
 
 @router.patch("/channels/{login}/publications/{name}")
 async def set_publication(
-    request: Request, login: str, name: str, body: Enabled, caller: Caller = WRITE
+    request: Request, login: str, name: str, body: Enabled, caller: Caller = PERSONAL_WRITE
 ) -> dict[str, Any]:
+    """`cc enable|disable`: for whoever reaches the channel's `publish_min_role`, as in chat."""
     settings = _channel(request, login)
+    check_setting_role(
+        request, caller, settings.login, "publish_min_role", "turn published commands on or off"
+    )
     service: CustomCommandService = _state(request, "customcmds")
     changed = await service.set_publication_status(
         channel_id=settings.channel_id,
@@ -1097,15 +1300,46 @@ async def channel_log_coverage(
 async def audit(
     request: Request,
     channel: str | None = Query(default=None, max_length=40),
+    actor: str | None = Query(default=None, max_length=40, description="a login, or `me`"),
+    action: str | None = Query(
+        default=None, max_length=64, description="`cc.edit`, or `cc.` for every cc one"
+    ),
+    before: int | None = Query(default=None, ge=1, description="the `next` of the page before"),
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
-    caller: Caller = READ,
+    caller: Caller = PERSONAL_READ,
 ) -> dict[str, Any]:
-    conn = _state(request, "bot_db")
+    """The newest changes first, a page at a time: pass `next` back as `before`. A moderator sees the
+    channels they manage; anyone signed in sees their own changes everywhere with `actor=me` (ADR-0026)."""
+    conn, policy = _state(request, "bot_db"), _policy(request)
+    known = {c.channel_id: c.login for c in policy.channels()}
+    own = actor == "me"
+    actor_id: str | None = None
+    if own:
+        if caller.user_id is None:
+            raise HTTPException(status_code=400, detail="actor=me needs a Twitch sign-in")
+        actor_id = caller.user_id
+    elif actor is not None:
+        user = await _state(request, "twitch").resolve_user(actor)
+        if user is None:
+            raise HTTPException(status_code=404, detail=f"no Twitch user named {actor}")
+        actor_id = user["id"]
+    scope: dict[str, Any] = {}
     if channel is not None:
-        check_area(caller, "channel", channel)
-        found = await read_audit(conn, channel_id=_channel(request, channel).channel_id, limit=limit)
-        return {"entries": found}
-    if caller.is_admin:
-        return {"entries": await read_audit(conn, limit=limit)}
-    ids = [c.channel_id for c in _policy(request).channels() if caller.manages(c.login)]
-    return {"entries": await read_audit(conn, channel_ids=ids, limit=limit)}
+        if not own:
+            check_area(caller, "channel", channel)
+        scope["channel_id"] = _channel(request, channel).channel_id
+    elif not caller.is_admin and not own:
+        if caller.role == "user":
+            # Someone who manages no channel sees only their own changes.
+            if caller.user_id is None or actor_id not in (None, caller.user_id):
+                return {"entries": [], "next": None}
+            actor_id = caller.user_id
+        else:
+            scope["channel_ids"] = [c.channel_id for c in policy.channels() if caller.manages(c.login)]
+    found = await read_audit(
+        conn, limit=limit, before_id=before, actor_user_id=actor_id, action=action, **scope
+    )
+    for entry in found:
+        entry["channel_login"] = known.get(entry.get("channel_id") or "")
+        entry["actor_login"] = await _login_of(request, entry.get("actor_user_id"), known)
+    return {"entries": found, "next": found[-1]["id"] if len(found) == limit else None}
