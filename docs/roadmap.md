@@ -35,10 +35,11 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 5/5 | Complete: `http get`, the host allow-list with its secrets and limits, and the `weather` starter command |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
 | [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 3/3 | Complete: rolled back and forward on guest 221 |
+| [0023](adr/0023-shared-sign-in-through-vexoulz-auth.md) | Shared sign-in through vexoulz-auth | 1/2 | Built; switched on once vexoulz-auth is deployed |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**124 of 125 ADR action items are closed.** The last one (ADR-0008 item 4) is waiting on a person, not
-on code. **All 9 architecture promises are closed**: six built,
+**125 of 127 ADR action items are closed.** The other two are waiting on a person, not on code:
+ADR-0008 item 4, and ADR-0023 item 2 (switching the shared sign-in on once vexoulz-auth is deployed). **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
