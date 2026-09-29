@@ -42,7 +42,8 @@ from doomtp_bot.quotes import QuoteService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.runtime.resolver import BuiltinResolver
-from doomtp_bot.storage.db import Databases, configure_event_loop, current_version
+from doomtp_bot.storage.db import Databases, configure_event_loop, schema_revision
+from doomtp_bot.storage.schema import SchemaMismatch
 from doomtp_bot.triggers.runner import TriggerRunner
 from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
@@ -330,8 +331,8 @@ async def run(settings: Settings) -> None:
         return ComponentHealth(
             Status.OK,
             {
-                "bot_schema": await current_version(dbs.bot),
-                "chatlog_schema": await current_version(dbs.chatlog),
+                "bot_schema": await schema_revision(dbs.bot),
+                "chatlog_schema": await schema_revision(dbs.chatlog),
             },
         )
 
@@ -412,6 +413,11 @@ async def run(settings: Settings) -> None:
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["db"]:
+        # Migrations (ADR-0022). No instance lock: the migrate step runs while the old bot is still up.
+        from doomtp_bot.storage.schema import cli
+
+        sys.exit(cli(sys.argv[2:]))
     settings = Settings()
     configure_logging(settings.log_level, settings.log_format)
     lock = InstanceLock(settings.lock_path)
@@ -427,6 +433,9 @@ def main() -> None:
         pass
     except CoreNotInstalled as exc:
         log.error("bot.core_not_installed", detail=str(exc))
+        sys.exit(1)
+    except SchemaMismatch as exc:
+        log.error("bot.schema_mismatch", detail=str(exc))
         sys.exit(1)
     finally:
         lock.release()

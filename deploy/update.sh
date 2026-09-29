@@ -23,13 +23,11 @@ if [ "$before" = "$after" ]; then
 fi
 
 echo "updating: ${before:0:19} -> ${after:0:19}"
-# The new bot refuses to start without its `core` pack (ADR-0019), so install it first, from the new image.
-# That leaves the old bot running if it fails. Exit 2 means the bot was never signed in: nothing to install
-# yet, and the bot starts anyway and says so.
-status=0
-"${compose[@]}" --profile tools run --rm starter-pack || status=$?
-if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
-    echo "starter pack failed (exit $status): not updating" >&2
+# The migrate step, from the new image: the schema upgrade and the `core` pack the new bot needs (ADR-0022).
+# `up` below runs it too, but running it here first stops a failed one with the old bot still running and
+# a clear message. It is safe to run twice.
+if ! "${compose[@]}" run --rm migrate; then
+    echo "migrate step failed: not updating. The old bot is still running." >&2
     exit 1
 fi
 # Only the bot. Postgres is named as a dependency so it gets started if it is down, but an unchanged,

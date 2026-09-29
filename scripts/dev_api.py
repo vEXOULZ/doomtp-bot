@@ -186,7 +186,7 @@ def add_dev_login(app: FastAPI, moderators: dict[str, frozenset[str]]) -> None:
 async def main(args: argparse.Namespace) -> None:
     moderators = parse_moderators(args.moderator or list(DEFAULT_MODERATORS))
     dsn = await fresh_database(args.server, args.database)
-    dbs = await Databases.open(dsn)
+    dbs = await Databases.open(dsn, migrate=True)
     policy = PolicyService(dbs.bot)
     await policy.reload()
     filters = FilterService(dbs.bot)

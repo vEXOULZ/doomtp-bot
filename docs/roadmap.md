@@ -33,18 +33,19 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 8/8 | Complete |
 | [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 6/11 | Link rule, storage limits, moderation primitives, internal and system packs done; the readouts, automation, `customecho` and quotes are next |
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 1/5 | Accepted; not built yet |
-| [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 1/4 | CI and hooks done; the GitHub settings and first release are next |
+| [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
+| [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 2/3 | Built; the first real rollback on the server is next |
 | [0023](adr/0023-chat-log-timeline-api.md) | The chat log as a paged timeline on the API | 1/3 | API built; the site's log viewer and the archive's enrichment are next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**107 of 125 ADR action items are closed.** Four are waiting on a person or a server, not on code. The
-other 14 are the rest of ADR-0019, ADR-0020, ADR-0021 and ADR-0023, decided on 2026-09-28; ADR-0018 is complete. **All 9 architecture promises are closed**: six built,
+**112 of 128 ADR action items are closed.** Five are waiting on a person or a server, not on code. The
+other 11 are the rest of ADR-0019, ADR-0020 and ADR-0023, decided on 2026-09-28; ADR-0018 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
 ## What is left, and why
 
-### Waiting on the server — ADR-0013 items 5 and 6, ADR-0014 item 10
+### Waiting on the server — ADR-0013 items 5 and 6, ADR-0014 item 10, ADR-0022 item 3
 
 The publish half is now real. The repository is at
 [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot), and a green run pushes `:main`
@@ -66,6 +67,10 @@ never run is the real thing:
   from a password-protected server, and dropping the `bot` schema and running `pg_restore` brings it
   back whole. What has not happened is the same thing on the guest's own volume, on its own cron, with a
   copy then leaving the machine — and a backup nobody has carried off the box is half a backup.
+- **Roll back once on purpose** with `deploy/rollback.sh` (ADR-0022), to an image one migration behind,
+  and write down what it took. A deploy on 2026-09-28 failed forward (no `core` pack) and then failed
+  back (a schema the old image didn't know); the migrate step and the downgrades are the fix for both,
+  and neither has run on the guest yet.
 
 ### Waiting on a reply — ADR-0008 item 4
 
@@ -144,6 +149,7 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 4. **Run the bot in its own channel for a week** before inviting anyone else, and read `/metrics`
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.
-5. **Language v2, then the default command set** (ADR-0018, then ADR-0019). ADR-0018 item 1,
-   the error codes, is done, and every later item raises them. Quotes move last, once brackets, expressions
-   and internal pack members exist.
+5. **The rest of the default command set** (ADR-0019). Language v2 (ADR-0018) shipped in `v0.2.0`, so
+   picking from a list or map, `customecho`, the readouts and the `automation` module are unblocked.
+   Quotes move last, once `random` can pick from a map. The server runs `scripts/migrate_v2.py` once when
+   it first takes `v0.2.0`.
