@@ -9,15 +9,24 @@ import asyncio
 import contextlib
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from typing import Any
 
 import structlog
 import twitchio
 from twitchio import eventsub
+from twitchio.eventsub.websockets import Websocket
 
 from doomtp_bot.core import metrics
-from doomtp_bot.core.events import Event
+from doomtp_bot.core.events import (
+    ChatCleared,
+    ChatMessage,
+    ChatNotification,
+    Event,
+    MessageDeleted,
+    UserMessagesCleared,
+)
 from doomtp_bot.core.health import ComponentHealth, Status
 from doomtp_bot.core.outbox import BANNED, SendResult
 from doomtp_bot.twitch import mapping
@@ -61,6 +70,44 @@ BROADCASTER_SUBSCRIPTIONS: tuple[tuple[str, type[Any]], ...] = (
     ("redemptions", eventsub.ChannelPointsRedeemAddSubscription),
     ("bits", eventsub.ChannelCheerSubscription),
 )
+
+
+#: The EventSub `event` object of the notification being handled (ADR-0024 item 2). TwitchIO parses it
+#: into models and drops it before our handlers run, but runs each handler in a task created while it
+#: handles the notification, and a task starts with a copy of the context it was created in.
+_RAW_EVENT: ContextVar[dict[str, Any] | None] = ContextVar("eventsub_raw_event", default=None)
+
+
+def _capture_raw_events() -> None:
+    """Wrap the one TwitchIO method that still has the notification's JSON whole.
+
+    The only place the adapter reaches into TwitchIO's internals: `tests/chat/test_eventsub_contract.py`
+    runs a recorded notification through it, so an upgrade that moves it fails there.
+    """
+    original = Websocket._process_notification
+    if getattr(original, "captures_raw_event", False):
+        return
+
+    async def process_notification(self: Websocket, data: Any) -> None:
+        token = _RAW_EVENT.set(data["payload"]["event"])
+        try:
+            await original(self, data)
+        finally:
+            _RAW_EVENT.reset(token)
+
+    process_notification.captures_raw_event = True  # type: ignore[attr-defined]
+    Websocket._process_notification = process_notification  # type: ignore[method-assign]
+
+
+_capture_raw_events()
+
+
+def _with_raw[E: (ChatMessage, ChatNotification, MessageDeleted, UserMessagesCleared, ChatCleared)](
+    event: E,
+) -> E:
+    """The event, carrying the JSON it was made from when there is one."""
+    raw = _RAW_EVENT.get()
+    return event if raw is None else replace(event, raw_event=raw)
 
 
 def _already_subscribed(exc: Exception) -> bool:
@@ -121,28 +168,28 @@ class _BotClient(twitchio.Client):
         log.info("twitch.eventsub_welcome", session=payload.id)
 
     async def event_message(self, payload: Any) -> None:
-        await self.service.emit(payload.id, mapping.chat_message(payload, self.bot_id))
+        await self.service.emit(payload.id, _with_raw(mapping.chat_message(payload, self.bot_id)))
 
     async def event_chat_notification(self, payload: Any) -> None:
-        await self.service.emit(payload.id, mapping.chat_notification(payload))
+        await self.service.emit(payload.id, _with_raw(mapping.chat_notification(payload)))
 
     async def event_message_delete(self, payload: Any) -> None:
-        await self.service.emit(None, mapping.message_deleted(payload))
+        await self.service.emit(None, _with_raw(mapping.message_deleted(payload)))
 
     async def event_chat_clear(self, payload: Any) -> None:
-        await self.service.emit(None, mapping.chat_cleared(payload))
+        await self.service.emit(None, _with_raw(mapping.chat_cleared(payload)))
 
     async def event_chat_clear_user(self, payload: Any) -> None:
-        await self.service.emit(None, mapping.user_messages_cleared(payload))
+        await self.service.emit(None, _with_raw(mapping.user_messages_cleared(payload)))
 
     async def event_follow(self, payload: Any) -> None:
-        await self.service.emit(None, mapping.follow(payload))
+        await self.service.emit(None, _with_raw(mapping.follow(payload)))
 
     async def event_custom_redemption_add(self, payload: Any) -> None:
-        await self.service.emit(payload.id, mapping.redemption(payload))
+        await self.service.emit(payload.id, _with_raw(mapping.redemption(payload)))
 
     async def event_cheer(self, payload: Any) -> None:
-        await self.service.emit(None, mapping.cheer(payload))
+        await self.service.emit(None, _with_raw(mapping.cheer(payload)))
 
 
 class TwitchService:

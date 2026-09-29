@@ -19,6 +19,8 @@ from doomtp_bot.core.outbox import BANNED, Outbox, SendResult
 from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
+from doomtp_bot.history.backfill import BackfillService
+from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
@@ -33,6 +35,7 @@ from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.storage.db import Databases
 from tests.fakes import policy_with_channels
 from tests.runtime.helpers import ping
+from tests.test_history import FakeProvider
 
 BOT_ID, BOT_LOGIN = "999", "doomtp_bot"
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
@@ -135,6 +138,9 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
             "twitch": twitch,
             "customcmds": commands,
             "history": SimpleNamespace(base_url="https://history.example/api"),
+            "backfill": BackfillQueue(
+                BackfillService(conn=dbs.chatlog, writer=writer, provider=FakeProvider(), policy=policy)
+            ),
         },
     )
     channels = ChannelManager(policy, twitch, writer, default_prefix="!")  # emoji default: see below
@@ -408,6 +414,30 @@ async def test_backfill_explains_itself_and_waits_for_the_broadcaster(h: Harness
     await h.say("doomtp", "!backfill off")
     await h.settle()
     assert not h.policy.channel_settings(CHANNEL_ID).history_backfill
+
+
+async def test_the_broadcaster_queues_and_cancels_backfill_jobs(h: Harness) -> None:
+    """ADR-0024 §5: queued by hand from chat; anyone may look at the queue."""
+
+    async def reply(login: str, text: str) -> str:
+        await h.say(login, text)
+        await h.settle()
+        return h.twitch.sent[-1][1]
+
+    assert await reply("doomtp", "!backfill 6h") == "backfill is off for this channel"
+    await reply("doomtp", "!backfill on")
+    assert await reply("bob", "!backfill 6h") == "only the broadcaster can change backfill"
+    assert await reply("doomtp", "!backfill 6h") == "queued #1: the last 6h"
+    assert await reply("doomtp", "!backfill 90m") == "queued #2: the last 1h"
+    assert await reply("doomtp", "!backfill gaps") == "no gaps to fill"
+    assert await reply("bob", "!backfill queue") == "#1 queued, the last 6h; #2 queued, the last 1h"
+    assert await reply("bob", "!backfill cancel 1") == "only the broadcaster can change backfill"
+    assert await reply("doomtp", "!backfill cancel 1") == "cancelled #1"
+    assert await reply("doomtp", "!backfill cancel 1") == "#1 isn't queued here"
+    assert await reply("doomtp", "!backfill queue") == "#2 queued, the last 1h"
+    assert (await reply("doomtp", "!backfill soon")).endswith(
+        "expected on, off, gaps, queue, cancel <job>, or a duration like 6h"
+    )
 
 
 async def test_ignore_me_can_be_taken_back_but_an_ignore_someone_else_set_stays(h: Harness) -> None:

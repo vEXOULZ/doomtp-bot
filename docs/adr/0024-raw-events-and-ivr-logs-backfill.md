@@ -219,10 +219,10 @@ stays open for good.
 
 ## Action Items
 
-1. [ ] Migration: `raw jsonb`, `raw_format` and `enrichment jsonb` on `messages`, `chat_notifications`
+1. [x] Migration: `raw jsonb`, `raw_format` and `enrichment jsonb` on `messages`, `chat_notifications`
    and `mod_events`; `provider` on `backfill_runs`; the `emotes` cache; move IRC lines and rebuild
    the other rows as `legacy`.
-2. [ ] Capture the EventSub `event` JSON in the adapter and store it for live messages, notifications
+2. [x] Capture the EventSub `event` JSON in the adapter and store it for live messages, notifications
    and moderation events.
 3. [ ] `chatlog/events.py`: the one reader from `eventsub`, `irc` and `legacy` to the EventSub shape,
    with golden tests from real recent-messages and ivr.fi lines; `/log` built from it.
@@ -234,5 +234,5 @@ stays open for good.
 7. [ ] The `!backfill` prompt, the admin page and the channels API name ivr.fi and set it per channel.
 8. [ ] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
    later: see the migration in §1).
-9. [ ] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
+9. [x] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
    subcommands and the API.

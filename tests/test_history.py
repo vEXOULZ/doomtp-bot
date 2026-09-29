@@ -78,7 +78,7 @@ def test_privmsg_becomes_a_message_marked_as_history() -> None:
     event = to_events(line, CHANNEL_ID, CHANNEL_LOGIN, PRIVMSG)
     assert isinstance(event, ChatMessage)
     assert (event.message_id, event.user_id, event.text) == ("abc-123", "400", "hello there")
-    assert event.source == "recent-messages" and event.raw == PRIVMSG
+    assert event.source == "recent-messages" and event.raw_line == PRIVMSG
     assert event.sent_at == 1000 and event.received_at == 1005
 
 
@@ -159,9 +159,15 @@ async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None
     assert metrics.MESSAGES_LOGGED.value(source="recent-messages") - logged == 1  # one PRIVMSG among them
     assert provider.calls == [(CHANNEL_LOGIN, 0, 800)]  # asked from 5s before the gap, clamped at 0
     assert (outcome.fetched, outcome.inserted, outcome.complete) == (3, 3, True)
-    async with await dbs.chatlog.execute("SELECT message_id, source, raw FROM messages") as cur:
+    async with await dbs.chatlog.execute(
+        "SELECT message_id, source, raw_format, raw->>'line' AS line FROM messages"
+    ) as cur:
         rows = [tuple(r.values()) for r in await cur.fetchall()]
-    assert rows == [("abc-123", "recent-messages", PRIVMSG)]
+    assert rows == [("abc-123", "recent-messages", "irc", PRIVMSG)]
+    async with await dbs.chatlog.execute(
+        "SELECT type, raw_format, raw ? 'line' AS kept FROM mod_events"
+    ) as cur:
+        assert [tuple(r.values()) for r in await cur.fetchall()] == [("delete", "irc", True)]
     async with await dbs.chatlog.execute(
         "SELECT deleted_at FROM messages WHERE message_id = 'abc-123'"
     ) as cur:
@@ -206,7 +212,7 @@ async def test_only_opted_in_channels_are_backfilled_or_kept_warm(dbs: Databases
     provider = FakeProvider()
     service = await backfill_for(dbs, provider, opted_in=False)
     assert service.enabled_channels() == []
-    assert await service.run_all() == []
+    assert service.login_if_enabled(CHANNEL_ID) is None
     assert await service.keep_warm_once() == 0
     assert provider.calls == []
 
@@ -222,8 +228,9 @@ async def test_a_completed_gap_is_not_fetched_twice(dbs: Databases) -> None:
         """
     )
 
-    assert len(await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN)) == 1
-    assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []  # already filled
+    (gap,) = await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN)
+    await service.fill(gap)
+    assert await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN) == []  # already filled
     await service.writer.stop()
 
 
@@ -242,6 +249,5 @@ async def test_a_gap_that_took_two_runs_to_fill_is_not_fetched_again(dbs: Databa
         """
     )
 
-    assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []
-    assert provider.calls == []
+    assert await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN) == []
     await service.writer.stop()
