@@ -163,7 +163,7 @@ async def test_the_chat_reply_links_the_full_report_only_when_chat_can_open_it(h
     reports = ReportStore("https://bot.example/")
     h.runtime.services["explain_reports"] = reports
     reply = await h.say("alice", "!explain !random 1-6 | echo {_1}")
-    assert reply is not None and " — full report: https://bot.example/explain/" in reply
+    assert reply is not None and "; full report: https://bot.example/explain/" in reply
     kept = reports.get(reply.rsplit("/", 1)[1])
     assert kept is not None and kept["channel"] == CHANNEL_LOGIN
     assert [i["name"] for i in kept["invocations"]] == ["random", "echo"]

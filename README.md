@@ -19,7 +19,7 @@ so is the deploy path. What is left is running it against real chat — see
    - **Category:** Chat Bot. **Client type:** Confidential.
 2. Put the Client ID in `.env` as `TWITCH_CLIENT_ID`, and the client secret in `secrets/twitch_client_secret`. For local development you can use `TWITCH_CLIENT_SECRET` instead.
 3. Start the bot, then open `http://localhost:8080/auth/login` in a browser on the same machine. Sign in as the **bot account**, not your personal account.
-4. The bot joins its own channel. A streamer adds it to their channel by typing `!join` in the bot's chat. A bot owner can add any channel with `!join <channel>` there. Set owners with `BOT_OWNER_IDS`.
+4. The bot joins its own channel. A streamer types `!join` in the bot's chat and gets the `/auth/connect` link; connecting there adds the bot to their channel. The link is the same for every channel: the bot joins whichever channel signs in with it. A bot owner can add any channel without that with `!join basic <channel>` there. Set owners with `BOT_OWNER_IDS`.
 
 **Keep development and the server apart.** Give each its own Twitch bot account and its own Twitch
 application, which means its own `TWITCH_CLIENT_ID`, client secret, `TWITCH_BOT_ID` and database. Then
@@ -336,8 +336,8 @@ check again:
 curl -s localhost:8080/readyz
 ```
 
-`"status":"ok"`. The bot is now in its own chat. Type `!join` there from your channel's account to add
-it, or `!join <channel>` as a bot owner.
+`"status":"ok"`. The bot is now in its own chat. Type `!join` there from your channel's account for the link that
+adds it, or `!join basic <channel>` as a bot owner.
 
 ### 8. Publish the web site
 

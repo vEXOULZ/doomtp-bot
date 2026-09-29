@@ -69,7 +69,7 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
         params=(Param("1", "command", description="A command name"),),
         examples=(
             Example("{sign}help", "commands: explain, help, random, …"),
-            Example("{sign}help random", "{sign}random [range] — …"),
+            Example("{sign}help random", "{sign}random [range]: …"),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
     )
@@ -86,11 +86,11 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
         if spec is None or not policy.is_permitted(ctx.exec, spec):
             return Result.failure(Code.NOT_FOUND, f"no command named {name}")
-        text = f"{prefix}{spec.usage()} — {with_sign(spec.summary, prefix)}"
+        text = f"{prefix}{spec.usage()}: {with_sign(spec.summary, prefix)}"
         if spec.aliases:
             text += f" (aliases: {', '.join(spec.aliases)})"
         if spec.params:
-            text += f" — {cc_params.describe(spec.params)}"
+            text += f". {cc_params.describe(spec.params)}"
         return Result.success(text, {"name": spec.name, "usage": spec.usage(), "summary": spec.summary})
 
     builtins = [
@@ -103,10 +103,10 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     )
     text = "commands: " + ", ".join(builtins)
     if custom:
-        text += " — custom: " + ", ".join(custom)
+        text += "; custom: " + ", ".join(custom)
     link = site_link(ctx)
     if link:
-        text += f" — more at {link}"
+        text += f"; more at {link}"
     return Result.success(text, {"builtin": builtins, "custom": custom, "link": link})
 
 

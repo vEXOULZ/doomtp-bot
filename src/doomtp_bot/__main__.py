@@ -327,6 +327,8 @@ async def run(settings: Settings) -> None:
             on_broadcaster_authorized=on_broadcaster_authorized,
             expected_bot_id=settings.twitch_bot_id,
         )
+        # `!join` links here: connecting is how a broadcaster adds the bot (ADR-0007).
+        runtime.services["connect_url"] = settings.public_base_url.rstrip("/") + "/auth/connect"
     # People signing in to the web admin (ADR-0017). Needs only the app's credentials, not the bot's token;
     # or, with SIGNIN_PROVIDER=vexoulz, this bot's client registration in vexoulz-auth (ADR-0023).
     signin: TwitchSignIn | None = None

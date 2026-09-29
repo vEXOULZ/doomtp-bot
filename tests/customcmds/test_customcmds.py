@@ -468,7 +468,7 @@ async def test_declared_params_are_validated_and_shown(h: Harness) -> None:
     usage = await h.say(
         "alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "how many sides"'
     )
-    assert usage == "!roll <sides> — 1 sides: int — how many sides"
+    assert usage == "!roll <sides>. 1 sides: int, how many sides"
 
     good = await h.run("alice", "!roll 20")
     assert good.result.ok and good.send is not None and good.send.startswith("Alice rolled ")
@@ -478,7 +478,7 @@ async def test_declared_params_are_validated_and_shown(h: Harness) -> None:
     missing = await h.run("alice", "!roll")
     assert missing.result.code == Code.USAGE and "required" in (missing.result.message or "")
 
-    assert await h.say("alice", "!cc param roll 1 remove") == "!roll [arguments…] — takes free arguments"
+    assert await h.say("alice", "!cc param roll 1 remove") == "!roll [arguments…]. takes free arguments"
 
 
 async def test_param_declaration_is_rejected_when_malformed(h: Harness) -> None:
@@ -502,7 +502,7 @@ async def test_help_lists_custom_commands_the_caller_can_run(h: Harness) -> None
     detail = await h.say("bob", "!help hype")
     assert (
         detail
-        == "!hype [arguments…] — gets the chat hyped — 1+ arguments: str (optional) — passed to the command body"
+        == "!hype [arguments…]: gets the chat hyped. 1+ arguments: str (optional), passed to the command body"
     )
 
     alices = await h.say("alice", "!help")
