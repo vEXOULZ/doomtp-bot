@@ -235,6 +235,10 @@ log_sessions(id bigint IDENTITY PRIMARY KEY, channel_id text, started_at bigint,
              end_reason text)                        -- live coverage intervals
 backfill_runs(id bigint IDENTITY PRIMARY KEY, channel_id text, gap_from bigint, gap_to bigint,
               fetched integer, inserted integer, complete boolean, error text, provider text, at bigint)
+backfill_jobs(id bigint IDENTITY PRIMARY KEY, channel_id text, from_ms bigint, to_ms bigint,
+              requested_by text, requested_at bigint, state text,  -- queued|running|done|failed|cancelled
+              started_at bigint, finished_at bigint, fetched integer, inserted integer, complete boolean,
+              error text)                            -- the backfill queue (ADR-0024 §5)
 emotes(emote_id text PRIMARY KEY, set_id text, owner_id text, formats jsonb, source text,
        looked_up_at bigint)                          -- emote lookups for backfilled lines (ADR-0024)
 
@@ -261,6 +265,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 - `log_sessions` records exactly when the bot was listening to each channel.
 - On startup — including the one after a stopped Twitch client is started again (ADR-0001) — the **HistoryProvider** fetches `recent-messages/:channel?after=<gap_from - 5s>` for every gap longer than 5 s. A reconnect TwitchIO handles inside one running client never ends the session, so there is no gap to fill for it.
 - It parses the raw IRC lines and inserts them with `source='recent-messages'`. Inserts are idempotent on the message ID.
+- Each gap is a `backfill_jobs` row, and one worker runs the jobs oldest first (ADR-0024 §5). A range already queued or running is not queued again, and a job a stop cut short is queued again at the next startup. The broadcaster queues more by hand (`!backfill gaps`, `!backfill 6h`, `!backfill queue`, `!backfill cancel <job>`), and so does the admin area (`GET`/`POST /channels/{login}/backfill`, `DELETE /channels/{login}/backfill/{job_id}`).
 - It records a `backfill_runs` row. The row is marked `complete=0` if the service hit its 800-message cap or reported `channel_not_joined`.
 - **Backfilled events never trigger commands, listeners or triggers.**
 - The service only starts collecting a channel after the first request for it, so the bot **keeps each channel warm** with periodic `limit=1` requests.
@@ -686,7 +691,7 @@ src/doomtp_bot/
 │               metrics.py                                                 ✔ ADR-0015 counters
 │               instance_lock.py capabilities.py streams.py                ✔ ADR-0007 probe and stream poller
 ├─ twitch/      client.py mapping.py auth.py tokens.py    # only place importing twitchio  ✔
-├─ history/     provider.py backfill.py irc_parse.py                       ✔ ADR-0008
+├─ history/     provider.py backfill.py queue.py irc_parse.py              ✔ ADR-0008, ADR-0024
 ├─ chatlog/     writer.py queries.py                                       ✔ writes; the shared reads (search)
 ├─ moderation/  index.py automod.py                                        ✔
 ├─ lang/        parser.py (PEG, spec App. C) ast.py errors.py              ✔ syntax (versioned)

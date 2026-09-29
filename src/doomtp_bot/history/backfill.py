@@ -158,19 +158,18 @@ class BackfillService:
             if settings.history_backfill and settings.active
         ]
 
-    async def run_for_channel(self, channel_id: str, channel_login: str) -> list[BackfillOutcome]:
+    def login_if_enabled(self, channel_id: str) -> str | None:
+        """The channel's login while it is active and opted in; None otherwise."""
+        return next((login for cid, login in self.enabled_channels() if cid == channel_id), None)
+
+    async def open_gaps(self, channel_id: str, channel_login: str) -> list[Gap]:
+        """Coverage gaps no run has filled completely. `BackfillQueue` turns them into jobs (ADR-0024 §5)."""
         filled = await self._filled_gaps(channel_id)
         return [
-            await self.fill(gap)
+            gap
             for gap in await find_gaps(self.conn, channel_id, channel_login)
             if (gap.from_ms, gap.to_ms) not in filled
         ]
-
-    async def run_all(self) -> list[BackfillOutcome]:
-        outcomes: list[BackfillOutcome] = []
-        for channel_id, login in self.enabled_channels():
-            outcomes.extend(await self.run_for_channel(channel_id, login))
-        return outcomes
 
     async def fill(self, gap: Gap) -> BackfillOutcome:
         response = await self.provider.fetch(

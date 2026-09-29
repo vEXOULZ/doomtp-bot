@@ -12,6 +12,7 @@ from httpx import ASGITransport
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.api.sessions import SESSION_COOKIE
+from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
@@ -19,6 +20,8 @@ from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
+from doomtp_bot.history.backfill import BackfillService
+from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
@@ -28,6 +31,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.variables.store import PostgresVariableStore
 from doomtp_bot.webfetch.hosts import HostStore
 from tests.fakes import policy_with_channels
+from tests.test_history import FakeProvider
 
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
@@ -105,6 +109,14 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,
             "http_hosts": http_hosts,
+            "backfill": BackfillQueue(
+                BackfillService(
+                    conn=dbs.chatlog,
+                    writer=ChatLogWriter(dbs.chatlog),
+                    provider=FakeProvider(),
+                    policy=policy,
+                )
+            ),
         },
         admin_password=PASSWORD,
     )
@@ -462,6 +474,35 @@ async def test_runs_messages_and_audit_are_readable(
     )
     entries = (await client.get("/api/v1/audit", headers=auth(write_key))).json()["entries"]
     assert entries[0]["action"] == "channel.set.quiet_errors" and entries[0]["via"] == "api"
+
+
+async def test_backfill_jobs_are_queued_listed_and_cancelled(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    """ADR-0024 §5: the admin area can queue what chat can, and see what the worker did."""
+    url = f"/api/v1/channels/{CHANNEL_LOGIN}/backfill"
+    off = await client.post(url, json={"from_ms": 1000, "to_ms": 5000}, headers=auth(write_key))
+    assert off.status_code == 409 and off.json()["detail"] == "backfill is off for this channel"
+
+    await app_and_keys[0].state.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", True, Actor(None, "test"))
+    )
+    for body in ({}, {"gaps": True, "from_ms": 1000}):
+        assert (await client.post(url, json=body, headers=auth(write_key))).status_code == 400
+    queued = await client.post(url, json={"from_ms": 1000, "to_ms": 5000}, headers=auth(write_key))
+    assert queued.status_code == 201
+    (job,) = queued.json()["jobs"]
+    assert (job["from_ms"], job["to_ms"], job["state"]) == (1000, 5000, "queued")
+    again = await client.post(url, json={"from_ms": 1000, "to_ms": 5000}, headers=auth(write_key))
+    assert again.status_code == 409
+    assert (await client.post(url, json={"gaps": True}, headers=auth(write_key))).json() == {"jobs": []}
+
+    listed = (await client.get(url, headers=auth(write_key))).json()
+    assert listed["enabled"] is True and [j["id"] for j in listed["jobs"]] == [job["id"]]
+
+    cancelled = await client.delete(f"{url}/{job['id']}", headers=auth(write_key))
+    assert cancelled.status_code == 200 and cancelled.json()["state"] == "cancelled"
+    assert (await client.delete(f"{url}/{job['id']}", headers=auth(write_key))).status_code == 409
 
 
 async def test_channel_variables_are_readable(

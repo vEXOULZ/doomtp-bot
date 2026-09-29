@@ -234,5 +234,5 @@ stays open for good.
 7. [ ] The `!backfill` prompt, the admin page and the channels API name ivr.fi and set it per channel.
 8. [ ] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
    later: see the migration in §1).
-9. [ ] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
+9. [x] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
    subcommands and the API.
