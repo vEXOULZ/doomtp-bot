@@ -35,11 +35,11 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 5/5 | Complete: `http get`, the host allow-list with its secrets and limits, and the `weather` starter command |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
 | [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 3/3 | Complete: rolled back and forward on guest 221 |
-| [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 0/8 | Accepted; nothing built yet |
+| [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 0/9 | Accepted; nothing built yet |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**124 of 133 ADR action items are closed.** One (ADR-0008 item 4) is waiting on a person, not on code;
-the other eight are ADR-0024, accepted on 2026-09-28 and not yet started. **All 9 architecture promises are closed**: six built,
+**124 of 134 ADR action items are closed.** One (ADR-0008 item 4) is waiting on a person, not on code;
+the other nine are ADR-0024, accepted on 2026-09-28 and not yet started. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 

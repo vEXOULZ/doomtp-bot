@@ -1,6 +1,6 @@
 # ADR-0024: Keep every event as Twitch sent it, and backfill older gaps from logs.ivr.fi
 
-**Status:** Accepted — 2026-09-28
+**Status:** Accepted — 2026-09-28; amended 2026-09-29 (the migration in §1; §5)
 **Date:** 2026-09-28
 **Deciders:** Project owner
 
@@ -89,9 +89,16 @@ loudly.
 compresses values past about 2 KB and the log is one channel's chat; this is accepted, and `raw` is left
 out of every query that does not need it.
 
-**Migration** (ADR-0022, additive first): add `raw`/`raw_format`; move the existing IRC lines into
-`raw` as `irc`; rebuild the other rows as `legacy`; switch the readers to `raw`. The columns that moved
-are dropped **one release later**, as CONTRIBUTING.md asks.
+**Migration** (ADR-0022): add `raw`/`raw_format`; move the existing IRC lines into `raw` as `irc`;
+rebuild the other rows as `legacy`; switch the readers to `raw`, and drop the columns that moved **in
+the same release**, making `raw` required.
+
+CONTRIBUTING.md asks for a column to be dropped one release after the code stops using it, because the
+old bot keeps writing while the migrate step runs. That rule protects a log someone relies on. On
+2026-09-29 the bot is not in real use yet, and the owner has said the logs it holds need not be kept, so
+the rule is set aside for this ADR: at worst, the few seconds of chat the old bot sees during the update
+are lost. For the same reason the `legacy` rebuild is best effort; a detail it cannot recover is not
+worth more work.
 
 ### 2. One reader turns every format into the EventSub shape
 
@@ -136,7 +143,7 @@ never mixed into it. Each looked-up value records where it came from.
   fill — older than its reach, or past its 800 lines.
 - **Self-imposed limits,** since the service publishes none:
   - at most **one request every 10 seconds**, and **200 a day**;
-  - only a gap's range, never whole days or a whole channel;
+  - only the range a job asks for (§5), never whole days or a whole channel;
   - a `User-Agent` naming the bot and where to reach its owner;
   - on 429 or 5xx, back off exponentially, and stop for the day after three failures in a row;
   - never ask for a range already fetched.
@@ -146,6 +153,35 @@ never mixed into it. Each looked-up value records where it came from.
 - **Consent:** as with recent-messages (ADR-0008 item 3), backfill from ivr.fi is per channel, opt-in,
   and the `!backfill` prompt names the service.
 - **Config:** `IVR_LOGS_URL`. Empty turns the provider off.
+
+### 5. Backfill runs as queued jobs, which can also be started by hand
+
+Today a backfill runs only at startup, inline, for every open gap. With a rate-limited second provider
+a backfill can take minutes or days, so it becomes a **job in a queue**:
+
+- **`chatlog.backfill_jobs`**: the channel, the range (`from_ms`, `to_ms`), who asked (`startup`, a
+  chatter or an API caller), when, and the state: `queued`, `running`, `done`, `failed` or
+  `cancelled`, with what it fetched and stored, whether the range is `complete`, and any error.
+- **One worker** takes the oldest queued job, fills its range (recent-messages, then ivr.fi for what
+  that could not reach, §4) and records a `backfill_runs` row per provider, as today. It wakes when a
+  job is queued. A job still `running` when the bot stops goes back to `queued` at startup, and a job
+  that has spent the day's ivr.fi budget goes back to `queued` until the next day.
+- **Startup** queues a job for each open gap instead of filling it inline. A range already queued or
+  running is not queued again.
+- **By hand**, in the channel, by the broadcaster:
+  - `!backfill gaps` queues every open gap;
+  - `!backfill <duration>`, e.g. `!backfill 6h`, queues the range from that long ago until now;
+  - `!backfill queue` lists the channel's queued and running jobs;
+  - `!backfill cancel <id>` cancels a queued job.
+
+  `!backfill`, `!backfill on` and `!backfill off` keep their meaning.
+- **API** (`admin` area, like the setting itself): `GET /channels/{login}/backfill` lists the
+  channel's jobs; `POST /channels/{login}/backfill` queues `{"from_ms", "to_ms"}` or `{"gaps": true}`;
+  `DELETE /channels/{login}/backfill/{job_id}` cancels a queued job. The admin page is a doomtp-web
+  change on top of this.
+- **Consent** does not change: a channel with backfill off can queue nothing.
+- A range asked for by hand can overlap the live log; message ids keep a message from being stored
+  twice.
 
 ## Options Considered
 
@@ -196,4 +232,7 @@ stays open for good.
 6. [ ] Check whether ivr.fi logs `CLEARCHAT` and `CLEARMSG` for this channel, and contact its
    maintainers about the integration. **Do this before enabling it for a real channel.**
 7. [ ] The `!backfill` prompt, the admin page and the channels API name ivr.fi and set it per channel.
-8. [ ] One release after item 3 ships, drop the columns that moved into `raw`.
+8. [ ] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
+   later: see the migration in §1).
+9. [ ] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
+   subcommands and the API.
