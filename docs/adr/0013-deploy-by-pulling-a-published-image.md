@@ -125,6 +125,11 @@ being immediate.
    on this repository, so its `pg_dump` version and its missing `.env` had never been exercised.)*
 5. [ ] Raise the guest's shutdown timeout (`DefaultTimeoutStopSec` and the VM's own) past the 45 s grace
    period, and install `qemu-guest-agent`, so a host reboot isn't recorded as an unclean shutdown.
+   *(2026-09-28: guest 221 is an LXC container, so `qemu-guest-agent` doesn't apply. Proxmox gives it
+   `down=120` and systemd `DefaultTimeoutStopSec=90s`, both past the 45 s grace period. Still to do: a real
+   host-side shutdown, and a check that the bot logged a clean stop.)*
 6. [ ] Run the timed update on the guest itself: `BOT_IMAGE` set, first pull, first `update.sh` tick, and
    a second one that correctly does nothing. The publish half is proven; the pull half has only ever run
-   against a local registry standing in for GHCR.
+   against a local registry standing in for GHCR. *(2026-09-28: guest 221 runs the homelab's
+   `guest-deploy` timer in place of `update.sh`. `BOT_IMAGE` is `:main`, and every five minutes it pulls
+   and correctly does nothing. Still to do: watch a release land through it.)*

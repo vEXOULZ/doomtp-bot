@@ -437,6 +437,10 @@ back to that data. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR
 An image from before ADR-0022 has no migrate step. After rolling back to one, start it with `up -d --no-deps
 doomtp-bot`, not a bare `up -d`, which would run the step and fail.
 
+Both scripts use `compose.yaml` and `compose.prod.yaml`. A server with an override file of its own lists
+all of them in `COMPOSE_FILE` in `.env` (`COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.local.yaml`),
+which the scripts and a bare `docker compose` both read, so a rollback keeps the override.
+
 ### If something is wrong
 
 | Symptom | Cause |
@@ -505,6 +509,13 @@ docker compose exec -T postgres psql -U doomtp -d doomtp -c 'DROP SCHEMA bot CAS
 
 ```bash
 docker compose exec -T postgres pg_restore -U doomtp -d doomtp < data/backups/bot-20260922T041500Z.dump
+```
+
+Into a new, empty database (a rebuilt server), create the one extension first. The `chatlog` dump uses
+`unaccent`, which lives in `public` and so isn't in either archive:
+
+```bash
+docker compose exec -T postgres psql -U doomtp -d doomtp -c 'CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public'
 ```
 
 The archives are in `custom` format, so `pg_restore --list` shows what is in one and `--table=` pulls a

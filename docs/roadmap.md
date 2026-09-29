@@ -26,7 +26,7 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0011](adr/0011-parser-and-web-editor.md) | One server-side PEG parser, a local highlighter | 6/6 | Complete |
 | [0012](adr/0012-derived-commands-and-packs.md) | Derived commands are global publications | 6/6 | Complete |
 | [0013](adr/0013-deploy-by-pulling-a-published-image.md) | CI publishes, the server pulls | 4/6 | Two need the server |
-| [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 9/10 | One needs the server |
+| [0014](adr/0014-storage-postgres-one-database-two-schemas.md) | Postgres: one database, two schemas | 10/10 | Complete: backup and restore proven on guest 221 |
 | [0015](adr/0015-metrics-prometheus-text-on-the-api.md) | Counters in Prometheus text on `/metrics` | 4/4 | Complete |
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
 | [0017](adr/0017-moderator-sessions-through-twitch-sign-in.md) | Moderator sessions through Twitch sign-in | 6/6 | Complete |
@@ -38,14 +38,14 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 0/8 | Accepted; nothing built yet |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**120 of 133 ADR action items are closed.** Five are waiting on a person or a server, not on code;
+**121 of 133 ADR action items are closed.** Four are waiting on a person or a server, not on code;
 the other eight are ADR-0024, accepted on 2026-09-28 and not yet started; ADR-0018, ADR-0019, ADR-0020 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
 ## What is left, and why
 
-### Waiting on the server — ADR-0013 items 5 and 6, ADR-0014 item 10, ADR-0022 item 3
+### Waiting on the server — ADR-0013 items 5 and 6, ADR-0022 item 3
 
 The publish half is now real. The repository is at
 [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot), and a green run pushes `:main`
@@ -138,8 +138,9 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 
 ## Next, in the order it makes sense
 
-1. **Stand up the Proxmox guest** and run through the deploy tutorial in the README, closing ADR-0013
-   items 5 and 6 and ADR-0014 item 10 on the way. Everything upstream of the guest is now proven.
+1. **Finish on the guest.** Guest 221 runs v0.2.0, and ADR-0014 item 10 closed there on 2026-09-28. Still
+   to do: a host-side shutdown that the bot logs as clean (ADR-0013 item 5), then release v0.3.0 and watch
+   `guest-deploy` take it (item 6), then roll it back and forward once (ADR-0022 item 3).
 2. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
    and read what `scripts/coverage.py` says the next morning.
 3. **Sign the bot in again** once it runs there: `!shoutout` needs `moderator:manage:shoutouts`, which a
