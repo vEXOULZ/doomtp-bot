@@ -400,9 +400,18 @@ async def test_crashing_command_is_contained() -> None:
 
 
 async def test_too_many_invocations() -> None:
-    expr = "!" + " | ".join(["echo x"] * 9)
+    expr = "!" + " | ".join(["echo x"] * 17)
     r = await run(make_runtime(), expr)
-    assert r.result.code == ErrorCode.E_TOO_MANY and r.send == "too many commands (max 8)"
+    assert r.result.code == ErrorCode.E_TOO_MANY and r.send == "too many commands (max 16)"
+
+
+async def test_an_ifelse_counts_as_its_larger_branch() -> None:
+    """Only one branch runs, so the limit sees the larger one, not both (spec §5.2 row 7)."""
+    fifteen = " && ".join(["echo x"] * 15)
+    fits = await run(make_runtime(), f"!ifelse {{1 == 1}} ( {fifteen} ) ( {fifteen} ) && echo y")
+    assert fits.result.code == 0
+    over = await run(make_runtime(), f"!ifelse {{1 == 2}} ( echo x ) ( {fifteen} && echo x ) && echo y")
+    assert over.result.code == ErrorCode.E_TOO_MANY
 
 
 async def test_moderation_cancellation_discards_writes() -> None:
@@ -427,8 +436,8 @@ async def test_failures_carry_the_specs_error_identifier() -> None:
     }
     missing = await run(rt, "!echo {chatter.unset}")  # no ?? fallback (spec §7.5)
     assert missing.result.data == {"error": "E_MISSING_VALUE", "reference": "{chatter.unset}"}
-    too_many = await run(rt, " && ".join(["!echo x"] * 9))
-    assert too_many.result.data == {"error": "E_TOO_MANY", "max": 8}
+    too_many = await run(rt, " && ".join(["!echo x"] * 17))
+    assert too_many.result.data == {"error": "E_TOO_MANY", "max": 16}
     parse = await run(rt, "!echo a ; b")
     assert isinstance(parse.result.data, dict) and parse.result.data["error"] == "E_RESERVED_OPERATOR"
 
