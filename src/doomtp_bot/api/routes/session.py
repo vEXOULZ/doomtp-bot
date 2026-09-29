@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from doomtp_bot.api.access import current_session
+from doomtp_bot.api.access import caller_for_session, current_session
 from doomtp_bot.api.keys import SCOPES, ApiKey, ApiKeyError, ApiKeyService
 from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, LoginLimiter, Networks, Session, address_in
 
@@ -58,10 +58,14 @@ def _session_json(request: Request, session: Session | None) -> dict[str, Any]:
     """`role`, `user` and `channels` say who is behind the session (ADR-0017): the password is an admin
     with no user; a Twitch sign-in names the user, and a moderator's `channels` are the logins they may
     manage (null means every channel). `twitch_login` says whether `/auth/admin/login` is set up, so the
-    site offers the button only then."""
+    site offers the button only then.
+
+    `channel_roles` and `channel_ranks` say why and how far the caller manages each channel, and
+    `own_channel` whether the bot is in the user's own channel (ADR-0026)."""
     auth = _auth(request)
     user = {"id": session.user_id, "login": session.user_login} if session and session.user_id else None
     channels = sorted(session.channels) if session and session.channels is not None else None
+    roles, ranks, own = _channel_access(request, session)
     return {
         "authenticated": session is not None,
         "csrf": session.csrf if session else None,
@@ -72,7 +76,37 @@ def _session_json(request: Request, session: Session | None) -> dict[str, Any]:
         "user": user,
         "channels": channels,
         "twitch_login": getattr(request.app.state, "twitch_signin", None) is not None,
+        "channel_roles": roles,
+        "channel_ranks": ranks,
+        "own_channel": own,
     }
+
+
+def _channel_access(
+    request: Request, session: Session | None
+) -> tuple[dict[str, str] | None, dict[str, int] | None, dict[str, Any] | None]:
+    """The session's role and chat rank in each channel it manages, and its user's own channel. The
+    ranks are worked out now, from the policy, so a custom role granted in chat shows at once."""
+    if session is None or session.user_id is None:
+        return None, None, None
+    policy = getattr(request.app.state, "policy", None)
+    settings = None if policy is None else policy.channel_settings(session.user_id)
+    own = {
+        "login": settings.login if settings is not None else session.user_login,
+        "joined": settings is not None and settings.active,
+        "status": None if settings is None else settings.status,
+        "tier": None if settings is None else settings.tier,
+    }
+    if session.is_admin or session.channels is None or policy is None:
+        return None, None, own
+    caller = caller_for_session(session)
+    roles: dict[str, str] = {}
+    ranks: dict[str, int] = {}
+    for login in sorted(session.channels):
+        role = caller.channel_role(policy, login)
+        if role is not None:
+            roles[login], ranks[login] = role, caller.rank_in(policy, login)
+    return roles, ranks, own
 
 
 async def require_session(request: Request, *, write: bool, admin: bool = True) -> Session:

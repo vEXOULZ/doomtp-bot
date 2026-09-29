@@ -151,13 +151,22 @@ async def test_a_global_bot_admin_is_an_admin(
     assert (await client.get("/api/v1/session")).json()["role"] == "admin"
 
 
-async def test_someone_who_manages_no_channel_gets_no_session(
+async def test_someone_who_manages_no_channel_is_signed_in_as_a_user(
     client: httpx.AsyncClient, signin: dict[str, Any]
 ) -> None:
-    done = await sign_in(client, "nobody", "/admin/audit")
-    assert error_of(done) == ("/admin/login", {"error": ["no_channels"], "next": ["/admin/audit"]})
-    assert client.cookies.get(SESSION_COOKIE) is None
-    assert (await client.get("/api/v1/session")).json()["authenticated"] is False
+    """ADR-0026: no longer refused with `no_channels`. They reach their own things, and no channel."""
+    done = await sign_in(client, "nobody", "/manage/me")
+    assert done.status_code == 302 and done.headers["location"] == "/manage/me"
+    session = (await client.get("/api/v1/session")).json()
+    assert (session["role"], session["user"], session["channels"]) == (
+        "user",
+        {"id": "9", "login": "nobody"},
+        [],
+    )
+    assert session["own_channel"] == {"login": "nobody", "joined": False, "status": None, "tier": None}
+    assert (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}")).status_code == 403
+    assert (await client.get("/api/v1/channels")).json()["channels"] == []
+    assert (await client.get("/api/v1/audit")).json()["entries"] == []
 
 
 async def test_failures_go_back_to_the_login_page_with_a_reason(
@@ -229,8 +238,9 @@ async def test_channels_are_refreshed_every_few_minutes(
 
     http.fail, http.moderated[MOD_ID] = False, []
     now[0] += REFRESH_S
-    assert (await client.get(f"/api/v1/channels/{OWN_LOGIN}")).status_code == 401  # no channels, no session
-    assert (await client.get("/api/v1/session")).json()["authenticated"] is False
+    assert (await client.get(f"/api/v1/channels/{OWN_LOGIN}")).status_code == 403  # no channels left
+    session = (await client.get("/api/v1/session")).json()
+    assert (session["authenticated"], session["role"], session["channels"]) == (True, "user", [])
 
 
 async def test_an_expired_token_is_refreshed_and_a_revoked_one_ends_the_session(

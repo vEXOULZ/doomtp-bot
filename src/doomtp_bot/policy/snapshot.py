@@ -25,6 +25,7 @@ class ChannelSettings:
     reply_hold_ms: int = 0
     log_enabled: bool = True
     history_backfill: bool = False
+    public_log: bool = True  # anyone may read the log while log_enabled is on too (ADR-0026)
     quiet_errors: bool = False
     cc_edit_notice: bool = False  # say when a published command changed (ADR-0009)
     timezone: str = "UTC"
@@ -116,6 +117,7 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
                 reply_hold_ms=r["reply_hold_ms"],
                 log_enabled=r["log_enabled"],
                 history_backfill=r["history_backfill"],
+                public_log=r["public_log"],
                 quiet_errors=r["quiet_errors"],
                 cc_edit_notice=r["cc_edit_notice"],
                 timezone=r["timezone"],

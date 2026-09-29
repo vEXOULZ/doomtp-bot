@@ -627,13 +627,14 @@ A **race window** remains: a mod can act after the message has already been sent
 | `POST /api/v1/explain` | **Now** | Same output as `!explain`. Public, as the editor's preview. The optional `as_user` (with the `badges` to assume) needs an API key or an admin session (§4.4). |
 | `GET /api/v1/language` | **Now** | Syntax version, operators, namespace roots per context, types, raw-tail commands, limits. Powers autocomplete and hover docs. |
 | `GET /api/v1/channels/{login}/commands`, `/publications`, `GET /api/v1/custom-commands` | **Now** | Public, like the pages that already show them |
-| `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables and their storage use, message search, command runs, `/api/v1/audit`, the storage limits (`/api/v1/variable-limits`) and the hosts `http get` may fetch (`/api/v1/http-hosts`, `/api/v1/http-limits`), admins only | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
+| `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables and their storage use, message search, command runs, `/api/v1/audit`, the storage limits (`/api/v1/variable-limits`) and the hosts `http get` may fetch (`/api/v1/http-hosts`, `/api/v1/http-limits`) | **Now** | API key (`read`/`write`) or a session, at the rank chat asks for (ADR-0026): a channel's moderators for most of it, its broadcaster for leaving, backfill jobs, logging and the "who may" roles; joining any channel, the storage limits and the hosts for admins. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked with an admin session through `/api/v1/keys` (the web admin), and the key is in the response that creates it and nowhere else. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
-| `GET /api/v1/channels/{login}/log`, `/log/coverage` | **Now** | Admins only (ADR-0025). The log as one timeline of messages, notifications and moderation events in time order, a keyset page at a time (`next` → `cursor`), newest first or oldest first, narrowed by window, kind, chatter (old logins too), search or `hide_removed`. Messages carry their moderation flags and the command run that links a command to the bot's reply. `/coverage` lists the sessions and gaps in a window and the backfill that filled each. The web site's log viewer and the VOD archive's chat replay both read it. |
-| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a Twitch sign-in (ADR-0017, `/auth/admin/login`) is an admin for a bot owner or bot admin and a moderator otherwise, and a moderator session reaches only the `channel` routes of the channels it lists, and its writes are audited as `via="web"` under the user's id. Keys are for admins. The CSRF token comes from `GET /session`, and `twitch_login` there says whether the Twitch sign-in is set up. Keys are managed with a session only, never with a key. Failed logins are limited per client address; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
+| `GET /api/v1/channels/{login}/log`, `/log/coverage` | **Now** | The channel's moderators, or anyone while its `public_log` and `log_enabled` are on, a limited number of reads a minute per address and without removed messages or moderation events (ADR-0025, ADR-0026); `/messages` the same. The log as one timeline of messages, notifications and moderation events in time order, a keyset page at a time (`next` → `cursor`), newest first or oldest first, narrowed by window, kind, chatter (old logins too), search or `hide_removed`. Messages carry their moderation flags and the command run that links a command to the bot's reply. `/coverage` lists the sessions and gaps in a window and the backfill that filled each. The web site's log viewer and the VOD archive's chat replay both read it. |
+| `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a Twitch sign-in (ADR-0017, `/auth/admin/login`) is an admin for a bot owner or bot admin, a moderator of the channels it lists, or a user who manages none (ADR-0026). `channel_roles` and `channel_ranks` say why and how far it manages each channel, and `own_channel` whether the bot is in the user's own. Its writes are audited as `via="web"` under the user's id. Keys are for admins. The CSRF token comes from `GET /session`, and `twitch_login` there says whether the Twitch sign-in is set up. Keys are managed with a session only, never with a key. Failed logins are limited per client address; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
 | `GET /api/v1/site`, `/site/channels/{login}`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, one channel's sign, tier and status, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
 | `GET /api/v1/channels/{login}/modules`, `/ignored`; `POST /ignored`, `DELETE /ignored/{user_id}` | **Now** | API key or admin session. Modules include the packs a channel can use and `custom` (commands published one by one), each with the `enabled` chat would apply. Ignored users come with who ignored them, when and why; adding and removing them is audited like `ignore` in chat. `everywhere` (the bot-wide list) is for admins |
+| `POST /api/v1/me/channel` | **Now** | Anyone signed in with Twitch: adds the bot to their own channel, the way `!join` does, and the session manages it at once (ADR-0026). A channel the bot left because it was banned needs an admin. |
 | `/static/*` | **Now** | The expression editor bundle and its lexer (`/static/editor/`), and the railroad diagrams (`/static/grammar/`). The web site loads them from here, so there is one copy of each. |
 | `/docs`, `/openapi.json` | **Now** | Swagger UI and the OpenAPI document. Exactly these two: `/docs/…` below them are the web site's pages. |
 
@@ -655,25 +656,29 @@ so its address is the proxy's (on the same host, Docker's private gateway), and 
   - The web site's language page carries it as a playground; the pages that edit bodies and triggers can use the same element.
 - **The language page** includes railroad diagrams for the grammar, drawn from `docs/grammar/railroad.ebnf` (spec Appendix D) by `scripts/render_railroad.py` and committed as SVGs — the bot never draws them. Two CI checks guard the chain: the file equals the appendix, and the pictures match the file.
 
-**Who is calling (ADR-0017).** Every way in meets in `api/access.py`: `authenticate` takes an API key
-(`api/keys.py`) or a session (`api/sessions.py`) and returns a `Caller` with a role, the channels it may
-manage and the `Actor` its writes are audited as. Keys and the password session are admins. A moderator
-session reaches only the routes marked `channel`, and only for the channels it lists; routes marked
-`admin` refuse it, and so does anything that writes the bot-wide scope (an `everywhere` ignore).
+**Who is calling (ADR-0017, ADR-0026).** Every way in meets in `api/access.py`: `authenticate` takes an
+API key (`api/keys.py`) or a session (`api/sessions.py`) and returns a `Caller` with a role, the channels
+it may manage and the `Actor` its writes are audited as. Keys and the password session are admins. Every
+private route names an area: `personal` routes are for anyone signed in; `channel` routes for the channels
+the session lists, at the route's minimum rank; `admin` routes, and anything that writes the bot-wide
+scope (an `everywhere` ignore), for admins. The rank is the one chat would give the user there
+(`PolicyService.build_chatter`, with broadcaster or moderator as the badge), so a custom role raises it on
+the web as in chat, and `PATCH /channels/{login}` checks each field against the rank its chat command
+needs.
 
 **Signing in with Twitch (ADR-0017).** `/auth/admin/login?next=<path>` sends a person to Twitch for
 `user:read:moderated_channels` and back to `/auth/admin/callback`, which Twitch must have registered as
 `PUBLIC_BASE_URL` + `/auth/admin/callback`, next to the bot's `/auth/callback`. `twitch/signin.py`
 works out who they are: a bot owner or global bot admin is an admin; anyone else is a moderator of the
 joined channels that are their own or that Helix `GET /moderation/channels` lists. Someone with none
-gets no session. The callback sets the session cookie and redirects to `next`, which is only ever a
+is a user (ADR-0026). The callback sets the session cookie and redirects to `next`, which is only ever a
 path on this site. Every failure redirects to the site's `/admin/login?error=<reason>` (`denied`,
-`expired`, `twitch`, `no_channels`, `not_configured`), never to a page of the bot's. The state is also
+`expired`, `twitch`, `not_configured`; `no_channels` is no longer sent), never to a page of the bot's. The state is also
 kept in a short-lived cookie, so a callback is taken only from the browser that started it. The user's
 token stays with the session, in memory, and nothing is written to the database. Role and channels are
 worked out again at most every five minutes, on the next request (`current_session` in
-`api/access.py`): channels the user lost go at once, and a user Twitch no longer vouches for, or who
-manages nothing any more, is signed out. A request to Twitch that merely failed keeps what the session
+`api/access.py`): channels the user lost go at once, and a user Twitch no longer vouches for is signed out,
+and one who manages nothing any more becomes a user. A request to Twitch that merely failed keeps what the session
 had until the next try. With `SIGNIN_PROVIDER=vexoulz` (ADR-0023), `VexoulzSignIn` sends the person to
 vexoulz-auth instead, gets the user and a session id for the code, and asks vexoulz-auth for the moderated
 channels; the refresh also checks that session, so signing out everywhere reaches the bot too. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it

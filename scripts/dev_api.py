@@ -10,9 +10,12 @@ stand-in that knows a few made-up users. The data lives in a database of its own
 test server unless `--database-url` says otherwise), dropped and seeded again at every start, so
 whatever the site does to it is gone on the next run. Never point it at a real database.
 
-There is no Twitch sign-in either, so the moderator view (ADR-0017) comes from `/dev/login-as?user=alice`
-instead: a moderator session for a user named with `--moderator` (alice, of vexoulz, by default), made
-exactly as the sign-in makes one. That route is added here, to this script's app, and exists nowhere else.
+There is no Twitch sign-in either, so the signed-in views (ADR-0017, ADR-0026) come from
+`/dev/login-as?user=<login>` instead, a session made exactly as the sign-in makes one, for any made-up user:
+  * a channel's own login (vexoulz, doomtp) is its broadcaster;
+  * a user named with `--moderator` (alice, of vexoulz, by default) moderates those channels;
+  * anyone else (friendlychannel, whose channel the bot isn't in yet) is a plain user.
+That route is added here, to this script's app, and exists nowhere else.
 """
 
 from __future__ import annotations
@@ -156,28 +159,34 @@ def parse_moderators(specs: list[str]) -> dict[str, frozenset[str]]:
     return found
 
 
+def dev_channels(login: str, moderators: dict[str, frozenset[str]]) -> frozenset[str]:
+    """The channels a made-up user manages: those `--moderator` gives them, and their own if joined."""
+    own = frozenset({login}) if login in JOINED else frozenset()
+    return moderators.get(login, frozenset()) | own
+
+
 def add_dev_login(app: FastAPI, moderators: dict[str, frozenset[str]]) -> None:
-    """`GET /dev/login-as?user=<login>[&next=<path>]`: sign in as one of `moderators`, as the Twitch
-    sign-in would. Only this script's app has it; the bot's own never does."""
+    """`GET /dev/login-as?user=<login>[&next=<path>]`: sign in as one of `USERS`, as the Twitch sign-in
+    would. Only this script's app has it; the bot's own never does."""
 
     @app.get("/dev/login-as", include_in_schema=False)
     async def login_as(
         request: Request, user: str, next_path: str | None = Query(default=None, alias="next")
     ) -> Response:
         login = user.lower()
-        channels = moderators.get(login)
-        if channels is None:
-            raise HTTPException(
-                status_code=404, detail=f"not a --moderator: {user}; try {sorted(moderators)}"
-            )
+        if login not in USERS:
+            raise HTTPException(status_code=404, detail=f"no made-up user {user}; try {sorted(USERS)}")
+        channels = dev_channels(login, moderators)
+        role = "moderator" if channels else "user"
         auth = request.app.state.admin_auth
         auth.logout(request.cookies.get(SESSION_COOKIE))
-        session = auth.login(role="moderator", user_id=USERS[login], user_login=login, channels=channels)
+        session = auth.login(role=role, user_id=USERS[login], user_login=login, channels=channels)
         response: Response
         if next_path is not None:
             response = RedirectResponse(safe_next(next_path), status_code=302)
         else:
-            text = f"signed in as {login}, moderator of {', '.join(sorted(channels))}\n"
+            manages = ", ".join(sorted(channels)) or "no channel"
+            text = f"signed in as {login}, managing {manages}\n"
             response = Response(text, media_type="text/plain")
         set_session_cookie(request, response, session)
         return response
@@ -247,10 +256,9 @@ async def main(args: argparse.Namespace) -> None:
     add_dev_login(app, moderators)
     base = f"http://{args.host}:{args.port}"
     print(f"dev API on {base}, admin password {args.password!r}")
-    for login, channels in sorted(moderators.items()):
-        print(
-            f"moderator {login} ({', '.join(sorted(channels))}): {base}/dev/login-as?user={login}&next=/admin"
-        )
+    for login in sorted(USERS):
+        manages = ", ".join(sorted(dev_channels(login, moderators))) or "a plain user"
+        print(f"{login} ({manages}): {base}/dev/login-as?user={login}&next=/manage")
     print(f"an explain report: http://{args.host}:{args.port}/explain/{token}")
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="info"))
     try:

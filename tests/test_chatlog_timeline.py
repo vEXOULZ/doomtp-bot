@@ -11,6 +11,7 @@ import pytest
 
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.chatlog.timeline import Cursor, CursorError
+from doomtp_bot.policy.repository import Actor
 from doomtp_bot.storage.db import Connection
 from tests.test_api_data import (  # noqa: F401  (fixtures)
     CHANNEL_ID,
@@ -196,7 +197,22 @@ async def test_a_cursor_is_checked(client: httpx.AsyncClient, chatlog: Connectio
         Cursor.decode("W10")  # "[]"
 
 
-async def test_the_log_is_for_admins(client: httpx.AsyncClient, chatlog: Connection) -> None:
+async def test_a_public_log_shows_what_chat_saw_and_can_be_closed(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], chatlog: Connection
+) -> None:
+    """Without signing in: messages and notifications only, no removed messages (ADR-0026)."""
+    body = (await client.get(LOG)).json()
+    assert _ids(body["entries"]) == [
+        ("message", "m-d"),
+        ("notification", "n-1"),
+        ("message", "m-b"),
+        ("message", "m-a"),
+    ]
+    assert (await client.get(f"{LOG}/coverage", params={"since": T})).status_code == 200
+
+    await app_and_keys[0].state.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "public_log", False, Actor(None, "test"))
+    )
     assert (await client.get(LOG)).status_code == 401
     assert (await client.get(f"{LOG}/coverage", params={"since": T})).status_code == 401
 
