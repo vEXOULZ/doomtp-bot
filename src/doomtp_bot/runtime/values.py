@@ -131,6 +131,8 @@ async def convert(
     """Convert `value` per §7.4; raises ConversionError with a user-facing reason."""
     text = _text(value)
     converted: Any
+    if type_name == "any":  # a single placeholder's value keeps its type; anything else is text
+        return value
     if type_name == "str":
         converted = value if isinstance(value, str) else render(value)
         if max_len is not None and len(converted) > max_len:

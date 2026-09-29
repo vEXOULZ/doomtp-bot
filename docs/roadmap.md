@@ -31,14 +31,14 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0016](adr/0016-web-ui-as-a-separate-site-over-the-json-api.md) | The web UI moves to a separate site over the JSON API | 5/5 | Complete |
 | [0017](adr/0017-moderator-sessions-through-twitch-sign-in.md) | Moderator sessions through Twitch sign-in | 6/6 | Complete |
 | [0018](adr/0018-command-language-v2-expressions-brackets-error-codes.md) | Language v2: `$` fields, brackets, expressions, numbered errors | 8/8 | Complete |
-| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 8/11 | Link rule, storage limits, moderation primitives, internal and system packs, automation, quotes as a pack done; the readouts and `customecho` are next |
+| [0019](adr/0019-default-command-set.md) | The default command set, bot-owned packs, storage limits | 9/11 | Link rule, storage limits, `random` picking, moderation primitives, internal and system packs, automation, quotes as a pack done; the readouts and `customecho` are next |
 | [0020](adr/0020-gated-http-query-primitive.md) | A gated HTTP query primitive | 5/5 | Complete: `http get`, the host allow-list with its secrets and limits, and the `weather` starter command |
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
 | [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 2/3 | Built; the first real rollback on the server is next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**117 of 125 ADR action items are closed.** Five are waiting on a person or a server, not on code. The
-other 3 are the rest of ADR-0019, decided on 2026-09-28; ADR-0018, ADR-0020 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
+**118 of 125 ADR action items are closed.** Five are waiting on a person or a server, not on code. The
+other 2 are the rest of ADR-0019, decided on 2026-09-28; ADR-0018, ADR-0020 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
@@ -149,6 +149,6 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
    afterwards. Every remaining unknown in this project is about what real chat does to it, not about
    what the code does.
 5. **The rest of the default command set** (ADR-0019). Language v2 (ADR-0018) shipped in `v0.2.0`, so
-   picking from a list or map, `customecho`, the readouts and the `automation` module are unblocked.
-   Quotes move last, once `random` can pick from a map. The server runs `scripts/migrate_v2.py` once when
+   `customecho`, the readouts and the `automation` module are unblocked.
+   Quotes move last; `random` can already pick from a map. The server runs `scripts/migrate_v2.py` once when
    it first takes `v0.2.0`.

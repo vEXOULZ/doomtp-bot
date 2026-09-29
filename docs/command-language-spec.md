@@ -607,6 +607,7 @@ Placeholders are expanded **immediately before their invocation executes** (§6.
 | `url` | absolute `http`/`https` URL passing the URL safety policy | str | — |
 | `list` | a single placeholder whose value is a list passes through; otherwise JSON text `[…]` | list | `[i]`, `[-i]`, `:len` |
 | `map` | a single placeholder whose value is a map passes through; otherwise JSON text `{…}` | map | `[key]`, `:len`, `:keys`, `:values` |
+| `any` | anything: a single placeholder's value passes through with its type, anything else is text | any | whatever the value has |
 
 `int`, `float` and `duration` params MAY declare `min`/`max`. `str` MAY declare `max_len`.
 
