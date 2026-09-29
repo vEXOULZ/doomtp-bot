@@ -49,7 +49,8 @@ class FakeTwitch:
         return []
 
     async def unsubscribe_channel(self, channel_id: str) -> None:
-        self.subscribed.remove(channel_id)
+        if channel_id in self.subscribed:  # the fixture's channel was never subscribed here
+            self.subscribed.remove(channel_id)
 
     async def resolve_user(self, login: str) -> dict[str, str] | None:
         uid = USERS.get(login.lower().lstrip("@"))

@@ -11,28 +11,36 @@ Three ways in:
     browser whether or not the page meant to, so a cookie-authenticated *write* also needs the session's
     CSRF token in `X-CSRF-Token`. A key doesn't: it is never sent automatically.
 
-A moderator's session reaches the `READ`/`WRITE` routes of its own channels only; `ADMIN_*` routes are for
-admins (`api/access.py`, ADR-0017). Writes are audited as the caller: `via="api"`, or `via="web"` with the
-user's id for a signed-in user.
+A moderator's session reaches the `READ`/`WRITE` routes of its own channels only, and `BROADCASTER_*`
+ones only in their own channel (or with a custom role as high); `ADMIN_*` routes are for admins
+(`api/access.py`, ADR-0017, ADR-0026). A channel's chat log is public while its `public_log` setting is on.
+Writes are audited as the caller: `via="api"`, or `via="web"` with the user's id for a signed-in user.
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from doomtp_bot.api.access import (
     ADMIN_READ,
     ADMIN_WRITE,
-    MODERATOR_SETTABLE,
+    API_ACTOR,
+    BROADCASTER_WRITE,
+    PERSONAL_WRITE,
+    RANK_NAMES,
     READ,
+    SETTING_RANKS,
     WRITE,
     WRITE_OWN,
     Caller,
+    authenticate,
     check_area,
+    current_session,
 )
+from doomtp_bot.api.routes.session import client_address
 from doomtp_bot.audit.log import read_audit
 from doomtp_bot.chatlog import queries, timeline
 from doomtp_bot.clock import now_ms
@@ -67,8 +75,8 @@ router = APIRouter(prefix="/api/v1", tags=["data"])
 
 MAX_ROWS = 500
 SETTABLE = (
-    "prefix", "quiet_errors", "cc_edit_notice", "log_enabled", "history_backfill", "reply_hold_ms", "timezone",
-    "automod_action", "automod_timeout_s", "channel_var_write_role", "grant_min_role",
+    "prefix", "quiet_errors", "cc_edit_notice", "log_enabled", "history_backfill", "public_log", "reply_hold_ms",
+    "timezone", "automod_action", "automod_timeout_s", "channel_var_write_role", "grant_min_role",
     "publish_min_role", "create_min_role", "var_admin_role",
 )  # fmt: skip
 
@@ -109,6 +117,7 @@ def _channel_json(settings: ChannelSettings) -> dict[str, Any]:
         "timezone": settings.timezone,
         "log_enabled": settings.log_enabled,
         "history_backfill": settings.history_backfill,
+        "public_log": settings.public_log,
         "quiet_errors": settings.quiet_errors,
         "cc_edit_notice": settings.cc_edit_notice,
         "reply_hold_ms": settings.reply_hold_ms,
@@ -129,6 +138,7 @@ class ChannelPatch(BaseModel):
     cc_edit_notice: bool | None = None
     log_enabled: bool | None = None
     history_backfill: bool | None = None
+    public_log: bool | None = None
     reply_hold_ms: int | None = Field(default=None, ge=0, le=5000)
     timezone: str | None = None
     automod_action: Literal["off", "delete", "timeout"] | None = None
@@ -176,10 +186,30 @@ async def join_channel(request: Request, body: JoinRequest, caller: Caller = ADM
 
 
 @router.delete("/channels/{login}")
-async def part_channel(request: Request, login: str, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
+async def part_channel(request: Request, login: str, caller: Caller = BROADCASTER_WRITE) -> dict[str, Any]:
+    """Leave the channel, as `!part` does: the broadcaster's call, or an admin's."""
     settings = _channel(request, login)
     await _state(request, "channels").part(settings.channel_id, caller.actor)
     return {"login": settings.login, "status": "parted"}
+
+
+@router.post("/me/channel", status_code=201)
+async def join_own_channel(request: Request, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
+    """Add the bot to the signed-in user's own channel, the way `!join` does (ADR-0026). Signing in with
+    Twitch proved the channel is theirs. The session manages it from now on, without waiting for a refresh."""
+    if caller.user_id is None or caller.login is None:
+        raise HTTPException(status_code=400, detail="sign in with Twitch to add the bot to your channel")
+    login = caller.login.lower()
+    try:
+        failed = await _state(request, "channels").join(caller.user_id, login, caller.actor)
+    except ChannelBanned as exc:
+        raise HTTPException(status_code=409, detail=f"{exc}; only an admin can rejoin it") from exc
+    session = await current_session(request)
+    if session is not None and session.channels is not None:
+        session.channels = session.channels | {login}
+        if session.role == "user":
+            session.role = "moderator"
+    return {"login": login, "channel_id": caller.user_id, "failed_subscriptions": failed}
 
 
 @router.patch("/channels/{login}")
@@ -191,9 +221,12 @@ async def patch_channel(
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in SETTABLE}
     if not changes:
         raise HTTPException(status_code=400, detail=f"nothing to change; fields: {', '.join(SETTABLE)}")
-    refused = sorted(set(changes) - MODERATOR_SETTABLE) if not caller.is_admin else []
+    # Each field needs the rank chat asks for it; one field too high refuses the whole patch (ADR-0026).
+    rank = caller.rank_in(policy, settings.login)
+    refused = sorted(k for k in changes if SETTING_RANKS[k] > rank)
     if refused:
-        raise HTTPException(status_code=403, detail=f"only an admin can change {', '.join(refused)}")
+        who = RANK_NAMES.get(max(SETTING_RANKS[k] for k in refused), "an admin")
+        raise HTTPException(status_code=403, detail=f"only {who} can change {', '.join(refused)}")
 
     async def write(repo: Any) -> None:
         for column, value in changes.items():
@@ -220,7 +253,7 @@ def _backfill(request: Request) -> BackfillQueue:
 
 @router.get("/channels/{login}/backfill")
 async def list_backfill_jobs(
-    request: Request, login: str, limit: int = Query(20, ge=1, le=100), caller: Caller = ADMIN_READ
+    request: Request, login: str, limit: int = Query(20, ge=1, le=100), caller: Caller = READ
 ) -> dict[str, Any]:
     """Queued and running jobs first, oldest first; then the latest finished ones."""
     settings = _channel(request, login)
@@ -230,7 +263,7 @@ async def list_backfill_jobs(
 
 @router.post("/channels/{login}/backfill", status_code=201)
 async def queue_backfill(
-    request: Request, login: str, body: BackfillRequest, caller: Caller = ADMIN_WRITE
+    request: Request, login: str, body: BackfillRequest, caller: Caller = BROADCASTER_WRITE
 ) -> dict[str, Any]:
     settings = _channel(request, login)
     queue = _backfill(request)
@@ -253,7 +286,7 @@ async def queue_backfill(
 
 @router.delete("/channels/{login}/backfill/{job_id}")
 async def cancel_backfill(
-    request: Request, login: str, job_id: int, caller: Caller = ADMIN_WRITE
+    request: Request, login: str, job_id: int, caller: Caller = BROADCASTER_WRITE
 ) -> dict[str, Any]:
     """Only a queued job can be cancelled: a running one is already asking the provider."""
     settings = _channel(request, login)
@@ -729,7 +762,7 @@ async def publications(request: Request, login: str) -> dict[str, Any]:
 
 @router.patch("/channels/{login}/publications/{name}")
 async def set_publication(
-    request: Request, login: str, name: str, body: Enabled, caller: Caller = ADMIN_WRITE
+    request: Request, login: str, name: str, body: Enabled, caller: Caller = WRITE
 ) -> dict[str, Any]:
     settings = _channel(request, login)
     service: CustomCommandService = _state(request, "customcmds")
@@ -931,12 +964,47 @@ async def set_http_limits(
     return limits.as_dict()
 
 
+# ── the chat log: moderators, or anyone while it is public (ADR-0026) ──────
+PUBLIC_READER = Caller("public", API_ACTOR, role="user", channels=frozenset())
+
+
+def _is_public(caller: Caller) -> bool:
+    return caller is PUBLIC_READER
+
+
+async def _log_reader(request: Request) -> Caller:
+    """A moderator of the channel, as for `READ`; failing that, anyone at all while the channel's log is
+    public (`public_log` and `log_enabled`), a limited number of reads a minute per address."""
+    login = request.path_params["login"]
+    try:
+        caller = await authenticate(request, "read")
+        check_area(caller, "channel", login)
+        return caller
+    except HTTPException:
+        settings = _policy(request).channel_by_login(login)
+        if settings is None or not (settings.public_log and settings.log_enabled):
+            raise
+    wait = request.app.state.public_read_limiter.hit(client_address(request))
+    if wait is not None:
+        raise HTTPException(
+            status_code=429, detail="too many reads; try again later", headers={"Retry-After": str(wait)}
+        )
+    return PUBLIC_READER
+
+
+# Read by the test that walks every route.
+_log_reader.area = "channel"  # type: ignore[attr-defined]
+_log_reader.min_rank = None  # type: ignore[attr-defined]
+_log_reader.public = True  # type: ignore[attr-defined]
+LOG_READ = Depends(_log_reader)
+
+
 @router.get("/channels/{login}/runs")
 async def command_runs(
     request: Request,
     login: str,
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
-    caller: Caller = ADMIN_READ,
+    caller: Caller = READ,
 ) -> dict[str, Any]:
     settings = _channel(request, login)
     conn = _state(request, "chatlog_db")
@@ -954,11 +1022,13 @@ async def search_messages(
     login: str,
     q: str = Query(min_length=1, max_length=queries.MAX_QUERY_CHARS),
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
-    caller: Caller = ADMIN_READ,
+    caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """Full-text search over the channel's log (architecture §3.3)."""
+    """Full-text search over the channel's log (architecture §3.3). The public see no removed messages."""
     settings = _channel(request, login)
-    rows = await queries.search_messages(_state(request, "chatlog_db"), settings.channel_id, q, limit=limit)
+    rows = await queries.search_messages(
+        _state(request, "chatlog_db"), settings.channel_id, q, limit=limit, visible_only=_is_public(caller)
+    )
     return {"query": q, "messages": rows}
 
 
@@ -979,17 +1049,23 @@ async def channel_log(
     hide_removed: bool = False,
     cursor: str | None = Query(default=None, max_length=512),
     limit: int = Query(default=100, ge=1, le=MAX_ROWS),
-    caller: Caller = ADMIN_READ,
+    caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
     """The channel's log as one timeline of messages, notifications and moderation, a page at a time
-    (ADR-0025). Pass `next` back as `cursor`, with the same filters, for the page after."""
+    (ADR-0025). Pass `next` back as `cursor`, with the same filters, for the page after. The public get
+    messages and notifications only, without removed messages (ADR-0026)."""
     settings = _channel(request, login)
+    kinds = list(kind or timeline.KINDS)
+    if _is_public(caller):
+        kinds, hide_removed = [k for k in kinds if k != "moderation"], True
+        if not kinds:
+            raise HTTPException(status_code=403, detail=f"only a moderator can read {login}'s moderation log")
     conn = _state(request, "chatlog_db")
     user_ids = None if user is None else await timeline.user_ids_for(conn, user)
     try:
         after = None if cursor is None else timeline.Cursor.decode(cursor)
         entries, following = await timeline.read(
-            conn, settings.channel_id, kinds=kind or timeline.KINDS, since=since, until=until, cursor=after,
+            conn, settings.channel_id, kinds=kinds, since=since, until=until, cursor=after,
             order=order, limit=limit, user_ids=user_ids, query=q, hide_removed=hide_removed,
         )  # fmt: skip
     except timeline.CursorError as exc:
@@ -1008,7 +1084,7 @@ async def channel_log_coverage(
     login: str,
     since: int = Query(ge=0, description="ms since the epoch"),
     until: int | None = Query(default=None, ge=0, description="ms since the epoch; now by default"),
-    caller: Caller = ADMIN_READ,
+    caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
     """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0025)."""
     if until is not None and until <= since:
