@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     # Where the password login is taken from: comma-separated addresses or CIDRs, or `*` for anywhere.
     # Default: this host and the private ranges.
     admin_password_networks: str = LOCAL_NETWORKS
+    # Who signs moderators in to the web admin (ADR-0023): Twitch directly, or vexoulz-auth (the sign-in
+    # shared by the vexoulz sites), which then needs its URL and this bot's client registration there.
+    signin_provider: Literal["twitch", "vexoulz"] = "twitch"
+    vexoulz_auth_url: str | None = None  # as browsers reach it
+    vexoulz_auth_internal_url: str | None = None  # as the bot reaches it; unset = vexoulz_auth_url
+    vexoulz_auth_client_id: str = "dtp"
+    vexoulz_auth_client_secret: SecretStr | None = None
+    vexoulz_auth_client_secret_file: Path | None = None
     history_provider_url: str = "https://recent-messages.robotty.de/api/v2"
 
     log_level: str = "INFO"
@@ -67,6 +75,10 @@ class Settings(BaseSettings):
     def client_secret(self) -> str | None:
         """TWITCH_CLIENT_SECRET, or the contents of TWITCH_CLIENT_SECRET_FILE."""
         return _secret(self.twitch_client_secret, self.twitch_client_secret_file)
+
+    def vexoulz_auth_secret(self) -> str | None:
+        """VEXOULZ_AUTH_CLIENT_SECRET, or the contents of VEXOULZ_AUTH_CLIENT_SECRET_FILE."""
+        return _secret(self.vexoulz_auth_client_secret, self.vexoulz_auth_client_secret_file)
 
     def admin_password_value(self) -> str | None:
         """ADMIN_PASSWORD, or the contents of ADMIN_PASSWORD_FILE."""
