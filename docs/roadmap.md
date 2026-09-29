@@ -38,7 +38,7 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
 **117 of 125 ADR action items are closed.** Five are waiting on a person or a server, not on code. The
-other 4 are the rest of ADR-0019 and ADR-0021, decided on 2026-09-28; ADR-0018 and ADR-0020 are complete. **All 9 architecture promises are closed**: six built,
+other 3 are the rest of ADR-0019, decided on 2026-09-28; ADR-0018, ADR-0020 and ADR-0021 are complete. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 
