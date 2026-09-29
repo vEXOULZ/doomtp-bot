@@ -322,7 +322,9 @@ async def test_a_banned_channel_needs_an_admin_to_rejoin(
     await app_and_keys[0].state.policy.mutate(banned)
     refused = await client.post("/api/v1/me/channel", headers=user)
     assert refused.status_code == 409 and "admin" in refused.json()["detail"]
-    assert (await client.get("/api/v1/session")).json()["role"] == "user"
+    session = (await client.get("/api/v1/session")).json()
+    assert session["role"] == "user"
+    assert session["own_channel"]["joined"] is False and session["own_channel"]["status"] == "banned"
 
 
 async def test_the_password_has_no_channel_of_its_own(client: httpx.AsyncClient) -> None:

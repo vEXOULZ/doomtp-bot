@@ -93,7 +93,8 @@ def _channel_access(
     settings = None if policy is None else policy.channel_settings(session.user_id)
     own = {
         "login": settings.login if settings is not None else session.user_login,
-        "joined": settings is not None and settings.active,
+        # A banned channel is not joined, whatever `active` says: only an admin can rejoin it.
+        "joined": settings is not None and settings.active and settings.status == "joined",
         "status": None if settings is None else settings.status,
         "tier": None if settings is None else settings.tier,
     }
