@@ -174,7 +174,7 @@ QUOTES: tuple[Derived, ...] = (
         name="quote",
         summary="Read, add and delete the channel's quotes",
         body=(
-            f'ifelse {{{_NO_ARG} == "add"}} ( quote_add {{arg.2+}} )'
+            f'ifelse {{{_NO_ARG} == "add"}} ( quote_add {{arg.2+raw}} )'
             f' ( ifelse {{{_NO_ARG} == "del" or {_NO_ARG} == "delete"}} ( quote_del {{arg.2}} )'
             f' ( ifelse {{{_NO_ARG} == "-"}} ( quote_random ) ( quote_show {{arg.1}} ) ) )'
         ),
@@ -185,8 +185,8 @@ QUOTES: tuple[Derived, ...] = (
         summary="Add a quote (moderators)",
         body=(
             "ifelse {$chatter.is_mod}"
-            " ( ifelse {arg.text:len > 400} ( fail 2 a quote is at most 400 characters )"
-            f" ( var incr {_N} && var set {_Q}[{{{_N}}}][text] {{arg.text}}"
+            " ( ifelse {arg.1+raw:len > 400} ( fail 2 a quote is at most 400 characters )"
+            f" ( var incr {_N} && var set {_Q}[{{{_N}}}][text] {{arg.1+raw}}"
             f" && var set {_Q}[{{{_N}}}][date] {{$now.date}}"
             ' && ( ifelse {$channel.live and ($channel.game ?? "-") != "-"}'
             f" ( var set {_Q}[{{{_N}}}][game] {{$channel.game}} ) )"

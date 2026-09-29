@@ -53,16 +53,16 @@ async def test_quotes_are_numbered_and_read_back(h: Harness) -> None:  # noqa: F
     assert empty.result is not None and empty.result.code == Code.NOT_FOUND
     assert empty.send == "no quotes yet — !quote add <text>"
 
-    # quote marks and runs of spaces are lexed away: custom commands have no raw text yet
+    # the text is kept as typed (`{arg.1+raw}`): quote marks, runs of spaces, and the escape a | needs
     assert (await _run(h, "mod", '!quote add I meant   to do "that"', live=True)).send == "added #1"
-    assert (await _run(h, "mod", r"!quote add second \| one")).send == "added #2"  # a | needs escaping
+    assert (await _run(h, "mod", r"!quote add second \| one")).send == "added #2"
 
     first = await _run(h, "alice", "!quote 1")
     assert first.send is not None and re.fullmatch(
-        r"#1: I meant to do that \[Doom, \d{4}-\d\d-\d\d\]", first.send
+        r'#1: I meant   to do "that" \[Doom, \d{4}-\d\d-\d\d\]', first.send
     )
     second = await _run(h, "alice", "!quote 2")  # not live when added: the date alone
-    assert second.send is not None and re.fullmatch(r"#2: second \| one \[\d{4}-\d\d-\d\d\]", second.send)
+    assert second.send is not None and re.fullmatch(r"#2: second \\\| one \[\d{4}-\d\d-\d\d\]", second.send)
     assert (await _run(h, "alice", "!quote")).send in (first.send, second.send)
 
     assert set(await _stored(h)) == {"1", "2"}
