@@ -149,8 +149,9 @@ uv lock
 ## Starter commands
 
 The bot ships commands written in its own language rather than Python: the sentinels `false` and
-`default` in the `core` system pack, and `hug`, `lurk`, `roll`, `so` and `deaths`, published globally as
-the `starter` pack. They are not installed automatically; the database stays the only source of truth for
+`default` in the `core` system pack, and `hug`, `lurk`, `roll`, `so`, `deaths` and `weather`, published
+globally as the `starter` pack. `weather` reads wttr.in, so it works once the bot account is a bot admin
+and an admin has run `!admin http allow wttr.in`. They are not installed automatically; the database stays the only source of truth for
 what the bot offers. **The bot refuses to start until `core` is installed at the version it expects.** The
 `migrate` step installs it: compose runs that before the bot on every `up`, with the schema upgrade
 (ADR-0022). On a brand-new database the bot starts anyway and warns, because the script installs under the

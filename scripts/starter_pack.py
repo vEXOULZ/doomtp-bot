@@ -88,6 +88,19 @@ STARTER: tuple[Derived, ...] = (
         body="var incr channel.deaths | echo deaths: {_1}",
         note="writes a channel variable, so each channel allows it once: `!cc grant deaths channel.deaths`",
     ),
+    Derived(
+        name="weather",
+        summary="The weather somewhere right now",
+        # wttr.in needs no key. `http` runs only in a bot admin's commands and only against hosts an admin
+        # allowed (ADR-0020), so until both are true this fails with that reason and fetches nothing.
+        body=(
+            "http get https://wttr.in/{arg.place}?format=j1"
+            " | echo {_1[nearest_area][0][areaName][0][value]}: {_1[current_condition][0][temp_C]}°C"
+            " / {_1[current_condition][0][temp_F]}°F, {_1[current_condition][0][weatherDesc][0][value]}"
+        ),
+        declarations=('1+ name=place required=yes "a city or place, like Lisbon"',),
+        note="needs the bot account to be a bot admin (`!admin add <bot>`) and `!admin http allow wttr.in`",
+    ),
 )
 
 
