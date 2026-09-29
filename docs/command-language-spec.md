@@ -447,8 +447,9 @@ Codes run from 0 to 1023. Commands MUST use 1–99 for their own failures (4 inc
 | 250–269 values | 250 `E_INDEX`, 251 `E_KEY`, 252 `E_NOT_A_LIST`, 253 `E_NOT_A_MAP`, 254 `E_EMPTY`, 255 `E_NOT_A_NUMBER` |
 | 299 | `E_INTERNAL`: the parser failed without a named error, which is a bug |
 | 300–399 storage (§6.5) | 300 `E_LIST_FULL`, 301 `E_QUOTA`, 302 `E_VALUE_TOO_BIG`, 303 `E_BAD_NAMESPACE`, 304 `E_BAD_VAR_NAME`, 305 `E_TOO_MANY_NAMES` |
+| 400–499 http (ADR-0020) | 400 `E_HTTP_NOT_ALLOWED`, 401 `E_HTTP_ADDRESS`, 402 `E_HTTP_TIMEOUT`, 403 `E_HTTP_TOO_BIG`, 404 `E_HTTP_STATUS`, 405 `E_HTTP_NOT_JSON`, 406 `E_HTTP_PATH`, 407 `E_HTTP_UNREACHABLE` |
 
-Each block leaves gaps for related errors, and the rest of 100–1023 is free for new blocks (400–499 is planned for the gated HTTP query primitive). A script branches on the code of the previous result: `!var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty ) ( echo {_.message} )`.
+Each block leaves gaps for related errors, and the rest of 100–1023 is free for new blocks. A script branches on the code of the previous result: `!var pop channel.queue || ifelse {_.code == 254} ( echo queue is empty ) ( echo {_.message} )`.
 
 ### 6.3 Evaluation
 

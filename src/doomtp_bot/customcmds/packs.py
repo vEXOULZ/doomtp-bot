@@ -29,6 +29,7 @@ RESERVED_PACK_NAMES = frozenset(
         "custom",
         "customcmds",
         "help",
+        "http",
         "basic",
         "logsearch",
         "moderation",

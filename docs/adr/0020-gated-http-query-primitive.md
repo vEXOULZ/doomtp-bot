@@ -90,6 +90,7 @@ A new block, 400–499, as ADR-0018 reserved it:
 | `E_HTTP_STATUS` | 404 | the server answered with a non-2xx status (the status is in the data) |
 | `E_HTTP_NOT_JSON` | 405 | the body isn't JSON |
 | `E_HTTP_PATH` | 406 | the path doesn't exist in the response |
+| `E_HTTP_UNREACHABLE` | 407 | the connection failed: refused, reset, or a TLS error *(added 2026-09-28)* |
 
 ### Logging
 
@@ -136,9 +137,9 @@ The open questions were settled by the project owner:
 ## Action Items
 
 1. [x] Settle the open questions and accept or reject this ADR. *(2026-09-28)*
-2. [ ] The `http` module with `http get`, the admin-publisher check, the address rules and redirects, with tests against a local
-   server that tries each SSRF trick.
+2. [x] The `http` module with `http get`, the admin-publisher check, the address rules and redirects, with tests against a local
+   server that tries each SSRF trick. *(2026-09-28: `modules/httpget.py`, `webfetch/`, `tests/test_http.py`)*
 3. [ ] The host allow-list and secrets: the tables, `!admin http allow|deny|list|secret`, and the JSON
    endpoints (plus a doomtp-web PR).
-4. [ ] Rate limits, the 60 s cache and the `E_HTTP_*` codes in `runtime/result.py` and spec §6.2.
+4. [x] Rate limits, the 60 s cache and the `E_HTTP_*` codes in `runtime/result.py` and spec §6.2. *(2026-09-28)*
 5. [ ] A `weather` derived command in the starter pack, off until a channel allows its host.
