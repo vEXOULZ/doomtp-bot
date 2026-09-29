@@ -34,7 +34,8 @@ from doomtp_bot.api.access import (
     check_area,
 )
 from doomtp_bot.audit.log import read_audit
-from doomtp_bot.chatlog import queries
+from doomtp_bot.chatlog import queries, timeline
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.customcmds.params import to_params
@@ -42,6 +43,7 @@ from doomtp_bot.customcmds.resolution import system_specs
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
+from doomtp_bot.history.queue import BackfillQueue, BackfillRefused
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
@@ -199,6 +201,66 @@ async def patch_channel(
 
     await policy.mutate(write)  # one snapshot reload for the whole patch
     return _channel_json(_channel(request, settings.login))
+
+
+# ── backfill jobs (ADR-0024 §5) ─────────────────────────────────────────────
+
+
+class BackfillRequest(BaseModel):
+    """A range (`to_ms` defaults to now), or `gaps` for every open gap in the channel's log."""
+
+    from_ms: int | None = Field(default=None, ge=0)
+    to_ms: int | None = Field(default=None, ge=0)
+    gaps: bool = False
+
+
+def _backfill(request: Request) -> BackfillQueue:
+    return _state(request, "backfill")  # type: ignore[no-any-return]
+
+
+@router.get("/channels/{login}/backfill")
+async def list_backfill_jobs(
+    request: Request, login: str, limit: int = Query(20, ge=1, le=100), caller: Caller = ADMIN_READ
+) -> dict[str, Any]:
+    """Queued and running jobs first, oldest first; then the latest finished ones."""
+    settings = _channel(request, login)
+    jobs = await _backfill(request).jobs(settings.channel_id, limit=limit)
+    return {"enabled": settings.history_backfill, "jobs": [j.to_json() for j in jobs]}
+
+
+@router.post("/channels/{login}/backfill", status_code=201)
+async def queue_backfill(
+    request: Request, login: str, body: BackfillRequest, caller: Caller = ADMIN_WRITE
+) -> dict[str, Any]:
+    settings = _channel(request, login)
+    queue = _backfill(request)
+    if body.gaps == (body.from_ms is not None):
+        raise HTTPException(status_code=400, detail="send from_ms (and to_ms), or gaps: true")
+    try:
+        if body.gaps:
+            jobs = await queue.queue_gaps(settings.channel_id, caller.label)
+        else:
+            assert body.from_ms is not None
+            to_ms = now_ms() if body.to_ms is None else body.to_ms
+            job = await queue.queue_range(settings.channel_id, body.from_ms, to_ms, caller.label)
+            if job is None:
+                raise HTTPException(status_code=409, detail="that range is already queued")
+            jobs = [job]
+    except BackfillRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"jobs": [j.to_json() for j in jobs]}
+
+
+@router.delete("/channels/{login}/backfill/{job_id}")
+async def cancel_backfill(
+    request: Request, login: str, job_id: int, caller: Caller = ADMIN_WRITE
+) -> dict[str, Any]:
+    """Only a queued job can be cancelled: a running one is already asking the provider."""
+    settings = _channel(request, login)
+    job = await _backfill(request).cancel(settings.channel_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=409, detail=f"job {job_id} isn't queued in {settings.login}")
+    return job.to_json()
 
 
 @router.get("/channels/{login}/modules")
@@ -898,6 +960,61 @@ async def search_messages(
     settings = _channel(request, login)
     rows = await queries.search_messages(_state(request, "chatlog_db"), settings.channel_id, q, limit=limit)
     return {"query": q, "messages": rows}
+
+
+# A list default must be a module-level singleton (ruff B008); repeat `kind=` for several, all by default.
+_KINDS_QUERY = Query(default=None, description="message, notification or moderation; repeat for several")
+
+
+@router.get("/channels/{login}/log")
+async def channel_log(
+    request: Request,
+    login: str,
+    since: int | None = Query(default=None, ge=0, description="ms since the epoch, inclusive"),
+    until: int | None = Query(default=None, ge=0, description="ms since the epoch, exclusive"),
+    order: timeline.Order = "desc",
+    kind: list[timeline.Kind] | None = _KINDS_QUERY,
+    user: str | None = Query(default=None, min_length=1, max_length=40, description="a login, old ones too"),
+    q: str | None = Query(default=None, min_length=1, max_length=queries.MAX_QUERY_CHARS),
+    hide_removed: bool = False,
+    cursor: str | None = Query(default=None, max_length=512),
+    limit: int = Query(default=100, ge=1, le=MAX_ROWS),
+    caller: Caller = ADMIN_READ,
+) -> dict[str, Any]:
+    """The channel's log as one timeline of messages, notifications and moderation, a page at a time
+    (ADR-0025). Pass `next` back as `cursor`, with the same filters, for the page after."""
+    settings = _channel(request, login)
+    conn = _state(request, "chatlog_db")
+    user_ids = None if user is None else await timeline.user_ids_for(conn, user)
+    try:
+        after = None if cursor is None else timeline.Cursor.decode(cursor)
+        entries, following = await timeline.read(
+            conn, settings.channel_id, kinds=kind or timeline.KINDS, since=since, until=until, cursor=after,
+            order=order, limit=limit, user_ids=user_ids, query=q, hide_removed=hide_removed,
+        )  # fmt: skip
+    except timeline.CursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "channel_id": settings.channel_id,
+        "order": order,
+        "entries": entries,
+        "next": None if following is None else following.encode(),
+    }
+
+
+@router.get("/channels/{login}/log/coverage")
+async def channel_log_coverage(
+    request: Request,
+    login: str,
+    since: int = Query(ge=0, description="ms since the epoch"),
+    until: int | None = Query(default=None, ge=0, description="ms since the epoch; now by default"),
+    caller: Caller = ADMIN_READ,
+) -> dict[str, Any]:
+    """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0025)."""
+    if until is not None and until <= since:
+        raise HTTPException(status_code=422, detail="until must be after since")
+    settings = _channel(request, login)
+    return await timeline.coverage(_state(request, "chatlog_db"), settings.channel_id, since, until)
 
 
 @router.get("/audit")

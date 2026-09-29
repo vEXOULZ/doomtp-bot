@@ -101,7 +101,7 @@ def to_events(
             reply_parent_login=line.tag("reply-parent-user-login") or None,
             reply_parent_display=line.tag("reply-parent-display-name") or None,
             source="recent-messages",
-            raw=raw,
+            raw_line=raw,
         )
     if line.command == "CLEARMSG":
         return MessageDeleted(
@@ -110,12 +110,15 @@ def to_events(
             target_user_id=line.tag("target-user-id") or line.tag("login"),
             at=sent_at,
             source="recent-messages",
+            raw_line=raw,
         )
     if line.command == "CLEARCHAT":
         target = line.params[1] if len(line.params) > 1 else ""
         if target:
-            return UserCleared(channel_id, line.tag("target-user-id") or target, sent_at, "recent-messages")
-        return ChatCleared(channel_id, sent_at, "recent-messages")
+            return UserCleared(
+                channel_id, line.tag("target-user-id") or target, sent_at, "recent-messages", raw_line=raw
+            )
+        return ChatCleared(channel_id, sent_at, "recent-messages", raw_line=raw)
     if line.command == "USERNOTICE":
         return ChatNotification(
             id=line.tag("id"),
@@ -125,6 +128,7 @@ def to_events(
             payload={k: v for k, v in line.tags.items() if k.startswith("msg-param") or k == "system-msg"},
             sent_at=sent_at,
             source="recent-messages",
+            raw_line=raw,
         )
     return None
 
@@ -154,19 +158,18 @@ class BackfillService:
             if settings.history_backfill and settings.active
         ]
 
-    async def run_for_channel(self, channel_id: str, channel_login: str) -> list[BackfillOutcome]:
+    def login_if_enabled(self, channel_id: str) -> str | None:
+        """The channel's login while it is active and opted in; None otherwise."""
+        return next((login for cid, login in self.enabled_channels() if cid == channel_id), None)
+
+    async def open_gaps(self, channel_id: str, channel_login: str) -> list[Gap]:
+        """Coverage gaps no run has filled completely. `BackfillQueue` turns them into jobs (ADR-0024 §5)."""
         filled = await self._filled_gaps(channel_id)
         return [
-            await self.fill(gap)
+            gap
             for gap in await find_gaps(self.conn, channel_id, channel_login)
             if (gap.from_ms, gap.to_ms) not in filled
         ]
-
-    async def run_all(self) -> list[BackfillOutcome]:
-        outcomes: list[BackfillOutcome] = []
-        for channel_id, login in self.enabled_channels():
-            outcomes.extend(await self.run_for_channel(channel_id, login))
-        return outcomes
 
     async def fill(self, gap: Gap) -> BackfillOutcome:
         response = await self.provider.fetch(

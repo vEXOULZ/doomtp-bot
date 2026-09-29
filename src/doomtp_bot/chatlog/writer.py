@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from typing import Any
 
 import structlog
 
+from doomtp_bot.chatlog import legacy
 from doomtp_bot.clock import now_ms
 from doomtp_bot.core import metrics
 from doomtp_bot.core.events import (
@@ -31,6 +32,17 @@ QUEUE_MAX = 10_000
 
 Op = tuple[str, tuple[Any, ...]]
 _MESSAGE_SOURCE = 15  # where `source` sits in a "message" op's parameters
+
+
+def _raw(
+    event: dict[str, Any] | None, line: str | None, rebuilt: Callable[[], dict[str, Any]]
+) -> tuple[str, str]:
+    """`raw` and `raw_format` (ADR-0024): what Twitch sent, else the IRC line, else a legacy rebuild."""
+    if event is not None:
+        return json.dumps(event), "eventsub"
+    if line is not None:
+        return json.dumps({"line": line}), "irc"
+    return json.dumps(rebuilt()), "legacy"
 
 
 class ChatLogWriter:
@@ -78,14 +90,16 @@ class ChatLogWriter:
                 msg.message_id, msg.channel_id, msg.user_id, msg.user_login, msg.display_name, msg.text,
                 msg.message_type, json.dumps([asdict(b) for b in msg.badges]), json.dumps(list(msg.fragments)),
                 msg.bits, msg.reply_parent_id, msg.reward_id, msg.source_channel_id, msg.is_self,
-                is_command, msg.source, msg.raw, msg.sent_at, msg.received_at,
+                is_command, msg.source, *_raw(msg.raw_event, msg.raw_line, lambda: legacy.message(msg)),
+                msg.sent_at, msg.received_at,
             ),
         )  # fmt: skip
 
     async def notification(self, n: ChatNotification) -> None:
+        raw = _raw(n.raw_event, n.raw_line, lambda: legacy.notification(n))
         await self._put(
             "notification",
-            (n.id, n.channel_id, n.user_id, n.type, json.dumps(n.payload), n.source, n.sent_at),
+            (n.id, n.channel_id, n.user_id, n.type, json.dumps(n.payload), n.source, *raw, n.sent_at),
         )
 
     async def moderation(
@@ -94,17 +108,19 @@ class ChatLogWriter:
         match event:
             case MessageDeleted():
                 await self._mod_event(event.channel_id, "delete", event.source, event.at,
-                                      message_id=event.message_id, target=event.target_user_id)  # fmt: skip
+                                      message_id=event.message_id, target=event.target_user_id,
+                                      raw_event=event.raw_event, raw_line=event.raw_line)  # fmt: skip
                 await self._put("flag_deleted", (event.at, event.message_id))
             case UserMessagesCleared():
-                await self._mod_event(
-                    event.channel_id, "user_clear", event.source, event.at, target=event.target_user_id
-                )
+                await self._mod_event(event.channel_id, "user_clear", event.source, event.at,
+                                      target=event.target_user_id, raw_event=event.raw_event,
+                                      raw_line=event.raw_line)  # fmt: skip
                 await self._put(
                     "flag_user_cleared", (event.at, event.channel_id, event.target_user_id, event.at)
                 )
             case ChatCleared():
-                await self._mod_event(event.channel_id, "chat_clear", event.source, event.at)
+                await self._mod_event(event.channel_id, "chat_clear", event.source, event.at,
+                                      raw_event=event.raw_event, raw_line=event.raw_line)  # fmt: skip
                 await self._put("flag_chat_cleared", (event.at, event.channel_id, event.at))
             case ModerationAction():
                 kind = event.action if event.action in ("timeout", "ban", "unban", "delete") else "user_clear"
@@ -125,9 +141,15 @@ class ChatLogWriter:
         moderator: str | None = None,
         duration_s: int | None = None,
         reason: str | None = None,
+        raw_event: dict[str, Any] | None = None,
+        raw_line: str | None = None,
     ) -> None:
+        raw = _raw(raw_event, raw_line, lambda: legacy.mod_event(
+            channel_id, message_id=message_id, target=target, moderator=moderator, duration_s=duration_s,
+            reason=reason))  # fmt: skip
         await self._put(
-            "mod_event", (channel_id, kind, message_id, target, moderator, duration_s, reason, source, at)
+            "mod_event",
+            (channel_id, kind, message_id, target, moderator, duration_s, reason, source, *raw, at),
         )
 
     async def command_run(
@@ -316,17 +338,18 @@ _SQL: dict[str, str] = {
     "message": (
         "INSERT INTO messages (message_id, channel_id, user_id, user_login, display_name, text, message_type,"
         " badges, fragments, bits, reply_parent_id, reward_id, source_channel_id, is_self, is_command, source, raw,"
-        " sent_at, received_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " raw_format, sent_at, received_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         # Backfill re-offers messages EventSub already logged; the first one wins (ADR-0008).
         " ON CONFLICT DO NOTHING"
     ),
     "notification": (
-        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, source, sent_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, source, raw, raw_format, sent_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
     ),
     "mod_event": (
         "INSERT INTO mod_events (channel_id, type, message_id, target_user_id, moderator_user_id, duration_s, reason,"
-        " source, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " source, raw, raw_format, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     ),
     "flag_deleted": "UPDATE messages SET deleted_at = COALESCE(deleted_at, %s) WHERE message_id = %s",
     "flag_user_cleared": (

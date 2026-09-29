@@ -32,6 +32,7 @@ from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
 from doomtp_bot.history.provider import RecentMessagesProvider
+from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.automod import AutoMod
 from doomtp_bot.moderation.index import ModerationIndex
@@ -49,7 +50,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.triggers.timers import ChatActivity, TimerScheduler
 from doomtp_bot.twitch.auth import AuthorizedAccount, TwitchAuth, TwitchOAuthHttp
 from doomtp_bot.twitch.client import TwitchService
-from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp
+from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp, VexoulzAuthHttp, VexoulzSignIn
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
@@ -128,6 +129,8 @@ async def run(settings: Settings) -> None:
     # `!explain` links its full report only where chat can open it (architecture §4.4).
     explain_reports = ReportStore(settings.public_base_url if settings.public_web_ui else None)
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
+    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
+    backfill_queue = BackfillQueue(backfill)  # `!backfill gaps` and the API queue jobs (ADR-0024 §5)
     services: dict[str, object] = {
         "policy": policy,
         "variable_store": store,
@@ -138,6 +141,7 @@ async def run(settings: Settings) -> None:
         "triggers": triggers,
         "variable_access": access,
         "history": history,  # the backfill command names the service before anything is sent to it
+        "backfill": backfill_queue,
         "explain_reports": explain_reports,
         "site_url": settings.web_site_url,  # `!help` links the channel's command page there
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
@@ -220,7 +224,6 @@ async def run(settings: Settings) -> None:
         bot_badges=bot_badges,
     )
 
-    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
     poller = (
         StreamPoller(source=twitch, channels=channels, status=streams, sink=dispatcher.handle)
         if twitch is not None
@@ -245,9 +248,10 @@ async def run(settings: Settings) -> None:
                 if poller is not None:
                     await poller.poll()
                     poller.start()
-                filled = await backfill.run_all()  # coverage gaps since the last run (ADR-0008)
-                if filled:
-                    log.info("history.startup_backfill", gaps=len(filled))
+                queued = await backfill_queue.queue_startup()  # gaps since the last run (ADR-0008)
+                if queued:
+                    log.info("history.startup_backfill", gaps=len(queued))
+                backfill_queue.start()
                 backfill.start_keep_warm()
         except Exception:
             log.exception("twitch.start_failed")
@@ -323,12 +327,30 @@ async def run(settings: Settings) -> None:
             on_broadcaster_authorized=on_broadcaster_authorized,
             expected_bot_id=settings.twitch_bot_id,
         )
-    # People signing in to the web admin (ADR-0017). Needs only the app's credentials, not the bot's token.
+    # People signing in to the web admin (ADR-0017). Needs only the app's credentials, not the bot's token;
+    # or, with SIGNIN_PROVIDER=vexoulz, this bot's client registration in vexoulz-auth (ADR-0023).
     signin: TwitchSignIn | None = None
-    if settings.twitch_client_id and secret:
+    admin_callback = settings.public_base_url.rstrip("/") + "/auth/admin/callback"
+    if settings.signin_provider == "vexoulz":
+        auth_secret = settings.vexoulz_auth_secret()
+        if settings.vexoulz_auth_url and auth_secret:
+            signin = VexoulzSignIn(
+                auth_url=settings.vexoulz_auth_url,
+                client_id=settings.vexoulz_auth_client_id,
+                redirect_uri=admin_callback,
+                http=VexoulzAuthHttp(
+                    settings.vexoulz_auth_internal_url or settings.vexoulz_auth_url,
+                    settings.vexoulz_auth_client_id,
+                    auth_secret,
+                ),
+                policy=policy,
+            )
+        else:
+            log.warning("signin.not_configured", provider="vexoulz", missing="VEXOULZ_AUTH_URL or its secret")
+    elif settings.twitch_client_id and secret:
         signin = TwitchSignIn(
             client_id=settings.twitch_client_id,
-            redirect_uri=settings.public_base_url.rstrip("/") + "/auth/admin/callback",
+            redirect_uri=admin_callback,
             http=TwitchSignInHttp(settings.twitch_client_id, secret),
             policy=policy,
         )
@@ -376,6 +398,7 @@ async def run(settings: Settings) -> None:
             "chatlog_db": dbs.chatlog,
             "api_keys": ApiKeyService(dbs.bot),
             "streams": streams,  # {channel.live} and friends in /explain runs
+            "backfill": backfill_queue,
             "explain_reports": explain_reports,
             "twitch_signin": signin,
         },
@@ -405,6 +428,7 @@ async def run(settings: Settings) -> None:
         await probe.stop()
         if poller is not None:
             await poller.stop()
+        await backfill_queue.stop()
         await backfill.stop()
         await history.close()
         twitch_start.cancel()

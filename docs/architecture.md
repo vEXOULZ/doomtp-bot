@@ -214,24 +214,33 @@ messages(
   bits bigint DEFAULT 0, reply_parent_id text, reward_id text, source_channel_id text,
   is_self boolean DEFAULT false, is_command boolean DEFAULT false,
   source text NOT NULL DEFAULT 'eventsub',     -- eventsub | recent-messages
-  raw text,                                    -- original IRC line when backfilled
+  raw jsonb, raw_format text,                  -- the source (ADR-0024): eventsub | irc | legacy
+  enrichment jsonb,                            -- what a backfilled line lacked, looked up
   sent_at bigint NOT NULL, received_at bigint NOT NULL,
   deleted_at bigint, cleared_at bigint, mod_event_id bigint,
   tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', chatlog_unaccent(text))) STORED)
 -- indexes: (channel_id, sent_at), (user_id, sent_at), GIN on tsv
 
 chat_notifications(id text PRIMARY KEY, channel_id text, user_id text, type text,
-                   payload text, source text, sent_at bigint)
+                   payload text, source text, raw jsonb, raw_format text, enrichment jsonb, sent_at bigint)
 mod_events(id bigint IDENTITY PRIMARY KEY, channel_id text, type text, message_id text,
            target_user_id text, moderator_user_id text, duration_s integer, reason text,
-           source text, at bigint)
+           source text, raw jsonb, raw_format text, enrichment jsonb, at bigint)
+-- raw: the EventSub `event` object, {"line": <IRC line>}, or a legacy rebuild. The columns it repeats
+-- (display name, badges, fragments, payload, ...) are dropped when the readers use it (ADR-0024 item 8).
 users(user_id text PRIMARY KEY, login text, display_name text, first_seen bigint, last_seen bigint)
 user_names(user_id text, login text, display_name text, seen_from bigint, PRIMARY KEY (user_id, login))
 
 log_sessions(id bigint IDENTITY PRIMARY KEY, channel_id text, started_at bigint, ended_at bigint,
              end_reason text)                        -- live coverage intervals
 backfill_runs(id bigint IDENTITY PRIMARY KEY, channel_id text, gap_from bigint, gap_to bigint,
-              fetched integer, inserted integer, complete boolean, error text, at bigint)
+              fetched integer, inserted integer, complete boolean, error text, provider text, at bigint)
+backfill_jobs(id bigint IDENTITY PRIMARY KEY, channel_id text, from_ms bigint, to_ms bigint,
+              requested_by text, requested_at bigint, state text,  -- queued|running|done|failed|cancelled
+              started_at bigint, finished_at bigint, fetched integer, inserted integer, complete boolean,
+              error text)                            -- the backfill queue (ADR-0024 §5)
+emotes(emote_id text PRIMARY KEY, set_id text, owner_id text, formats jsonb, source text,
+       looked_up_at bigint)                          -- emote lookups for backfilled lines (ADR-0024)
 
 command_runs(id bigint IDENTITY PRIMARY KEY, channel_id text, user_id text, trigger_type text,
              trigger_id text, expr text, resolved text, code integer, message text,
@@ -256,6 +265,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 - `log_sessions` records exactly when the bot was listening to each channel.
 - On startup — including the one after a stopped Twitch client is started again (ADR-0001) — the **HistoryProvider** fetches `recent-messages/:channel?after=<gap_from - 5s>` for every gap longer than 5 s. A reconnect TwitchIO handles inside one running client never ends the session, so there is no gap to fill for it.
 - It parses the raw IRC lines and inserts them with `source='recent-messages'`. Inserts are idempotent on the message ID.
+- Each gap is a `backfill_jobs` row, and one worker runs the jobs oldest first (ADR-0024 §5). A range already queued or running is not queued again, and a job a stop cut short is queued again at the next startup. The broadcaster queues more by hand (`!backfill gaps`, `!backfill 6h`, `!backfill queue`, `!backfill cancel <job>`), and so does the admin area (`GET`/`POST /channels/{login}/backfill`, `DELETE /channels/{login}/backfill/{job_id}`).
 - It records a `backfill_runs` row. The row is marked `complete=0` if the service hit its 800-message cap or reported `channel_not_joined`.
 - **Backfilled events never trigger commands, listeners or triggers.**
 - The service only starts collecting a channel after the first request for it, so the bot **keeps each channel warm** with periodic `limit=1` requests.
@@ -620,6 +630,7 @@ A **race window** remains: a mod can act after the message has already been sent
 | `/api/v1/channels…` settings, join/part, module and command toggles, filters, triggers, publications, variables and their storage use, message search, command runs, `/api/v1/audit`, the storage limits (`/api/v1/variable-limits`) and the hosts `http get` may fetch (`/api/v1/http-hosts`, `/api/v1/http-limits`), admins only | **Now** | API key (`read`/`write`) or an admin session. Writes call the same services the chat commands do, so they land in the audit log with `via="api"`. Variables are read-only here: their access rules live in the runtime. |
 
 **API keys** (`api/keys.py`) are 32 random bytes with a `dtb_` prefix, stored only as a SHA-256 — random keys need no password hashing, since there is nothing to guess. They are created and revoked with an admin session through `/api/v1/keys` (the web admin), and the key is in the response that creates it and nowhere else. Two scopes: `read` and `write`. A session cookie also authenticates, but a cookie-authenticated *write* must carry the session's CSRF token in `X-CSRF-Token`, because browsers send cookies whether or not the page meant to.
+| `GET /api/v1/channels/{login}/log`, `/log/coverage` | **Now** | Admins only (ADR-0025). The log as one timeline of messages, notifications and moderation events in time order, a keyset page at a time (`next` → `cursor`), newest first or oldest first, narrowed by window, kind, chatter (old logins too), search or `hide_removed`. Messages carry their moderation flags and the command run that links a command to the bot's reply. `/coverage` lists the sessions and gaps in a window and the backfill that filled each. The web site's log viewer and the VOD archive's chat replay both read it. |
 | `/api/v1/session`, `/api/v1/keys` | **Now** | The admin login and API keys as JSON, for a UI served from elsewhere on the same host (ADR-0016). A session has a `role`: the password is an admin; a Twitch sign-in (ADR-0017, `/auth/admin/login`) is an admin for a bot owner or bot admin and a moderator otherwise, and a moderator session reaches only the `channel` routes of the channels it lists, and its writes are audited as `via="web"` under the user's id. Keys are for admins. The CSRF token comes from `GET /session`, and `twitch_login` there says whether the Twitch sign-in is set up. Keys are managed with a session only, never with a key. Failed logins are limited per client address; behind a proxy, `WEB_FORWARDED_ALLOW_IPS` names the proxies whose forwarded address is believed. |
 | `GET /api/v1/site`, `/site/channels/{login}`, `/roles`, `/grammar`, `/explain/{token}`, `/packs`, `/channels/{login}/packs` | **Now** | Public, and only what the public pages print: the joined channels, one channel's sign, tier and status, the built-in roles, the grammar, a chat-linked explain report, published packs (ADR-0016) |
 | `GET /api/v1/channels/{login}/modules`, `/ignored`; `POST /ignored`, `DELETE /ignored/{user_id}` | **Now** | API key or admin session. Modules include the packs a channel can use and `custom` (commands published one by one), each with the `enabled` chat would apply. Ignored users come with who ignored them, when and why; adding and removing them is audited like `ignore` in chat. `everywhere` (the bot-wide list) is for admins |
@@ -663,7 +674,9 @@ token stays with the session, in memory, and nothing is written to the database.
 worked out again at most every five minutes, on the next request (`current_session` in
 `api/access.py`): channels the user lost go at once, and a user Twitch no longer vouches for, or who
 manages nothing any more, is signed out. A request to Twitch that merely failed keeps what the session
-had until the next try. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it
+had until the next try. With `SIGNIN_PROVIDER=vexoulz` (ADR-0023), `VexoulzSignIn` sends the person to
+vexoulz-auth instead, gets the user and a session id for the code, and asks vexoulz-auth for the moderated
+channels; the refresh also checks that session, so signing out everywhere reaches the bot too. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it
 would have guessed at is now designed, and the seam came with it.)*
 
 ---
@@ -679,8 +692,8 @@ src/doomtp_bot/
 │               metrics.py                                                 ✔ ADR-0015 counters
 │               instance_lock.py capabilities.py streams.py                ✔ ADR-0007 probe and stream poller
 ├─ twitch/      client.py mapping.py auth.py tokens.py    # only place importing twitchio  ✔
-├─ history/     provider.py backfill.py irc_parse.py                       ✔ ADR-0008
-├─ chatlog/     writer.py queries.py                                       ✔ writes; the shared reads (search)
+├─ history/     provider.py backfill.py queue.py irc_parse.py              ✔ ADR-0008, ADR-0024
+├─ chatlog/     writer.py queries.py timeline.py                           ✔ writes; the shared reads (search); the paged log
 ├─ moderation/  index.py automod.py                                        ✔
 ├─ lang/        parser.py (PEG, spec App. C) ast.py errors.py              ✔ syntax (versioned)
 ├─ runtime/     engine.py resolver.py preflight.py executor.py result.py   ✔
@@ -771,7 +784,7 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   apply, `/readyz` is ok with Twitch reported as disabled, and the language page serves both the grammar
   and the editor.*
 - **Self-hosted history, optional:** for independence from the public recent-messages service, run a `recent-messages2` container on a separate compose stack. It needs TimescaleDB. Don't restart it together with the bot during updates. Point `HISTORY_PROVIDER_URL` at it.
-- **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is backfilled. `scripts/coverage.py` (compose: `--profile tools run --rm coverage`) says how each channel's last session ended and which gaps no complete backfill run covers — the deploy runbook in the README.
+- **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is queued as a backfill job (ADR-0024 §5). `scripts/coverage.py` (compose: `--profile tools run --rm coverage --wait 300`) says how each channel's last session ended and which gaps no complete backfill run covers, naming the job still to fill a gap and, with `--wait`, waiting for it — the deploy runbook in the README.
 - **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) runs `pg_dump` once per schema, writing a compressed custom-format archive that `pg_restore` can take apart, rotated to the last 7 of each. `pg_dump` snapshots inside one transaction, so it is safe to run while the bot writes. The `bot` schema is the critical one — it holds custom commands, variables, roles and the OAuth tokens. The dumps land on the same host as the database, which is not a backup until a copy leaves the machine; that part is still the operator's job.
 - **Metrics** (ADR-0015): counters in the Prometheus text format on `GET /metrics`, beside `/readyz` on the
   LAN-bound port, for a scraper on the LAN to pull. `core/metrics.py` writes the format by hand — no

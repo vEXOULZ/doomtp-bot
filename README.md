@@ -183,14 +183,18 @@ sessions and flush the writer queue — the last line it logs is `bot.stop`. A p
 leaves its sessions open; the next startup closes them at the last message it stored and says
 `chatlog.unclean_shutdown_detected`, so the gap is honest either way, but it is wider than it had to be.
 
-Once the bot is back, give backfill its pass and check what it covered:
+Once the bot is back, it queues a backfill job for every open gap. Give the jobs a moment, then check what
+they covered:
 
 ```bash
-docker compose --profile tools run --rm coverage
+docker compose --profile tools run --rm coverage --wait 300
 ```
 
 It prints how each channel's last session ended and, for channels with backfill on, every gap in the last
-week with whether it was filled. Exit code 1 means a gap is still open — the usual causes are the
+week with whether it was filled. A gap a job is still to fill shows as `OPEN — queued as backfill job #N`
+(or `running`), and `--wait` checks again every few seconds until no gap is waiting or the time is up.
+`!backfill queue` in chat and `GET /api/v1/channels/{login}/backfill` show the same queue. Exit code 1
+means a gap is still open — the usual causes are the
 recent-messages service being down or the outage being longer than its 800-message reach, and both are
 worth seeing in the log before you assume the history is complete.
 
@@ -390,8 +394,9 @@ sudo cp deploy/doomtp-bot-update.* /etc/systemd/system/ && sudo systemctl enable
 ```
 
 Nightly it pulls, does nothing if the tag hasn't moved, and otherwise restarts through compose — which
-waits out the grace period from step 2 — then runs the coverage check and takes its exit code. So a
-failed unit means an unfilled gap in the chat log, not a failed deploy.
+waits out the grace period from step 2 — then runs the coverage check, which waits up to five minutes for
+queued backfill jobs, and takes its exit code. So a failed unit means an unfilled gap in the chat log, not
+a failed deploy.
 
 ```bash
 systemctl list-timers doomtp-bot-update
@@ -423,7 +428,7 @@ not drive failures.
 | Is it healthy? | `curl -s localhost:8080/readyz` |
 | How often does it happen? | `curl -s localhost:8080/metrics` — counters in Prometheus text (ADR-0015); point a scraper on the LAN at it |
 | What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
-| Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage` |
+| Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage --wait 300` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
 | Upgrade the schema and install `core` and the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml run --rm migrate` |
 | Where does the schema stand? | `docker compose -f compose.yaml -f compose.prod.yaml run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
@@ -472,7 +477,9 @@ To work on the site without Twitch, run `scripts/dev_api.py` here. It serves the
 data, and doomtp-web's `npm run dev` forwards to it. Its README has the details.
 
 **Admin sign-in.** Bot owners and admins sign in with Twitch, and so do broadcasters and moderators, who
-get only their own channels (ADR-0017). `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
+get only their own channels (ADR-0017). With `SIGNIN_PROVIDER=vexoulz` that sign-in goes through
+vexoulz-auth, shared with the other vexoulz sites, instead of straight to Twitch (ADR-0023); the routes and
+sessions are the same. `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
 Without it the password login is off. It is taken only from `ADMIN_PASSWORD_NETWORKS` (this host and the
 private ranges by default; `*` for anywhere), so from outside the site offers Twitch alone. A request that
 came through a proxy the bot doesn't trust is never local, since its address is the proxy's. Failed logins are limited per client address. Behind a proxy, set
