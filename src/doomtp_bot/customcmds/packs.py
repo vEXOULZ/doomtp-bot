@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 # share. Importing the registry here instead would be circular.
 RESERVED_PACK_NAMES = frozenset(
     {
+        "automation",
         "core",
         "core_admin",
         "custom",
@@ -32,7 +33,7 @@ RESERVED_PACK_NAMES = frozenset(
         "logsearch",
         "moderation",
         "quotes",
-        "triggers",
+        "triggers",  # the automation module's old name (ADR-0019), still in audit rows
         "variables",
     }
 )

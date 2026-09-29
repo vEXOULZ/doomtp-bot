@@ -85,6 +85,11 @@ class Trigger:
         return str(self.match.get("regex", ""))
 
     @property
+    def name(self) -> str:
+        """A listener's name (ADR-0019), or "" for one made with `!trigger listen`, which had none."""
+        return str(self.match.get("name", ""))
+
+    @property
     def every_s(self) -> int:
         return int(self.schedule.get("every_s", 0))
 

@@ -37,6 +37,11 @@ def _revisions(name: str) -> list[str]:
     return [script.revision for script in reversed(list(schema._scripts(name).walk_revisions()))]
 
 
+def _data_only(name: str, revision: str) -> bool:
+    """A revision that moves rows and leaves the catalog alone says so with `data_only = True`."""
+    return bool(getattr(schema._scripts(name).get_revision(revision).module, "data_only", False))
+
+
 @pytest.mark.parametrize("name", schema.SCHEMAS)
 def test_revisions_are_numbered_in_one_line(name: str) -> None:
     """Adoption compares revision ids as numbers (`schema._adopt`), so they stay NNNN and contiguous."""
@@ -53,7 +58,11 @@ def test_every_revision_goes_down_and_back_up(empty_database: str, name: str) ->
     for revision in levels[1:]:
         command.upgrade(schema.config(name, empty_database), revision)
         seen[revision] = _catalog(empty_database)
-    assert len({repr(catalog) for catalog in seen.values()}) == len(levels), "a revision changed nothing"
+    for previous, revision in zip(levels, levels[1:], strict=False):
+        changed = seen[revision] != seen[previous]
+        assert changed != _data_only(name, revision), (
+            f"{revision} changed nothing, or data_only changed tables"
+        )
     for previous in reversed(levels[:-1]):
         schema.downgrade(empty_database, {name: previous})
         assert _catalog(empty_database) == seen[previous], f"{name} down to {previous}"
@@ -156,3 +165,36 @@ def test_the_command_line_moves_both_ways(empty_database: str, capsys: pytest.Ca
     out = capsys.readouterr().out.splitlines()
     assert out[0] == f"bot={schema.head('bot')} chatlog={schema.head('chatlog')}"
     assert out[1] == out[2] == f"bot=0003 chatlog={schema.head('chatlog')}"
+
+
+def test_the_triggers_module_moves_to_automation_and_back(empty_database: str) -> None:
+    """0006 renames the module in its toggles and callbacks (ADR-0019), and keeps a row already renamed."""
+    command.upgrade(schema.config("bot", empty_database), "0005")
+    with psycopg.connect(empty_database) as conn:
+        conn.execute(
+            "INSERT INTO bot.module_toggles VALUES ('c1', 'triggers', false), ('c2', 'triggers', false),"
+            " ('c2', 'automation', true), ('c1', 'quotes', false)"
+        )
+        conn.execute(
+            "INSERT INTO bot.callbacks (channel_id, scope, kind, expr, syntax_version, updated_at)"
+            " VALUES ('c1', 'module:triggers', 'on_denied', 'echo no', '1', 0)"
+        )
+
+    def rows() -> list[tuple[str, ...]]:
+        with psycopg.connect(empty_database) as conn:
+            toggles = conn.execute(
+                "SELECT channel_id, module, enabled::text FROM bot.module_toggles ORDER BY 1, 2"
+            )
+            scopes = conn.execute("SELECT channel_id, scope FROM bot.callbacks ORDER BY 1, 2")
+            return [*toggles.fetchall(), *scopes.fetchall()]
+
+    command.upgrade(schema.config("bot", empty_database), "0006")
+    assert rows() == [
+        ("c1", "automation", "false"),
+        ("c1", "quotes", "false"),
+        ("c2", "automation", "true"),
+        ("c2", "triggers", "false"),  # c2 already had an automation row, which wins
+        ("c1", "module:automation"),
+    ]
+    schema.downgrade(empty_database, {"bot": "0005"})
+    assert ("c1", "triggers", "false") in rows() and ("c1", "module:triggers") in rows()
