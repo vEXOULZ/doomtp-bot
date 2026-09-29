@@ -212,7 +212,7 @@ async def test_only_opted_in_channels_are_backfilled_or_kept_warm(dbs: Databases
     provider = FakeProvider()
     service = await backfill_for(dbs, provider, opted_in=False)
     assert service.enabled_channels() == []
-    assert await service.run_all() == []
+    assert service.login_if_enabled(CHANNEL_ID) is None
     assert await service.keep_warm_once() == 0
     assert provider.calls == []
 
@@ -228,8 +228,9 @@ async def test_a_completed_gap_is_not_fetched_twice(dbs: Databases) -> None:
         """
     )
 
-    assert len(await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN)) == 1
-    assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []  # already filled
+    (gap,) = await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN)
+    await service.fill(gap)
+    assert await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN) == []  # already filled
     await service.writer.stop()
 
 
@@ -248,6 +249,5 @@ async def test_a_gap_that_took_two_runs_to_fill_is_not_fetched_again(dbs: Databa
         """
     )
 
-    assert await service.run_for_channel(CHANNEL_ID, CHANNEL_LOGIN) == []
-    assert provider.calls == []
+    assert await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN) == []
     await service.writer.stop()

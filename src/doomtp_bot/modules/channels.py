@@ -1,14 +1,17 @@
-"""!join / !part (ADR-0007 joining etiquette). Part of core_admin: not toggleable."""
+"""!join / !part (ADR-0007 joining etiquette) and !backfill (ADR-0008, ADR-0024). Part of core_admin: not toggleable."""
 
 from __future__ import annotations
 
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelBanned
+from doomtp_bot.history.queue import OPEN_STATES, BackfillJob, BackfillQueue, BackfillRefused
 from doomtp_bot.modules._common import actor, rank, sign_of, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, BROADCASTER_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
 from doomtp_bot.runtime.registry import Command, command
-from doomtp_bot.runtime.result import Code, Result
+from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, Param
+from doomtp_bot.runtime.values import ConversionError, convert
 
 MODULE = "core_admin"
 
@@ -120,36 +123,103 @@ async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
             "While the bot is offline nothing reaches the log. With backfill on, what it missed is"
             " fetched from a third-party history service when it comes back (ADR-0008). Off by default,"
             " because it means naming this channel to that service; only the broadcaster can change it."
+            " The broadcaster can also queue a backfill by hand: gaps for every hole in the log, or a"
+            " duration such as 6h for that much of the recent past (ADR-0024). One job runs at a time."
         ),
-        params=(Param("1", "state", required=False, choices=("on", "off"), description="Turn it on or off"),),
-        examples=(Example("{sign}backfill on", "backfill is on"),),
+        params=(
+            Param(
+                "1",
+                "action",
+                description="on, off, gaps, queue, cancel, or how far back to fetch (e.g. 6h)",
+            ),
+            Param("2", "job", description="The job to cancel"),
+        ),
+        examples=(
+            Example("{sign}backfill on", "backfill is on"),
+            Example("{sign}backfill 6h", "queued #12: the last 6h"),
+            Example("{sign}backfill queue", "#12 running, the last 6h"),
+            Example("{sign}backfill cancel 12", "cancelled #12"),
+        ),
     )
 )
 async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    """The consent prompt ADR-0008 asks for: it names the service before anything is sent to it."""
+    """The consent prompt ADR-0008 asks for, and the queue ADR-0024 §5 adds."""
     policy = ctx.service("policy")
     settings = policy.channel_settings(ctx.channel.id)
     if settings is None:
         return Result.failure(Code.FAIL, "backfill is a channel setting")
-    state = args.get("state")
-    if not state:
+    action = (args.get("action") or "").lower()
+    if not action:
         provider = ctx.exec.services.get("history")
         where = getattr(provider, "base_url", "") or "a history service"
         return Result.success(
             f"backfill is {'on' if settings.history_backfill else 'off'}. When it is on, messages this"
             f" channel saw while the bot was away are fetched from {where} and added to the log, marked"
             f" as coming from there. They never run commands or triggers."
-            f" {ctx.channel.prefix}backfill on|off changes it.",
+            f" {ctx.channel.prefix}backfill on|off changes it; gaps, 6h, queue and cancel queue it by hand.",
             {"enabled": settings.history_backfill, "provider": where},
         )
+    queue: BackfillQueue | None = ctx.exec.services.get("backfill")
+    if action == "queue":
+        if queue is None:
+            return Result.failure(Code.FAIL, "the backfill queue isn't running")
+        jobs = [j for j in await queue.jobs(ctx.channel.id) if j.state in OPEN_STATES]
+        text = "; ".join(f"#{j.id} {j.state}, {_range_text(j)}" for j in jobs) or "nothing is queued"
+        return Result.success(text, {"jobs": [j.to_json() for j in jobs]})
     if rank(ctx) < BROADCASTER_RANK:
         return Result.failure(Code.DENIED, "only the broadcaster can change backfill")
-    wanted = state.lower() == "on"
-    if wanted != settings.history_backfill:
-        await policy.mutate(
-            lambda repo: repo.set_channel_field(ctx.channel.id, "history_backfill", wanted, actor(ctx))
-        )
-    return Result.success(f"backfill is {'on' if wanted else 'off'}", {"enabled": wanted})
+    if action in ("on", "off"):
+        wanted = action == "on"
+        if wanted != settings.history_backfill:
+            await policy.mutate(
+                lambda repo: repo.set_channel_field(ctx.channel.id, "history_backfill", wanted, actor(ctx))
+            )
+        return Result.success(f"backfill is {'on' if wanted else 'off'}", {"enabled": wanted})
+    if queue is None:
+        return Result.failure(Code.FAIL, "the backfill queue isn't running")
+    requested_by = f"chat:{ctx.invoker.id if ctx.invoker else '?'}"
+    try:
+        if action == "gaps":
+            jobs = await queue.queue_gaps(ctx.channel.id, requested_by)
+            ids = ", ".join(f"#{j.id}" for j in jobs)
+            text = (
+                f"queued {len(jobs)} gap{'s' if len(jobs) != 1 else ''}: {ids}" if jobs else "no gaps to fill"
+            )
+            return Result.success(text, {"jobs": [j.to_json() for j in jobs]})
+        if action == "cancel":
+            job_id = args.get("job") or ""
+            if not job_id.isdigit():
+                raise CommandError(f"usage: {ctx.channel.prefix}backfill cancel <job>")
+            cancelled = await queue.cancel(ctx.channel.id, int(job_id))
+            if cancelled is None:
+                return Result.failure(Code.FAIL, f"#{job_id} isn't queued here")
+            return Result.success(f"cancelled #{job_id}", {"job": cancelled.to_json()})
+        try:
+            seconds = int(await convert(action, "duration"))
+        except ConversionError:
+            raise CommandError("expected on, off, gaps, queue, cancel <job>, or a duration like 6h") from None
+        if seconds <= 0:
+            raise CommandError("the duration must be more than 0")
+        now = now_ms()
+        job = await queue.queue_range(ctx.channel.id, now - seconds * 1000, now, requested_by)
+    except BackfillRefused as exc:
+        return Result.failure(Code.FAIL, str(exc))
+    if job is None:
+        return Result.success("that range is already queued")
+    return Result.success(f"queued #{job.id}: {_range_text(job)}", {"job": job.to_json()})
+
+
+def _range_text(job: BackfillJob) -> str:
+    length = (job.to_ms - job.from_ms) // 1000
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if length >= size:
+            length_text = f"{length // size}{unit}"
+            break
+    else:
+        length_text = f"{length}s"
+    if job.to_ms >= job.requested_at - 1000:
+        return f"the last {length_text}"
+    return f"{length_text} of chat"
 
 
 COMMANDS: tuple[Command, ...] = (join_cmd, part_cmd, backfill_cmd)
