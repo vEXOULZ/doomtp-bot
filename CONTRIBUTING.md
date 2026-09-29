@@ -85,8 +85,10 @@ Merging into `dev` deploys nothing. Production changes only when a release reach
    gh pr create --base main --head dev --title "Release vX.Y.Z"
    ```
 
-3. Tag it. CI builds the tag again, checks that it matches the package version and publishes
-   `:vX.Y.Z` beside `:main`.
+3. Tag it once the release pull request has merged, never before. CI builds the tag again, checks
+   that it matches the package version and publishes `:vX.Y.Z` beside `:main`. Check that the tag's
+   run passed: a tag on a `main` without the version bump publishes nothing, and then there's nothing
+   to roll back to (v0.2.0's tag did exactly that).
 
    ```bash
    gh release create vX.Y.Z --target main --generate-notes
