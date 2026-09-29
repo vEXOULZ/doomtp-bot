@@ -532,7 +532,13 @@ async def test_channel_variables_are_readable(
 
     body = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/variables", headers=auth(write_key))).json()
     assert body["variables"] == [
-        {"name": "deaths", "value": 7, "updated_at": body["variables"][0]["updated_at"], "updated_by": "300"}
+        {
+            "name": "deaths",
+            "value": 7,
+            "updated_at": body["variables"][0]["updated_at"],
+            "updated_by": "300",
+            "updated_by_login": "mod",
+        }
     ]
 
 
