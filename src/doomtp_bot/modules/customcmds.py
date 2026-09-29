@@ -43,7 +43,7 @@ USAGE = (
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
 )
-EDIT_WARNING = "⚠ {owner} can edit or delete it at any time, and changes apply immediately."
+EDIT_WARNING = "⚠ {owner} can edit or delete it at any time; edits apply at once."
 # Namespaces a published command can't write on its own: a channel mod grants each variable
 # by name (ADR-0010, variable-access-matrix §4).
 GRANTABLE = ("channel", "channel.chatter")
@@ -135,7 +135,7 @@ async def _add(ctx: CommandContext, v: list[str], args: Args) -> Result:
     )
     return Result.success(
         f"created {ctx.channel.prefix}{created.name} ({created.id}). "
-        f"Use {ctx.channel.prefix}cc publish {created.name} to offer it to this channel.",
+        f"{ctx.channel.prefix}cc publish {created.name} offers it here.",
         {"id": created.id, "name": created.name},
     )
 
@@ -458,7 +458,6 @@ async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     )
     if command.owner_user_id != user_id:
         text += " " + EDIT_WARNING.format(owner=f"@{command.owner_login}")
-    text += f" Mods can {ctx.channel.prefix}cc disable {name}."
     return Result.success(text + _grant_warning(ctx, [command], scope), {"name": name})
 
 
@@ -498,8 +497,7 @@ async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result
         owner_note = " " + EDIT_WARNING.format(owner="@" + ", @".join(sorted(owners)))
     return Result.success(
         f"published pack {pack.name} {_where(scope)} ({names}).{owner_note} "
-        f"⚠ Commands added to the pack later appear {_where(scope)} too. "
-        f"Mods can {ctx.channel.prefix}module disable {pack.name}."
+        f"⚠ Commands added to the pack later appear {_where(scope)} too."
         + _grant_warning(ctx, list(members), scope),
         {"pack": pack.name, "commands": [c.name for c in members]},
     )
