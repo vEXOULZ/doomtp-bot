@@ -521,8 +521,8 @@ async def _admin_http(ctx: CommandContext, v: list[str]) -> Result:
             return Result.success(f"{entry.rule.pattern} has no secret now")
         if action == "secret":
             raise CommandError(
-                "set a secret through the admin API (PUT /api/v1/http-hosts/<host>/secret): chat is public"
-                " and logged, so a key typed here would be leaked already"
+                "chat is public and logged: set secrets through the admin API"
+                " (PUT /api/v1/http-hosts/<host>/secret)"
             )
         if action == "limit" and not rest:
             limits = hosts.limits()

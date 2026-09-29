@@ -147,18 +147,18 @@ class ExplainReport:
         parts = [i.summary() for i in self.invocations[:MAX_SUMMARY_COMMANDS]]
         if len(self.invocations) > MAX_SUMMARY_COMMANDS:
             parts.append(f"… +{len(self.invocations) - MAX_SUMMARY_COMMANDS} more")
-        text = f"{self.ast} — " + ", ".join(parts)
+        text = f"{self.ast}: " + ", ".join(parts)
         denied = list(dict.fromkeys(s["variable"] for s in self.stores if not s["allowed"]))
         if denied:  # a write that goes nowhere is the surprise explain exists to spare you (ADR-0010)
-            text += f" — can't write {', '.join(denied)}"
+            text += f"; can't write {', '.join(denied)}"
         if self.failure is not None:
             where = f" at {self.failed_index}" if self.failed_index else ""
-            text += f" — would fail{where}: {self.failure.message} (code {self.failure.code})"
+            text += f"; would fail{where}: {self.failure.message} (code {self.failure.code})"
         elif self.ran and self.run_result is not None:
             sent = self.would_send if self.would_send else "(nothing)"
-            text += f" — ran: code {self.run_result.code}, would send: {sent}"
+            text += f"; ran: code {self.run_result.code}, would send: {sent}"
         else:
-            text += " — would run"
+            text += "; would run"
         return text
 
 

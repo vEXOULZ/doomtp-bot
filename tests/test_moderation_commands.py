@@ -180,7 +180,7 @@ async def test_explain_run_never_acts_on_twitch(h: Harness) -> None:
 # ── shoutout ───────────────────────────────────────────────────────────────
 async def test_a_shoutout_is_the_card_alone_and_fails_while_offline(h: Harness) -> None:
     offline = await h.run("mod", "!shoutout @friend")
-    assert offline.result.code == Code.FAIL and "isn't live" in (offline.result.message or "")
+    assert offline.result.code == Code.FAIL and "only work while live" in (offline.result.message or "")
     assert h.twitch.shoutouts == []
 
     h.live = True
@@ -299,7 +299,7 @@ async def test_channel_commands_need_the_broadcasters_grant(h: Harness) -> None:
     assert h.twitch.actions[-1] == ("update_channel", (CHANNEL_ID, ("game_id", "509658")))
     assert (await h.run("mod", "!setgame nonsense")).result.code == Code.FAIL
 
-    assert "isn't live" in ((await h.run("mod", "!marker boss down")).result.message or "")
+    assert "only work while live" in ((await h.run("mod", "!marker boss down")).result.message or "")
     h.live = True
     assert (await h.run("mod", "!marker boss down")).send == "marker placed"
     assert h.twitch.actions[-1] == ("stream_marker", (CHANNEL_ID, "boss down"))
@@ -309,7 +309,7 @@ async def test_a_raid_is_the_broadcasters_alone(h: Harness) -> None:
     await h.moderator_here(True, RAIDS)
     assert (await h.run("mod", "!raid @friend")).result.code == Code.DENIED
     report = await h.run("doomtp", "!raid @friend")
-    assert report.send == "raiding Friend — Twitch sends it after the countdown"
+    assert report.send == "raiding Friend, Twitch sends it after the countdown"
     assert h.twitch.actions[-1] == ("start_raid", (CHANNEL_ID, "600"))
 
 

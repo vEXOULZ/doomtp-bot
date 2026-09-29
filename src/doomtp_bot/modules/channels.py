@@ -23,20 +23,28 @@ MODULE = "core_admin"
         toggleable=False,
         summary="Invite the bot to your channel",
         description=(
-            "Type {sign}join in the bot's own chat to add the bot to your channel. Bot admins can name any"
-            " channel. The bot leaves a channel that bans it, and a bot admin brings it back only by adding"
-            " rejoin; a broadcaster inviting it again is already deliberate."
+            "Type {sign}join in the bot's own chat for the connect link. The broadcaster opens it, signs in"
+            " to Twitch as their channel and picks what to grant; the bot then joins. Bot admins can type"
+            " {sign}join basic <channel> to join without a grant. The bot leaves a channel that bans it;"
+            " a bot admin adds rejoin to bring it back."
         ),
         params=(
-            Param("1", "channel", description="Channel to join (bot admins only)"),
+            Param("1", "basic", description="basic joins without a grant (bot admins only)"),
+            Param("2", "channel", description="Channel to join with basic"),
             Param(
-                "2", "rejoin", choices=("rejoin",), description="Come back to a channel that banned the bot"
+                "3", "rejoin", choices=("rejoin",), description="Come back to a channel that banned the bot"
             ),
         ),
         examples=(
-            Example("{sign}join", "joined #yourchannel"),
             Example(
-                "{sign}join somechannel rejoin", "joined #somechannel", note="after it was unbanned there"
+                "{sign}join",
+                "to add the bot, the broadcaster opens https://bot.example/auth/connect and signs in to Twitch as their channel",
+            ),
+            Example("{sign}join basic somechannel", "joined #somechannel", note="bot admins only"),
+            Example(
+                "{sign}join basic somechannel rejoin",
+                "joined #somechannel",
+                note="after it was unbanned there",
             ),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=30)},
@@ -46,38 +54,47 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     channels, twitch = ctx.service("channels"), ctx.service("twitch")
     if ctx.invoker is None:
         return Result.failure(Code.FAIL, "join needs a chatter")
+    if args.get("basic") != "basic":  # a channel name here changes nothing: the link is the same
+        return _connect_link(ctx, twitch.bot_id, twitch.bot_login)
+    if rank(ctx) < BOT_ADMIN_RANK:
+        return Result.failure(
+            Code.FAIL,
+            f"only bot admins can join with basic; type {ctx.channel.prefix}join for the connect link",
+        )
     target = args.get("channel")
-    if target:
-        if rank(ctx) < BOT_ADMIN_RANK:
-            return Result.failure(
-                Code.FAIL,
-                "only bot admins can add other channels; ask the broadcaster to type"
-                f" {ctx.channel.prefix}join",
-            )
-        user = await user_arg(ctx, target)
-        channel_id, login = user["id"], user["name"]
-        rejoin = args.get("rejoin") == "rejoin"
-    else:
-        if ctx.channel.id != twitch.bot_id:
-            return Result.failure(
-                Code.FAIL,
-                f"type {sign_of(ctx, twitch.bot_id)}join in #{twitch.bot_login}'s chat"
-                " to add the bot to your channel",
-            )
-        channel_id, login = ctx.invoker.id, ctx.invoker.login
-        rejoin = True  # the broadcaster inviting the bot back is the deliberate act
+    if not target:
+        raise CommandError(f"usage: {ctx.channel.prefix}join basic <channel> [rejoin]")
+    user = await user_arg(ctx, target)
+    channel_id, login = user["id"], user["name"]
     if channels.is_active(channel_id):
         return Result.success(f"already in #{login}")
     try:
-        failed = await channels.join(channel_id, login, actor(ctx), rejoin=rejoin)
+        failed = await channels.join(channel_id, login, actor(ctx), rejoin=args.get("rejoin") == "rejoin")
     except ChannelBanned as exc:
-        return Result.failure(Code.FAIL, f"{exc}. {ctx.channel.prefix}join {login} rejoin comes back anyway")
+        return Result.failure(
+            Code.FAIL, f"{exc}. {ctx.channel.prefix}join basic {login} rejoin comes back anyway"
+        )
     if failed:
         return Result.failure(Code.FAIL, f"joined #{login}, but Twitch refused: {', '.join(failed)}")
     return Result.success(
-        f"joined #{login}. The chat log starts now; filling the gaps in it from elsewhere is off until"
-        f" you ask for it — type {sign_of(ctx, channel_id)}backfill in your channel to read what that means.",
+        f"joined #{login}. Backfill is off; {sign_of(ctx, channel_id)}backfill there explains it.",
         {"channel_id": channel_id, "login": login},
+    )
+
+
+def _connect_link(ctx: CommandContext, bot_id: str, bot_login: str) -> Result:
+    """The link is the same for everyone: whoever signs in with it is the channel the bot joins."""
+    if ctx.channel.id != bot_id:
+        return Result.failure(
+            Code.FAIL,
+            f"type {sign_of(ctx, bot_id)}join in #{bot_login}'s chat to add the bot to your channel",
+        )
+    url = ctx.exec.services.get("connect_url")
+    if not url:
+        return Result.failure(Code.FAIL, "the connect page isn't set up, so the bot can't take new channels")
+    return Result.success(
+        f"to add the bot, the broadcaster opens {url} and signs in to Twitch as their channel",
+        {"connect_url": url},
     )
 
 
@@ -120,11 +137,10 @@ async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         toggleable=False,
         summary="Fill gaps in this channel's chat log from a history service",
         description=(
-            "While the bot is offline nothing reaches the log. With backfill on, what it missed is"
-            " fetched from a third-party history service when it comes back (ADR-0008). Off by default,"
-            " because it means naming this channel to that service; only the broadcaster can change it."
-            " The broadcaster can also queue a backfill by hand: gaps for every hole in the log, or a"
-            " duration such as 6h for that much of the recent past (ADR-0024). One job runs at a time."
+            "With backfill on, chat the bot missed while offline is fetched from a third-party history"
+            " service when it comes back. Off by default, since it names this channel to that service."
+            " The broadcaster can turn it on, or queue a job by hand: gaps fills every hole in the log, a"
+            " duration such as 6h fetches that much of the recent past. One job runs at a time."
         ),
         params=(
             Param(
@@ -153,10 +169,9 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
         provider = ctx.exec.services.get("history")
         where = getattr(provider, "base_url", "") or "a history service"
         return Result.success(
-            f"backfill is {'on' if settings.history_backfill else 'off'}. When it is on, messages this"
-            f" channel saw while the bot was away are fetched from {where} and added to the log, marked"
-            f" as coming from there. They never run commands or triggers."
-            f" {ctx.channel.prefix}backfill on|off changes it; gaps, 6h, queue and cancel queue it by hand.",
+            f"backfill is {'on' if settings.history_backfill else 'off'}. When on, chat missed while the"
+            f" bot was away is fetched from {where} into the log, never running commands."
+            f" {ctx.channel.prefix}backfill on|off, or gaps, 6h, queue, cancel.",
             {"enabled": settings.history_backfill, "provider": where},
         )
     queue: BackfillQueue | None = ctx.exec.services.get("backfill")

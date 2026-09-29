@@ -111,7 +111,6 @@ async def test_a_bot_owner_is_an_admin(client: httpx.AsyncClient, vexoulz: dict[
 
 
 async def test_failures_reach_the_login_page(client: httpx.AsyncClient, vexoulz: dict[str, Any]) -> None:
-    assert error_of(await sign_in(client, "nobody"))[1]["error"] == ["no_channels"]
     assert error_of(await sign_in(client, "not-a-code"))[1]["error"] == ["twitch"]
     for sent, shown in (("denied", "denied"), ("expired", "expired"), ("invalid_scope", "twitch")):
         started = await client.get("/auth/admin/login")

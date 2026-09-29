@@ -52,7 +52,7 @@ async def said(runtime: Runtime, text: str, **kwargs: Any) -> str | None:
         ("!uptime", LIVE, "DoomTP has been live for 1h 2m"),
         ("!uptime", CHANNEL, "DoomTP isn't live right now"),
         ("!title", LIVE, "any% practice"),
-        ("!title", CHANNEL, "no title — the stream is offline"),
+        ("!title", CHANNEL, "no title, the stream is offline"),
         ("!game", LIVE, "DoomTP is playing DOOM"),
         ("!game", CHANNEL, "DoomTP is playing nothing right now"),
         ("!viewers", LIVE, "42 watching"),

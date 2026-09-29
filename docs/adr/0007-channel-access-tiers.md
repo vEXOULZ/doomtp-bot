@@ -42,12 +42,16 @@ Onboarding has three tiers, detected automatically and stored as capabilities pe
 **Features declare their requirements.** For example, `automod` requires `moderate`, and redemption triggers require `redemptions`. When a requirement is unmet, the feature is disabled with a reason shown in `!explain`, `!help` and the admin UI.
 
 **Joining:**
-- `!join` typed by the broadcaster in the bot's own channel joins *their* channel at the basic tier.
-- `!join <channel>` by a bot owner or admin joins any channel.
+- `!join` typed in the bot's own channel answers with the `/auth/connect` link. It is the same link for everyone: whoever signs in with it is the channel the bot joins, with what they granted (amended 2026-09-29, see below).
+- `!join basic <channel>` by a bot owner or admin joins any channel at the basic tier, with no broadcaster action.
 - `!part` leaves.
 - A 403 marks the channel `banned`, unsubscribes and stops sending.
 
 **Basic-tier etiquette:** no timers, alerts or unprompted messages until a channel mod opts in.
+
+## Amendment (2026-09-29): `!join` links the connect page
+
+`!join` used to join the broadcaster's channel at the basic tier straight away, and most broadcasters never came back to `/auth/connect`, so their channels stayed without redemptions, cheers or the bot badge. `!join` now answers with the `/auth/connect` link instead (`PUBLIC_BASE_URL` + `/auth/connect`), and the callback joins the channel, as it already did. The link takes no channel, because the channel is whoever signs in with it; `!join` followed by anything but `basic` gives the same link and says so. Joining without the broadcaster's grant is kept for bot owners and admins, as `!join basic <channel>` (with `rejoin` after a ban). The basic tier itself is unchanged: F18 is still met, through an admin.
 
 ## Options Considered
 

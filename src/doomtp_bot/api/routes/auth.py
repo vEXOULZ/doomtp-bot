@@ -72,7 +72,7 @@ async def callback(
         account = await auth.complete(code, state, error)
     except OAuthError as exc:
         return _page(
-            "Authorization failed", html.escape(str(exc)) + " — <a href='/auth/login'>try again</a>", 400
+            "Authorization failed", html.escape(str(exc)) + ". <a href='/auth/login'>try again</a>", 400
         )
     if account.flow == "broadcaster":
         granted = ", ".join(sorted(account.scopes)) or "nothing"
@@ -96,7 +96,8 @@ LOGIN_PAGE = "/admin/login"  # the site's login page, which shows `?error=` and 
 
 def _back_to_login(reason: str, next_path: str) -> RedirectResponse:
     """The site's login page with a reason it can show: `not_configured`, `denied` (the user said no on
-    Twitch), `expired` (start again), `twitch` (Twitch failed) or `no_channels`."""
+    Twitch), `expired` (start again) or `twitch` (Twitch failed). Older sites also know `no_channels`,
+    which ADR-0026 retired."""
     query = {"error": reason, **({"next": next_path} if next_path != safe_next(None) else {})}
     response = RedirectResponse(f"{LOGIN_PAGE}?{urlencode(query)}", status_code=302)
     response.delete_cookie(SIGNIN_COOKIE, path=SIGNIN_PATH)

@@ -32,9 +32,9 @@ async def test_the_starter_commands_run_in_a_channel_that_never_published_them(h
     rolled = await h.say("alice", "!roll 1-6")
     assert rolled is not None and rolled.startswith("Alice rolled ")
     assert 1 <= int(rolled.rsplit(" ", 1)[1]) <= 6
-    assert await h.say("alice", "!so bob") == "go follow twitch.tv/bob — they were last seen being excellent"
+    assert await h.say("alice", "!so bob") == "go follow twitch.tv/bob. They were last seen being excellent"
     # The bot isn't a moderator here, so a moderator's card can't go out either; the line still does.
-    assert await h.say("mod", "!so bob") == "go follow twitch.tv/bob — they were last seen being excellent"
+    assert await h.say("mod", "!so bob") == "go follow twitch.tv/bob. They were last seen being excellent"
 
 
 async def test_the_counter_waits_for_the_channel_to_allow_its_write(h: Harness) -> None:  # noqa: F811

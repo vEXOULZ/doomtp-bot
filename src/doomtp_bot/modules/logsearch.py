@@ -36,8 +36,8 @@ def ago(ms: int, now_ms: int) -> str:
         module=MODULE,
         summary="Find something said in this channel's chat",
         description=(
-            f"{USAGE} — the newest message with all the words, and how many more there are. Deleted"
-            " messages, those of chatters timed out or banned since, and the bot's own lines are left out."
+            f"{USAGE}: the newest message with all the words, and how many more match. Leaves out deleted"
+            " messages, chatters timed out or banned since, and the bot's own lines."
         ),
         params=(
             Param("1+", "words", required=True, max_len=MAX_QUERY_CHARS, description="What to look for"),

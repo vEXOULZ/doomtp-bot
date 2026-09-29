@@ -95,9 +95,9 @@ def _replied(ctx: CommandContext, what: str) -> dict[str, str]:
         module=MODULE,
         summary="Time a chatter out, as the bot",
         description=(
-            "timeout <user> [duration] [reason…] — the duration is seconds or 10m, 1h30m and so on, up to"
-            f" two weeks; {DEFAULT_TIMEOUT_S // 60} minutes if left out. Twitch shows the reason to the"
-            " chatter and in the mod log, after the name of whoever asked."
+            "timeout <user> [duration] [reason…]: the duration is seconds or 10m, 1h30m and so on, up to"
+            f" two weeks ({DEFAULT_TIMEOUT_S // 60} minutes if left out). The reason is shown to the chatter"
+            " and in the mod log, after the name of whoever asked."
         ),
         params=(
             Param("1", "user", type="user", required=True, description="Who to time out"),
@@ -125,7 +125,7 @@ async def timeout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
 
     ctx.ensure_not_cancelled()  # the last look before Twitch acts (architecture §4.3)
     if not await twitch.timeout_user(ctx.channel.id, user["id"], seconds, reason):
-        raise CommandError("Twitch refused the timeout — is the bot still a moderator here?")
+        raise CommandError("Twitch refused the timeout. Is the bot still a moderator here?")
     return Result.success(
         f"{_name(user)} is timed out for {_span(seconds)}", {"user": user["name"], "seconds": seconds}
     )
@@ -137,8 +137,8 @@ async def timeout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         module=MODULE,
         summary="Ban a chatter, as the bot",
         description=(
-            "ban <user> [reason…] — Twitch shows the reason to the chatter and in the mod log, after the"
-            " name of whoever asked. `unban` lifts it."
+            "ban <user> [reason…]: the reason is shown to the chatter and in the mod log, after the name"
+            " of whoever asked. `unban` lifts it."
         ),
         params=(
             Param("1", "user", type="user", required=True, description="Who to ban"),
@@ -165,7 +165,7 @@ async def ban_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Resu
         module=MODULE,
         aliases=("untimeout",),
         summary="Lift a chatter's ban or timeout",
-        description="unban <user> — lifts a ban or a timeout, whichever they have. Also `untimeout`.",
+        description="unban <user>: lifts a ban or a timeout. Also `untimeout`.",
         params=(Param("1", "user", type="user", required=True, description="Who may chat again"),),
         required_role="moderator",
         requires=(MODERATE,),
@@ -185,10 +185,7 @@ async def unban_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         name="warn",
         module=MODULE,
         summary="Warn a chatter, as the bot",
-        description=(
-            "warn <user> <reason…> — Twitch shows them the reason, and they must acknowledge it before"
-            " they can chat again."
-        ),
+        description=("warn <user> <reason…>: they must acknowledge the reason before they can chat again."),
         params=(
             Param("1", "user", type="user", required=True, description="Who to warn"),
             Param("2+", "reason", required=True, max_len=MAX_REASON_CHARS, description="Shown to them"),
@@ -215,8 +212,8 @@ async def warn_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         module=MODULE,
         summary="Post a highlighted announcement, as the bot",
         description=(
-            f"announce [colour] <text…> — the colour is one of {', '.join(ANNOUNCE_COLORS)}; the"
-            " channel's own colour if left out. The announcement is the output: nothing else is said."
+            f"announce [colour] <text…>: the colour is one of {', '.join(ANNOUNCE_COLORS)}, the"
+            " channel's own if left out. Says nothing else."
         ),
         params=(
             Param(
@@ -250,9 +247,9 @@ async def announce_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
         summary="Turn Twitch's chat modes on or off",
         description=(
             "chatmode slow [seconds|off] · followers [how long|off] · subsonly|emoteonly|uniquechat"
-            f" [on|off] — slow mode waits {SLOW_DEFAULT_S}s unless told otherwise"
-            f" ({SLOW_MIN_S}–{SLOW_MAX_S}s); followers-only lets anyone who has followed for that long"
-            " chat (up to 3 months, 0 if left out)."
+            f" [on|off]: slow mode waits {SLOW_DEFAULT_S}s unless told otherwise"
+            f" ({SLOW_MIN_S}–{SLOW_MAX_S}s); followers-only lets in anyone who has followed that long"
+            " (up to 3 months, 0 if left out)."
         ),
         params=(
             Param(
@@ -308,7 +305,7 @@ async def _duration(text: str) -> int:
         name="clear",
         module=MODULE,
         summary="Clear the whole chat, as the bot",
-        description="clear — removes every message in chat, as Twitch's /clear does. Says nothing itself.",
+        description="clear: removes every message in chat, like Twitch's /clear. Says nothing itself.",
         required_role="moderator",
         requires=(MODERATE,),
         side_effects=True,
@@ -326,7 +323,7 @@ async def clear_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         name="shield",
         module=MODULE,
         summary="Turn Twitch's Shield Mode on or off",
-        description="shield on|off — Shield Mode applies the channel's own Shield Mode settings, set on Twitch.",
+        description="shield on|off: uses the channel's Shield Mode settings from Twitch.",
         params=(
             Param("1", "state", type="choice", choices=("on", "off"), required=True, description="on or off"),
         ),
@@ -349,8 +346,8 @@ async def shield_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         module=MODULE,
         summary="Delete the message you reply to",
         description=(
-            "delete — send it as a reply to the message to remove. The bot's own messages can go too;"
-            " the broadcaster's, and those of anyone ranked at or above you, can't. Says nothing itself."
+            "delete: reply with it to the message to remove. Works on the bot's messages, not on the"
+            " broadcaster's or those of anyone ranked at or above you. Says nothing itself."
         ),
         required_role="moderator",
         requires=(MODERATE,),
@@ -376,8 +373,8 @@ async def delete_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         module=MODULE,
         summary="Pin the message you reply to",
         description=(
-            f"pin [how long] — send it as a reply to the message to pin. Pinned until unpinned unless a"
-            f" time is given ({PIN_MIN_S}s to {PIN_MAX_S // 60}m). Says nothing itself."
+            f"pin [how long]: reply with it to the message to pin. Stays until unpinned unless a time is"
+            f" given ({PIN_MIN_S}s to {PIN_MAX_S // 60}m). Says nothing itself."
         ),
         params=(Param("1", "duration", type="duration", description="How long it stays pinned"),),
         required_role="moderator",
@@ -402,7 +399,7 @@ async def pin_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Resu
         module=MODULE,
         summary="Unpin a message",
         description=(
-            "unpin — as a reply to the pinned message, or on its own for the last message the bot pinned."
+            "unpin: reply with it to the pinned message, or send it alone to unpin the bot's last pin."
             " Says nothing itself."
         ),
         required_role="moderator",
@@ -425,8 +422,8 @@ async def unpin_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         module=MODULE,
         summary="Set the stream title",
         description=(
-            f"settitle <title…> — up to {MAX_TITLE_CHARS} characters. Goes out on the broadcaster's own"
-            " token, so it needs the channel connected at /auth/connect with that permission."
+            f"settitle <title…>: up to {MAX_TITLE_CHARS} characters. Uses the broadcaster's token, so the"
+            " channel must be connected at /auth/connect with that permission."
         ),
         params=(Param("1+", "title", required=True, max_len=MAX_TITLE_CHARS, description="The new title"),),
         required_role="moderator",
@@ -449,8 +446,8 @@ async def settitle_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
         module=MODULE,
         summary="Set the stream category",
         description=(
-            "setgame <category…> — Twitch's category of that name, or else its closest match. Goes out"
-            " on the broadcaster's own token, like `settitle`."
+            "setgame <category…>: Twitch's category of that name, or its closest match. Uses the"
+            " broadcaster's token, like `settitle`."
         ),
         params=(Param("1+", "category", required=True, description="The category's name"),),
         required_role="moderator",
@@ -475,9 +472,8 @@ async def setgame_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         module=MODULE,
         summary="Place a stream marker",
         description=(
-            f"marker [description…] — marks this moment of the stream for the VOD, with up to"
-            f" {MAX_TITLE_CHARS} characters of description. Only while live; goes out on the broadcaster's"
-            " own token, like `settitle`."
+            f"marker [description…]: marks this moment for the VOD, with up to {MAX_TITLE_CHARS}"
+            " characters of description. Live only. Uses the broadcaster's token, like `settitle`."
         ),
         params=(Param("1+", "description", max_len=MAX_TITLE_CHARS, description="What happened"),),
         required_role="moderator",
@@ -489,9 +485,7 @@ async def setgame_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
 )
 async def marker_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     if not ctx.channel.live:
-        raise CommandError(
-            "the channel isn't live, and Twitch only places markers during a stream", Code.FAIL
-        )
+        raise CommandError("markers only work while live", Code.FAIL)
     description = args.get("description")
     await _act(ctx, lambda t: t.stream_marker(ctx.channel.id, description))
     return Result.success("marker placed", {"description": description})
@@ -503,16 +497,15 @@ async def marker_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         module=MODULE,
         summary="Raid another channel",
         description=(
-            "raid <user> — starts a raid, which Twitch sends after its own countdown. Goes out on the"
-            " broadcaster's own token, so it needs the channel connected at /auth/connect with that"
-            " permission. The broadcaster's alone unless `perm` says otherwise."
+            "raid <user>: starts a raid, which Twitch sends after its countdown. Uses the broadcaster's"
+            " token, like `settitle`. Broadcaster only unless `perm` says otherwise."
         ),
         params=(Param("1", "user", type="user", required=True, description="Who to raid"),),
         required_role="broadcaster",
         requires=(RAIDS,),
         side_effects=True,
         log_level=LogLevel.INVOCATIONS,
-        examples=(Example("{sign}raid @friend", "raiding Friend — Twitch sends it after the countdown"),),
+        examples=(Example("{sign}raid @friend", "raiding Friend, Twitch sends it after the countdown"),),
     )
 )
 async def raid_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
@@ -521,7 +514,7 @@ async def raid_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         raise CommandError("that's this channel")
     await _act(ctx, lambda t: t.start_raid(ctx.channel.id, user["id"]))
     return Result.success(
-        f"raiding {_name(user)} — Twitch sends it after the countdown", {"user": user["name"]}
+        f"raiding {_name(user)}, Twitch sends it after the countdown", {"user": user["name"]}
     )
 
 
@@ -531,10 +524,9 @@ async def raid_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         module=MODULE,
         summary="Send Twitch's shoutout card for another streamer",
         description=(
-            "shoutout <user> — sends Twitch's own shoutout card, and says nothing in chat when it works."
-            " It fails with Twitch's reason when the channel is offline or Twitch refuses: Twitch allows"
-            " one card every 2 minutes, and to the same streamer once an hour. For a chat line as well,"
-            " use the starter pack's `so` (ADR-0019)."
+            "shoutout <user>: sends Twitch's shoutout card and says nothing in chat. Live only; Twitch"
+            " allows one card every 2 minutes, and one per streamer an hour. The starter pack's `so` also"
+            " says a chat line."
         ),
         params=(Param("1", "user", type="user", required=True, description="Who to shout out"),),
         required_role="moderator",
@@ -550,9 +542,7 @@ async def shoutout_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
     if user["id"] == ctx.channel.id:
         raise CommandError("that's this channel")
     if not ctx.channel.live:
-        raise CommandError(
-            "the channel isn't live, and Twitch only sends shoutouts during a stream", Code.FAIL
-        )
+        raise CommandError("shoutouts only work while live", Code.FAIL)
     ctx.ensure_not_cancelled()  # the last look before Twitch acts (architecture §4.3)
     refused = await _twitch(ctx).shoutout(ctx.channel.id, user["id"])
     if refused is not None:

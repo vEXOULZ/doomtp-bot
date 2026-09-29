@@ -86,12 +86,15 @@ async def _packs_json(request: Request, channel_id: str, *, include_global: bool
     for publication, pack in await packs.publications_in(channel_id, include_global=include_global):
         if publication.status != "active":
             continue
+        members = await packs.members(pack.id)
         found.append(
             {
                 "name": pack.name,
                 "summary": pack.summary,
                 "scope": "global" if publication.channel_id == GLOBAL else "channel",
-                "commands": [_custom_json(m) for m in await packs.members(pack.id)],
+                "owner_user_id": pack.owner_user_id,
+                "owner": members[0].owner_login if members else None,
+                "commands": [_custom_json(m) for m in members],
             }
         )
     return found

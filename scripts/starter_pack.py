@@ -69,7 +69,7 @@ STARTER: tuple[Derived, ...] = (
     Derived(
         name="lurk",
         summary="Say you're still around, quietly",
-        body="echo thanks for the lurk, {$chatter.display} — your seat stays warm",
+        body="echo thanks for the lurk, {$chatter.display}, your seat stays warm",
     ),
     Derived(
         name="roll",
@@ -84,7 +84,7 @@ STARTER: tuple[Derived, ...] = (
         # is live; for anyone else, or when the card can't go out, it is just the line.
         body=(
             "ifelse {$chatter.is_mod} ( shoutout {arg.streamer[name]} || true )"
-            " && echo go follow twitch.tv/{arg.streamer[name]} — they were last seen being excellent"
+            " && echo go follow twitch.tv/{arg.streamer[name]}. They were last seen being excellent"
         ),
         declarations=('1 name=streamer type=user "whose channel to name"',),
         note="anyone can run it; only a moderator's also sends Twitch's shoutout card",
@@ -110,7 +110,7 @@ STARTER: tuple[Derived, ...] = (
     Derived(
         name="title",
         summary="The stream's title",
-        body=echo_or_custom("title", "{$channel.title ?? no title — the stream is offline}"),
+        body=echo_or_custom("title", "{$channel.title ?? no title, the stream is offline}"),
     ),
     Derived(
         name="game",
@@ -228,7 +228,7 @@ QUOTES: tuple[Derived, ...] = (
         body=(
             f"ifelse {{({_Q}:len ?? 0) > 0}}"
             f" ( random 1-{{{_Q}:len}} | quote_show {{{_Q}:keys[_1 - 1]}} )"
-            " ( fail 3 no quotes yet — {$channel.prefix}quote add <text> )"
+            " ( fail 3 no quotes yet. Add one with {$channel.prefix}quote add <text> )"
         ),
         internal=True,
     ),

@@ -38,6 +38,7 @@ from tests.runtime.helpers import ping
 from tests.test_history import FakeProvider
 
 BOT_ID, BOT_LOGIN = "999", "doomtp_bot"
+CONNECT_URL = "https://bot.example/auth/connect"
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 USERS = {"alice": "400", "bob": "401", "doomtp": CHANNEL_ID, "other": "500", "owner": "1"}
 
@@ -137,6 +138,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
             "policy": policy,
             "twitch": twitch,
             "customcmds": commands,
+            "connect_url": CONNECT_URL,
             "history": SimpleNamespace(base_url="https://history.example/api"),
             "backfill": BackfillQueue(
                 BackfillService(conn=dbs.chatlog, writer=writer, provider=FakeProvider(), policy=policy)
@@ -216,8 +218,28 @@ async def test_notifications_logged(h: Harness) -> None:
     assert await h.rows("SELECT type FROM chat_notifications") == [("raid",)]
 
 
-async def test_join_and_part_flow(h: Harness) -> None:
+async def test_join_links_the_connect_page_instead_of_joining(h: Harness) -> None:
     await h.say("other", "!join", channel=BOT_ID)  # "other" types !join in the bot's own channel
+    await h.settle()
+    reply = h.twitch.sent[-1][1]
+    assert (
+        reply
+        == f"to add the bot, the broadcaster opens {CONNECT_URL} and signs in to Twitch as their channel"
+    )
+    assert not h.channels.is_active("500") and "500" not in h.twitch.subscribed
+
+    await h.say("bob", "!join basic bob", channel=BOT_ID)  # a cooldown is per chatter, so not "other" again
+    await h.settle()
+    assert h.twitch.sent[-1][1] == "only bot admins can join with basic; type !join for the connect link"
+    assert not h.channels.is_active("401")
+
+    await h.say("owner", "!join other", channel=BOT_ID)  # a channel name changes nothing: same link
+    await h.settle()
+    assert CONNECT_URL in h.twitch.sent[-1][1] and not h.channels.is_active("500")
+
+
+async def test_join_and_part_flow(h: Harness) -> None:
+    await h.say("owner", "!join basic other", channel=BOT_ID)
     await h.settle()
     assert h.twitch.sent[-1][1].startswith("joined #other") and "500" in h.twitch.subscribed
     assert h.channels.is_active("500")
@@ -240,7 +262,7 @@ async def test_part_unsubscribes_so_join_works_again(h: Harness) -> None:
     await h.say("owner", "!part doomtp", channel=BOT_ID)
     await h.settle()
     assert CHANNEL_ID not in h.twitch.subscribed
-    await h.say("owner", "!join doomtp", channel=BOT_ID)
+    await h.say("owner", "!join basic doomtp", channel=BOT_ID)
     await h.settle()
     assert h.twitch.sent[-1][1].startswith("joined #doomtp") and CHANNEL_ID in h.twitch.subscribed
     assert await h.rows(
@@ -278,19 +300,12 @@ async def test_coming_back_after_a_ban_is_deliberate(h: Harness) -> None:
     await h.channels.leave_banned(CHANNEL_ID)
     h.twitch.banned_in.clear()
 
-    await h.say("owner", "!join doomtp", channel=BOT_ID)
+    await h.say("owner", "!join basic doomtp", channel=BOT_ID)
     await h.settle()
-    assert "banned there" in h.twitch.sent[-1][1] and "!join doomtp rejoin" in h.twitch.sent[-1][1]
+    assert "banned there" in h.twitch.sent[-1][1] and "!join basic doomtp rejoin" in h.twitch.sent[-1][1]
     assert not h.channels.is_active(CHANNEL_ID)
 
-    await h.say("owner", "!join doomtp rejoin", channel=BOT_ID)
-    await h.settle()
-    assert h.twitch.sent[-1][1].startswith("joined #doomtp") and h.channels.is_active(CHANNEL_ID)
-
-
-async def test_the_broadcaster_inviting_the_bot_back_is_deliberate_enough(h: Harness) -> None:
-    await h.channels.leave_banned(CHANNEL_ID)
-    await h.say("doomtp", "!join", channel=BOT_ID)
+    await h.say("owner", "!join basic doomtp rejoin", channel=BOT_ID)
     await h.settle()
     assert h.twitch.sent[-1][1].startswith("joined #doomtp") and h.channels.is_active(CHANNEL_ID)
 
@@ -308,7 +323,7 @@ async def test_startup_subscribes_home_channel_once(h: Harness) -> None:
 
 async def test_join_reports_twitch_refusal(h: Harness) -> None:
     h.twitch.refuse = True
-    await h.say("owner", "!join other", channel=BOT_ID)
+    await h.say("owner", "!join basic other", channel=BOT_ID)
     await h.settle()
     assert "Twitch refused" in h.twitch.sent[-1][1]
 
@@ -362,7 +377,7 @@ async def test_an_edited_publication_says_so_once_where_the_channel_asked(h: Har
     await h.settle()
     assert [text for _, text, _ in h.twitch.sent][-2:] == [
         "three",
-        "heads up: hi changed since v2 — @alice edited it (now v3)",
+        "heads up: hi changed since v2, @alice edited it (now v3)",
     ]
 
     await h.say("bob", "!hi")  # the channel has seen v3 now, so it is not told twice

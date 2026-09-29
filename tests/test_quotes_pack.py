@@ -51,7 +51,7 @@ async def test_quotes_are_numbered_and_read_back(h: Harness) -> None:  # noqa: F
 
     empty = await _run(h, "alice", "!quote")
     assert empty.result is not None and empty.result.code == Code.NOT_FOUND
-    assert empty.send == "no quotes yet — !quote add <text>"
+    assert empty.send == "no quotes yet. Add one with !quote add <text>"
 
     # the text is kept as typed (`{arg.1+raw}`): quote marks, runs of spaces, and the escape a | needs
     assert (await _run(h, "mod", '!quote add I meant   to do "that"', live=True)).send == "added #1"

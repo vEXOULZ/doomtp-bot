@@ -128,7 +128,7 @@ async def _log(
         expr=shown,
         resolved=[],
         code=code,
-        message=" — ".join(p for p in (detail, message) if p) or None,
+        message="; ".join(p for p in (detail, message) if p) or None,
         duration_ms=int((time.monotonic() - started) * 1000),
         cancelled_reason=None,
     )

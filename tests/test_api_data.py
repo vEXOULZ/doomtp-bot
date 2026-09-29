@@ -28,6 +28,7 @@ from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.storage.db import Databases
 from doomtp_bot.triggers.service import TriggerService
+from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
 from doomtp_bot.webfetch.hosts import HostStore
 from tests.fakes import policy_with_channels
@@ -49,7 +50,8 @@ class FakeTwitch:
         return []
 
     async def unsubscribe_channel(self, channel_id: str) -> None:
-        self.subscribed.remove(channel_id)
+        if channel_id in self.subscribed:  # the fixture's channel was never subscribed here
+            self.subscribed.remove(channel_id)
 
     async def resolve_user(self, login: str) -> dict[str, str] | None:
         uid = USERS.get(login.lower().lstrip("@"))
@@ -63,6 +65,16 @@ class FakeSessions:
     async def start_session(self, channel_id: str) -> None: ...
 
     async def end_session(self, channel_id: str, reason: str) -> None: ...
+
+
+class FakeProbe:
+    """Stands in for the capability probe: reports what it was told the bot may do."""
+
+    def __init__(self) -> None:
+        self.found: set[str] = {"moderate"}
+
+    async def probe(self, channel_id: str) -> set[str]:
+        return self.found
 
 
 async def _ok_check() -> ComponentHealth:
@@ -91,6 +103,8 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
     keys = ApiKeyService(dbs.bot)
     http_hosts = HostStore(dbs.bot)
     await http_hosts.reload()
+    variable_access = VariableAccessPolicy(policy, dbs.bot)
+    await variable_access.reload()
     app = create_app(
         health,
         None,
@@ -105,6 +119,8 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
             "channels": ChannelManager(policy, twitch, FakeSessions()),
             "twitch": twitch,
             "variable_store": PostgresVariableStore(dbs.bot),
+            "variable_access": variable_access,
+            "capabilities": FakeProbe(),
             "bot_db": dbs.bot,
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,

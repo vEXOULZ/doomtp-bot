@@ -60,9 +60,10 @@ class Session:
     token: str
     created_at: float
     csrf: str
-    # Who is behind it (ADR-0017). The password gives an admin session with no user; a Twitch sign-in
-    # gives the signed-in user, as an admin (bot owner or bot admin) or a moderator of `channels`.
-    role: str = "admin"  # "admin" | "moderator"
+    # Who is behind it (ADR-0017, ADR-0026). The password gives an admin session with no user; a Twitch
+    # sign-in gives the signed-in user, as an admin (bot owner or bot admin), a moderator of `channels`
+    # (their own among them, when the bot is there), or a user who manages none.
+    role: str = "admin"  # "admin" | "moderator" | "user"
     user_id: str | None = None
     user_login: str | None = None
     channels: frozenset[str] | None = None  # logins a moderator manages; None means every channel
@@ -114,10 +115,14 @@ class AdminAuth:
         checked_at: float = 0.0,
     ) -> Session:
         """A new session. Without arguments, the password's admin session."""
-        if role not in ("admin", "moderator"):
+        if role not in ("admin", "moderator", "user"):
             raise ValueError(f"unknown session role {role}")
-        if role == "moderator" and (user_id is None or channels is None):
+        if role == "moderator" and (user_id is None or not channels):
             raise ValueError("a moderator session needs the user and the channels they moderate")
+        if role == "user":
+            if user_id is None:
+                raise ValueError("a user session needs the user")
+            channels = frozenset()
         session = Session(
             secrets.token_urlsafe(32),
             self._now(),
@@ -192,3 +197,28 @@ class LoginLimiter:
 
     def reset(self, address: str) -> None:
         self._failures.pop(address, None)
+
+
+@dataclass
+class ReadLimiter:
+    """Unauthenticated reads per client address (ADR-0026: the public chat log): at most `reads` inside
+    `window_s`. Search is the costly part of the API that anyone can reach, so it is metered."""
+
+    reads: int = 30
+    window_s: float = 60.0
+    clock: object = time.monotonic
+    _hits: dict[str, deque[float]] = field(default_factory=lambda: defaultdict(deque), repr=False)
+
+    def _now(self) -> float:
+        return float(self.clock())  # type: ignore[operator]
+
+    def hit(self, address: str) -> int | None:
+        """Count a read. Whole seconds to wait when `address` is over its limit (the read isn't counted
+        then), else None."""
+        now, hits = self._now(), self._hits[address]
+        while hits and now - hits[0] >= self.window_s:
+            hits.popleft()
+        if len(hits) >= self.reads:
+            return max(1, math.ceil(self.window_s - (now - hits[0])))
+        hits.append(now)
+        return None

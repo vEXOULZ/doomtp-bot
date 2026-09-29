@@ -85,7 +85,13 @@ class VariableAccessPolicy:
 
     # ── grant management (issued by channel mods on publications) ───────────
     async def set_grant(
-        self, channel_id: str, command_id: str, variable: str, granted: bool, actor_user_id: str | None
+        self,
+        channel_id: str,
+        command_id: str,
+        variable: str,
+        granted: bool,
+        actor_user_id: str | None,
+        via: str = "chat",
     ) -> None:
         if not GRANTABLE_RE.match(variable):
             raise ValueError("grants name exact channel.x or channel.chatter.x variables (no wildcards)")
@@ -107,7 +113,7 @@ class VariableAccessPolicy:
                 self.conn,
                 action="grant.add" if granted else "grant.revoke",
                 actor_user_id=actor_user_id,
-                via="chat",
+                via=via,
                 channel_id=channel_id,
                 target=f"{command_id}:{variable}",
             )

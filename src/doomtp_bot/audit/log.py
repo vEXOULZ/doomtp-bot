@@ -56,17 +56,36 @@ async def read_audit(
     channel_id: str | None = None,
     limit: int = 50,
     channel_ids: Sequence[str] | None = None,
+    before_id: int | None = None,
+    actor_user_id: str | None = None,
+    action: str | None = None,
 ) -> list[dict[str, Any]]:
     """The newest audit rows first, optionally only one channel's (or only some channels'), with `before`
-    and `after` decoded.
+    and `after` decoded. `before_id` pages back: rows older than that id. `action` matches a whole action
+    or, ending in `.`, every action under it (`cc.`).
 
     Older rows whose values aren't JSON keep the stored string rather than failing the read.
     """
-    where, params = "", tuple[object, ...]()
+    clauses: list[str] = []
+    params: list[object] = []
     if channel_id is not None:
-        where, params = " WHERE channel_id = %s", (channel_id,)
+        clauses.append("channel_id = %s")
+        params.append(channel_id)
     elif channel_ids is not None:
-        where, params = " WHERE channel_id = ANY(%s)", (list(channel_ids),)
+        clauses.append("channel_id = ANY(%s)")
+        params.append(list(channel_ids))
+    if before_id is not None:
+        clauses.append("id < %s")
+        params.append(before_id)
+    if actor_user_id is not None:
+        clauses.append("actor_user_id = %s")
+        params.append(actor_user_id)
+    if action is not None:
+        clauses.append("action LIKE %s" if action.endswith(".") else "action = %s")
+        params.append(
+            action.replace("%", r"\%").replace("_", r"\_") + "%" if action.endswith(".") else action
+        )
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     async with await conn.execute(
         "SELECT id, channel_id, actor_user_id, via, action, target, before, after, at"
         f" FROM audit_log{where} ORDER BY id DESC LIMIT %s",

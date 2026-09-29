@@ -33,9 +33,9 @@ FLAGS = {"--run", "--as-body"}
         examples=(
             Example(
                 "{sign}explain random 1-6 | echo you rolled {_1}",
-                "Pipe(random,echo) — 1:random ✓, 2:echo ✓",
+                "Pipe(random,echo): 1:random ✓, 2:echo ✓",
             ),
-            Example("{sign}explain --run echo hi", 'echo["hi"] — 1:echo ✓ — ran: code 0, would send: hi'),
+            Example("{sign}explain --run echo hi", 'echo["hi"]: 1:echo ✓; ran: code 0, would send: hi'),
         ),
     )
 )
@@ -64,7 +64,7 @@ async def explain_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
     reports = ctx.exec.services.get("explain_reports")
     if reports is not None and reports.base_url:  # only when chat readers can open the page (§4.4)
         link = reports.link(reports.keep({**data, "channel": ctx.channel.login}))
-        summary, data = f"{summary} — full report: {link}", {**data, "report_url": link}
+        summary, data = f"{summary}; full report: {link}", {**data, "report_url": link}
     return Result.success(summary, data)
 
 

@@ -45,8 +45,8 @@ def _describe(action: str, seconds: int) -> str:
         toggleable=False,
         summary="Delete incoming chat the word list would block",
         description=(
-            f"{USAGE} — acts on messages that a `block` filter entry matches. Moderators and the"
-            " broadcaster are never actioned, and the bot must be a moderator here."
+            f"{USAGE}: acts on messages a `block` filter entry matches. Never acts on moderators or the"
+            " broadcaster. The bot must be a moderator here."
         ),
         params=(Param("1+", "arguments", required=False, description=USAGE),),
         required_role="moderator",
@@ -78,7 +78,7 @@ async def automod_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         patterns = ", ".join(result.patterns())
         would = "delete it" if action != "timeout" else f"delete it and time them out for {seconds}s"
         if action == "off":
-            would = "do nothing — automod is off"
+            would = "do nothing, since automod is off"
         return Result.success(f"blocked by {patterns}: automod would {would}", {"blocked": True})
 
     wanted = "delete" if values[0] == "on" else values[0]

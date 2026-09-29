@@ -7,7 +7,9 @@ who the user is and which channels they moderate, and it lives with their sessio
 What a user may do follows from who they are:
   * a bot owner (`BOT_OWNER_IDS`) or a global bot admin is an **admin**, every channel;
   * anyone else is a **moderator** of the joined channels they own or moderate: their own channel if the
-    bot is in it, plus Helix `GET /moderation/channels`. Someone with none of those gets no session.
+    bot is in it, plus Helix `GET /moderation/channels`;
+  * someone with none of those is a **user** (ADR-0026): signed in, for what is theirs alone, such as
+    adding the bot to their own channel.
 
 Both are worked out again at most every `REFRESH_S`, so a moderator who loses the role loses access
 within that window, not at once.
@@ -38,6 +40,7 @@ MODERATED_URL = "https://api.twitch.tv/helix/moderation/channels"
 REFRESH_S = 300.0
 DEFAULT_NEXT = "/admin"
 
+# `no_channels` is no longer produced (ADR-0026: such a user gets a `user` session), but older sites know it.
 Reason = Literal["denied", "expired", "twitch", "no_channels"]
 
 
@@ -113,7 +116,7 @@ class Grant:
 
 @dataclass(frozen=True, slots=True)
 class Access:
-    role: Literal["admin", "moderator"]
+    role: Literal["admin", "moderator", "user"]
     channels: frozenset[str] | None  # logins; None for an admin, who has every channel
 
 
@@ -124,13 +127,13 @@ class Policy(Protocol):
 
 
 def access_for(policy: Policy, user_id: str, moderated: Iterable[str]) -> Access:
-    """An admin, or a moderator of the joined channels that are theirs or that they moderate."""
+    """An admin, a moderator of the joined channels that are theirs or that they moderate, or a user who
+    manages none of them."""
     if policy.is_bot_admin(user_id):
         return Access("admin", None)
     ids = {user_id, *moderated}
-    return Access(
-        "moderator", frozenset(c.login for c in policy.channels() if c.active and c.channel_id in ids)
-    )
+    channels = frozenset(c.login for c in policy.channels() if c.active and c.channel_id in ids)
+    return Access("moderator" if channels else "user", channels)
 
 
 def safe_next(value: str | None) -> str:
@@ -218,8 +221,6 @@ class TwitchSignIn:
             access = await self.access(grant)
         except (OAuthError, aiohttp.ClientError) as exc:
             raise SignInError("twitch", str(exc)) from exc
-        if access.role == "moderator" and not access.channels:
-            raise SignInError("no_channels", f"{grant.login} doesn't manage any channel the bot is in")
         log.info(
             "signin.completed", user=grant.login, role=access.role, channels=sorted(access.channels or ())
         )
@@ -242,7 +243,8 @@ class TwitchSignIn:
 
     async def refresh(self, session: Any) -> bool:
         """Bring a Twitch session's role and channels up to date, at most every `refresh_s`. False when
-        the session should end: Twitch took the grant back, or the user manages no channel any more.
+        the session should end: Twitch (or vexoulz-auth) took the grant back. Someone who manages no
+        channel any more stays signed in, as a user.
         A request that merely failed on the way keeps what the session had until the next try."""
         grant = session.grant
         if not isinstance(grant, Grant) or self.clock() - session.checked_at < self.refresh_s:
@@ -256,9 +258,6 @@ class TwitchSignIn:
         except (OAuthError, aiohttp.ClientError, TimeoutError) as exc:
             log.warning("signin.refresh_failed", user=grant.login, error=str(exc))
             return True
-        if access.role == "moderator" and not access.channels:
-            log.info("signin.no_channels", user=grant.login)
-            return False
         session.role, session.channels = access.role, access.channels
         return True
 

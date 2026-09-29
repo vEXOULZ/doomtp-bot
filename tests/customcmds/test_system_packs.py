@@ -75,7 +75,7 @@ async def test_internal_members_are_hidden_from_help_and_marked_in_info(h: Harne
 
     listing = await h.say("bob", "!help")
     assert listing is not None and "custom: hit" in listing and "deal" not in listing
-    assert await h.say("alice", "!cc pack info blackjack") == "blackjack: deal (internal), hit — here"
+    assert await h.say("alice", "!cc pack info blackjack") == "blackjack: deal (internal), hit (here)"
 
 
 async def test_only_members_can_be_made_internal(h: Harness) -> None:  # noqa: F811
@@ -106,7 +106,7 @@ async def test_a_system_pack_cannot_be_published_or_changed_from_chat(h: Harness
     await h.say("owner", "!cc add hug echo hugs")
     for line in ("!cc pack add core hug", "!cc pack rm core false", "!cc pack delete core"):
         assert await h.say("owner", line) == "core is a system pack; only the pack script changes it"
-    assert await h.say("owner", "!cc pack info core") == "core: default, false — system pack"
+    assert await h.say("owner", "!cc pack info core") == "core: default, false (system pack)"
 
 
 async def test_system_members_win_over_channel_commands(h: Harness) -> None:  # noqa: F811
