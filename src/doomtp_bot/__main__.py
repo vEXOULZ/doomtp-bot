@@ -38,7 +38,6 @@ from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import MODERATOR_RANK
 from doomtp_bot.policy.service import PolicyService
-from doomtp_bot.quotes import QuoteService
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.runtime.resolver import BuiltinResolver
@@ -140,7 +139,6 @@ async def run(settings: Settings) -> None:
         "history": history,  # the backfill command names the service before anything is sent to it
         "explain_reports": explain_reports,
         "site_url": settings.web_site_url,  # `!help` links the channel's command page there
-        "quotes": QuoteService(dbs.bot),
         "chatlog_db": dbs.chatlog,  # logsearch reads the log through chatlog/queries.py
         "chatlog_writer": writer,  # `http` logs each request it makes (ADR-0020)
         "http_hosts": http_hosts,

@@ -132,7 +132,7 @@ flowchart TB
 
     subgraph DATA["postgres — one database, a schema each (ADR-0014)"]
         direction LR
-        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · quotes · audit · oauth_tokens")]:::store
+        BOT[("schema bot<br/>channels · roles · toggles · cooldowns<br/>custom_commands + versions · packs · publications<br/>variables · triggers · filters · audit · oauth_tokens")]:::store
         CHAT[("schema chatlog<br/>messages + tsvector · mod_events<br/>log_sessions · backfill_runs<br/>command_runs · outbound_msgs")]:::store
     end
 ```
@@ -454,7 +454,7 @@ Resolution runs in this order, and the first rule that matches decides:
 - **Packs** group a user's commands so they publish and unpublish as one unit, and the pack's name is the module name for `!module` toggles (ADR-0012). A command added to a published pack appears immediately.
 - **Derived commands** are custom commands published to the global scope by a bot owner or admin: available in every channel, still overridable by a channel publication, and never able to shadow a Python built-in (a *primitive*).
 - The **`core` system pack** (the derived sentinels `false` and `default`) is installed by the same script, resolves in every channel without a publication, and is checked at startup: the bot refuses to start without it at the expected version (ADR-0012 amendment, ADR-0019).
-- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`, `weather`) is installed by `scripts/starter_pack.py` (the `migrate` step runs it on every compose `up`, ADR-0022), not seeded at boot: it creates the commands under the bot's own account and publishes the `starter` pack globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication. `weather` works once the bot account is a bot admin and an admin has run `!admin http allow wttr.in` (ADR-0020).
+- The **starter pack** (`hug`, `lurk`, `roll`, `so`, `deaths`, `weather`) and the **quotes pack** (`quote`, with its internal members, keeping each channel's quotes in the bot's `publisher.channel.quotes`, ADR-0019) are installed by `scripts/starter_pack.py` (the `migrate` step runs it on every compose `up`, ADR-0022), not seeded at boot: it creates the commands under the bot's own account and publishes both packs globally, and re-running it edits only what the file changed. A channel switches the set off with `!module disable starter`. `deaths` writes a channel variable, so each channel grants it once — the same rule as any other publication. `weather` works once the bot account is a bot admin and an admin has run `!admin http allow wttr.in` (ADR-0020).
 
 ### Variables, briefly
 
@@ -692,11 +692,10 @@ src/doomtp_bot/
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ webfetch/    addresses.py fetcher.py hosts.py                           ✔ ADR-0020: allowed hosts, public addresses only
 ├─ audit/       log.py                                                     ✔
-├─ quotes.py    numbered per channel, never renumbered                     ✔ the quotes module's table
 ├─ storage/     db.py schema.py migrations/{bot,chatlog}/                  ✔ connections and Alembic migrations
 ├─ modules/     core.py core_admin.py channels.py help.py basic.py         ✔ built-in command groups
 │               variables.py customcmds.py filters.py automod.py triggers.py explain.py _common.py
-│               moderation.py quotes.py logsearch.py                       ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); quotes; log search
+│               moderation.py logsearch.py                                 ✔ timeout, ban, shoutout, chat modes, pins… (§4.3); log search
 │               httpget.py                                                 ✔ `http get`, only in bot admins' commands (ADR-0020)
 └─ api/         app.py keys.py sessions.py access.py grammar.py            ✔ no pages: those are doomtp-web's (ADR-0016)
                 routes/ (health auth language data session site)          ✔

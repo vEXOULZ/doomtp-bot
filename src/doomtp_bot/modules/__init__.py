@@ -20,7 +20,6 @@ def builtin_registry() -> CommandRegistry:
         httpget,
         logsearch,
         moderation,
-        quotes,
         variables,
     )
 
@@ -36,7 +35,6 @@ def builtin_registry() -> CommandRegistry:
         filters,
         automod,
         moderation,
-        quotes,
         logsearch,
         automation,
         explain,

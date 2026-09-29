@@ -200,3 +200,90 @@ def test_the_triggers_module_moves_to_automation_and_back(empty_database: str) -
     ]
     schema.downgrade(empty_database, {"bot": "0005"})
     assert ("c1", "triggers", "false") in rows() and ("c1", "module:triggers") in rows()
+
+
+def _quote_rows(dsn: str) -> list[tuple[Any, ...]]:
+    with psycopg.connect(dsn) as conn:
+        return conn.execute(
+            "SELECT channel_id, number, text, game, added_at, deleted_at IS NOT NULL FROM bot.quotes"
+            " ORDER BY 1, 2"
+        ).fetchall()
+
+
+def test_quotes_move_into_the_bots_variables_and_back(empty_database: str) -> None:
+    """0008 copies the live quotes into `publisher.channel.quotes` under the bot's account, keeps the last
+    number given out, and drops the table (ADR-0019 item 9); down, the table comes back from them."""
+    day = 1_790_006_400_000  # 2026-09-21 16:00 UTC, already the 22nd in Tokyo
+    command.upgrade(schema.config("bot", empty_database), "0007")
+    with psycopg.connect(empty_database) as conn:
+        conn.execute(
+            "INSERT INTO bot.oauth_tokens (identity, user_id, login, access_token, updated_at)"
+            " VALUES ('bot', '999', 'thebot', 'x', 0)"
+        )
+        conn.execute(
+            "INSERT INTO bot.channels (channel_id, login, timezone, added_at, updated_at) VALUES ('c1', 'one', 'Asia/Tokyo', 0, 0)"
+        )
+        conn.execute(
+            "INSERT INTO bot.quotes (channel_id, number, text, game, added_by, added_at, deleted_at) VALUES"
+            " ('c1', 1, 'first', 'Doom', '5', %(d)s, NULL), ('c1', 2, 'gone', NULL, '5', %(d)s, %(d)s),"
+            " ('c1', 3, 'I meant to do that', NULL, '5', %(d)s, NULL), ('c1', 4, 'also gone', NULL, '5', %(d)s, %(d)s),"
+            " ('c2', 1, 'elsewhere', NULL, '6', %(d)s, NULL)",
+            {"d": day},
+        )  # fmt: skip
+
+    command.upgrade(schema.config("bot", empty_database), "0008")
+    with psycopg.connect(empty_database) as conn:
+        assert conn.execute("SELECT to_regclass('bot.quotes')").fetchone() == (None,)
+        stored = conn.execute(
+            "SELECT key1, key2, name, value FROM bot.variables WHERE ns = 'publisher.channel' ORDER BY 2, 3"
+        ).fetchall()
+    assert stored == [
+        ("999", "c1", "quote_next", "4"),
+        ("999", "c1", "quotes", '{"1":{"text":"first","date":"2026-09-22","game":"Doom"},'
+                                '"3":{"text":"I meant to do that","date":"2026-09-22"}}'),
+        ("999", "c2", "quote_next", "1"),
+        ("999", "c2", "quotes", '{"1":{"text":"elsewhere","date":"2026-09-21"}}'),
+    ]  # fmt: skip
+
+    schema.downgrade(empty_database, {"bot": "0007"})
+    midnight = 1_790_035_200_000  # 2026-09-22 00:00 UTC
+    assert _quote_rows(empty_database) == [
+        ("c1", 1, "first", "Doom", midnight, False),
+        ("c1", 3, "I meant to do that", None, midnight, False),
+        ("c1", 4, "", None, 0, True),  # the last number stays taken
+        ("c2", 1, "elsewhere", None, midnight - 86_400_000, False),
+    ]
+    with psycopg.connect(empty_database) as conn:
+        assert conn.execute("SELECT count(*) FROM bot.variables").fetchone() == (0,)
+
+
+def test_quotes_need_the_bot_account_to_move(empty_database: str) -> None:
+    command.upgrade(schema.config("bot", empty_database), "0007")
+    with psycopg.connect(empty_database) as conn:
+        conn.execute("INSERT INTO bot.quotes (channel_id, number, text, added_at) VALUES ('c1', 1, 'x', 0)")
+    with pytest.raises(RuntimeError, match="no bot account"):
+        command.upgrade(schema.config("bot", empty_database), "0008")
+    assert _quote_rows(empty_database) == [("c1", 1, "x", None, 0, False)]  # nothing moved, nothing lost
+
+
+def test_a_channel_with_many_quotes_gets_room_for_them(empty_database: str) -> None:
+    """One channel's quotes are one value: the bot's cap and quota grow to fit it, with room to spare."""
+    command.upgrade(schema.config("bot", empty_database), "0007")
+    with psycopg.connect(empty_database) as conn:
+        conn.execute(
+            "INSERT INTO bot.oauth_tokens (identity, user_id, login, access_token, updated_at)"
+            " VALUES ('bot', '999', 'thebot', 'x', 0)"
+        )
+        conn.execute(
+            "INSERT INTO bot.quotes (channel_id, number, text, added_at)"
+            " SELECT 'c1', n, repeat('q', 390), 0 FROM generate_series(1, 1000) n"
+        )
+    command.upgrade(schema.config("bot", empty_database), "0008")
+    with psycopg.connect(empty_database) as conn:
+        size = conn.execute("SELECT size_bytes FROM bot.variables WHERE name = 'quotes'").fetchone()
+        limits = conn.execute(
+            "SELECT quota_bytes, value_cap_bytes FROM bot.variable_limits WHERE owner_kind = 'publisher'"
+        ).fetchone()
+    assert size is not None and limits is not None
+    assert size[0] > 262_144 and limits[1] == 2 * size[0]
+    assert limits[0] is None  # ~420 KB still fits the 1 MB quota
