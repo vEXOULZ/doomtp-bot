@@ -195,37 +195,39 @@ class BackfillService:
     async def fill_many(self, gaps: Sequence[Gap]) -> FillResult:
         """Fill one channel's gaps with as few requests as the service allows (ADR-0024 §5).
 
-        The service takes a start and no end, and answers oldest first, so one request from the oldest gap
-        covers every later gap its 800 lines reach. Only lines inside a gap are stored; the live log has the
-        rest. When the cap cuts a page short, the next one carries on from its newest line; when the next gap
-        starts past that, it starts at the gap instead, skipping the chat in between.
+        The service takes a start and an end (`after` and `before`, both exclusive) and, when more lines match
+        than the cap, answers with the newest of them. So one request spans every gap, from the oldest gap's
+        start to the newest one's end, and when the cap cuts it short the next page ends where that one's
+        oldest line was. Gaps the pages have reached back past are done; when the next gap ends before that
+        line, the next page ends at the gap instead, skipping the chat in between. Only lines inside a gap are
+        stored; the live log has the rest.
 
-        A gap is complete when history reaches back to its start and forward past its end (ADR-0008). History
-        that starts after a gap did can't be made to reach further back by asking again: the gap is recorded
-        `out_of_reach` and not queued again.
+        A gap is complete when history reaches back to its start (ADR-0008). History that starts after a gap
+        did can't be made to reach further back by asking again: the gap is recorded `out_of_reach` and not
+        queued again.
         """
-        pending = sorted(gaps, key=lambda g: g.from_ms)
-        if not pending:
+        ordered = sorted(gaps, key=lambda g: g.from_ms)
+        if not ordered:
             return FillResult(())
+        pending = list(ordered)
         channel_id, login = pending[0].channel_id, pending[0].channel_login
         outcomes: list[BackfillOutcome] = []
         per_gap: dict[Gap, int] = dict.fromkeys(pending, 0)
         seen: set[str] = set()
         fetched = pages = 0
         error = ""
-        covered_from: int | None = None  # history is unbroken from here to the end of the last page
-        chain_at: int | None = None  # the newest line of the last page, when the cap cut it short
+        cut_at: int | None = None  # the oldest line of the last page, when the cap cut it short
         while pending and pages < MAX_PAGES:
             start = max(0, pending[0].from_ms - GAP_GRACE_MS)
-            chained = chain_at is not None and chain_at >= start
-            after = chain_at if chained and chain_at is not None else start
-            response = await self.provider.fetch(login, after_ms=after, limit=DEFAULT_LIMIT)
+            end = pending[-1].to_ms + 1  # a gap's end is inclusive; `before` is not
+            if cut_at is not None:
+                end = min(end, cut_at + 1)  # lines at `cut_at` itself may not all have fit
+            response = await self.provider.fetch(login, after_ms=start, before_ms=end, limit=DEFAULT_LIMIT)
             pages += 1
             if not response.ok:
                 error = response.error_code
                 break
             oldest: int | None = None
-            newest: int | None = None
             for raw in response.lines:
                 line = parse_line(raw)
                 if line is None:
@@ -233,38 +235,37 @@ class BackfillService:
                 at = line.tag_int("rm-received-ts") or line.tag_int("tmi-sent-ts")
                 if at:
                     oldest = at if oldest is None else min(oldest, at)
-                    newest = at if newest is None else max(newest, at)
                 if raw in seen:
-                    continue  # a chained page starts with the last one's newest lines
+                    continue  # a page ending at `cut_at + 1` repeats the last one's oldest lines
                 seen.add(raw)
                 fetched += 1
                 event = to_events(line, channel_id, login, raw)
                 if event is None:
                     continue
-                gap: Gap | None = pending[0]
+                gap: Gap | None = pending[-1]
                 if at:
-                    gap = next((g for g in pending if g.from_ms - GAP_GRACE_MS <= at <= g.to_ms), None)
+                    gap = next((g for g in ordered if g.from_ms - GAP_GRACE_MS <= at <= g.to_ms), None)
                 if gap is None:
                     continue  # between gaps: the live log already has it
                 await self._store(event)
                 per_gap[gap] += 1
-            if not chained:
-                covered_from = oldest
-            reached = (newest or 0) if response.hit_limit else None  # None: up to now
-            still: list[Gap] = []
+            if not response.hit_limit:
+                # Everything from `start` to `end` came back: every gap left is settled.
+                for gap in pending:
+                    complete = oldest is None or oldest <= gap.from_ms
+                    count = per_gap[gap]
+                    outcomes.append(
+                        BackfillOutcome(gap, count, count, complete, "" if complete else OUT_OF_REACH)
+                    )
+                pending = []
+                break
+            if oldest is None or (cut_at is not None and oldest >= cut_at):
+                break  # nothing older came back: asking again would get the same page
             for gap in pending:
-                if reached is not None and gap.to_ms > reached:
-                    still.append(gap)
-                    continue
-                complete = covered_from is None or covered_from <= gap.from_ms
-                count = per_gap[gap]
-                outcomes.append(
-                    BackfillOutcome(gap, count, count, complete, "" if complete else OUT_OF_REACH)
-                )
-            pending = still
-            if newest is None or (chain_at is not None and newest <= chain_at):
-                break  # nothing newer came back: asking again would get the same page
-            chain_at = newest
+                if gap.from_ms >= oldest:
+                    outcomes.append(BackfillOutcome(gap, per_gap[gap], per_gap[gap], True))
+            pending = [g for g in pending if g.from_ms < oldest]
+            cut_at = oldest
         # Whatever a failure or the page limit left: incomplete, and open for the next job.
         outcomes.extend(BackfillOutcome(g, per_gap[g], per_gap[g], False, error) for g in pending)
 

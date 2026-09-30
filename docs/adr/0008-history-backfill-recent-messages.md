@@ -15,7 +15,7 @@ Twitch has no chat history API. Whenever the bot is offline, whether from a cras
   - `limit`
   - `before` and `after`, as ms timestamps compared against `rm-received-ts`
   - `hide_moderation_messages` and `hide_moderated_messages`
-- It returns **up to 800 messages**, oldest first, as **raw IRC lines**: `PRIVMSG`, `CLEARCHAT`, `CLEARMSG`, `USERNOTICE`, `NOTICE` and `ROOMSTATE`.
+- It returns **up to 800 messages**, oldest first, as **raw IRC lines**. When more match than `limit`, it keeps the **newest** of them, and `before`/`after` are both exclusive (checked 2026-09-29). The lines are `PRIVMSG`, `CLEARCHAT`, `CLEARMSG`, `USERNOTICE`, `NOTICE` and `ROOMSTATE`.
   - Every line carries `historical=1` and `rm-received-ts`.
   - Deleted messages carry `rm-deleted=1`.
 - **Tag order isn't stable**, and the trailing `:` may be missing, so the bot needs an RFC 2812-compliant parser.
@@ -31,8 +31,8 @@ Twitch has no chat history API. Whenever the bot is offline, whether from a cras
   - A gap is `(last message received or session end) → (new session start)`.
   - Gaps are checked at startup and after each EventSub reconnect longer than 5 s.
 - **Fetch:** `?after=<gap_from − 5 s>&limit=800`, requested per channel with backoff on errors. *(2026-09-29: one
-  request covers all of a channel's gaps, from the oldest one; a page the cap cuts short is followed by the next,
-  and only lines inside a gap are stored. See ADR-0024 §5.)*
+  request covers all of a channel's gaps, `after` the oldest one's start and `before` the newest one's end; a page
+  the cap cuts short is followed by an older one, and only lines inside a gap are stored. See ADR-0024 §5.)*
 - **Parse and map:**
   - `PRIVMSG`: a `messages` row. `id` becomes `message_id` (the same UUID EventSub uses, so it dedupes via `INSERT OR IGNORE`), `user-id`, `tmi-sent-ts` becomes `sent_at`, `badges`. `source='recent-messages'` and the raw line is stored.
   - `rm-deleted=1` sets `deleted_at`, using the `CLEARMSG`/`CLEARCHAT` time when present.

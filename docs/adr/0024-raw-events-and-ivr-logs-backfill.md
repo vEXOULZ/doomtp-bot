@@ -162,13 +162,16 @@ a backfill can take minutes or days, so it becomes a **job in a queue**:
 - **`chatlog.backfill_jobs`**: the channel, the kind (`gaps` or `range`), the range (`from_ms`, `to_ms`),
   who asked (`startup`, a chatter or an API caller), when, and the state: `queued`, `running`, `done`,
   `failed` or `cancelled`, with what it fetched and stored, whether the range is `complete`, and any error.
-- **One job per channel for its gaps.** The service takes a start and no end and answers oldest first, so
-  a job per gap asked for the same lines again and again, and a gap older than the service's history was
-  queued at every startup, for good. Instead:
+- **One job per channel for its gaps.** A job per gap meant a request per gap, and a gap older than the
+  service's history was queued at every startup, for good. Instead:
   - a **`gaps`** job looks up the channel's open gaps when it runs, and fills them all with one request
-    from the oldest; a page the 800-line cap cuts short is followed by the next (from its newest line, or
-    from the next gap when that starts later). Only lines inside a gap are stored. Its range only says
-    what was open when it was queued;
+    from the oldest gap's start to the newest one's end (`after` and `before`, both exclusive). When more
+    lines match than the 800-line cap, the service answers with the **newest** of them, so a page the cap
+    cuts short is followed by an older one: it ends at that page's oldest line, or at the end of the next
+    gap back when that ended earlier. Only lines inside a gap are stored. Its range only says what was open
+    when it was queued. *(2026-09-29: the first version asked with `after` alone, on the belief that the
+    service kept the oldest lines. It keeps the newest, so a range older than the service's newest 800
+    lines got none of its own and was recorded `out_of_reach`.)*
   - a channel has **at most one `gaps` job waiting**: startup, a reconnect and `!backfill gaps` join it
     (its range widens) instead of queueing another;
   - a gap whose history starts after it did is recorded **`out_of_reach`** and no longer counts as open
