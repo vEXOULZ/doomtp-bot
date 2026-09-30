@@ -242,6 +242,7 @@ async def test_join_and_part_flow(h: Harness) -> None:
     await h.say("owner", "!join basic other", channel=BOT_ID)
     await h.settle()
     assert h.twitch.sent[-1][1].startswith("joined #other") and "500" in h.twitch.subscribed
+    assert "Backfill is on" in h.twitch.sent[-1][1]  # on for a new channel (ADR-0008)
     assert h.channels.is_active("500")
 
     await h.say("alice", "!join")  # outside the bot's channel
@@ -259,12 +260,14 @@ async def test_join_and_part_flow(h: Harness) -> None:
 
 
 async def test_part_unsubscribes_so_join_works_again(h: Harness) -> None:
+    await h.say("doomtp", "!backfill off")
     await h.say("owner", "!part doomtp", channel=BOT_ID)
     await h.settle()
     assert CHANNEL_ID not in h.twitch.subscribed
     await h.say("owner", "!join basic doomtp", channel=BOT_ID)
     await h.settle()
     assert h.twitch.sent[-1][1].startswith("joined #doomtp") and CHANNEL_ID in h.twitch.subscribed
+    assert "Backfill is off" in h.twitch.sent[-1][1]  # a channel coming back keeps its choice
     assert await h.rows(
         f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}' ORDER BY id"
     ) == [
@@ -410,25 +413,26 @@ async def test_custom_command_sees_the_stream_while_live(h: Harness) -> None:
 
 
 async def test_backfill_explains_itself_and_waits_for_the_broadcaster(h: Harness) -> None:
-    """ADR-0008: opt-in, named at onboarding — and the prompt names the service before anything is sent."""
+    """ADR-0008: on for a new channel, the prompt names the service, and only the broadcaster changes it."""
+    assert h.policy.channel_settings(CHANNEL_ID).history_backfill
     await h.say("bob", "!backfill")
     await h.settle()
     said = h.twitch.sent[-1][1]
-    assert said.startswith("backfill is off") and "https://history.example/api" in said
+    assert said.startswith("backfill is on") and "https://history.example/api" in said
 
-    await h.say("bob", "!backfill on")
+    await h.say("bob", "!backfill off")
     await h.settle()
     assert h.twitch.sent[-1][1] == "only the broadcaster can change backfill"
-    assert not h.policy.channel_settings(CHANNEL_ID).history_backfill
-
-    await h.say("doomtp", "!backfill on")
-    await h.settle()
-    assert h.twitch.sent[-1][1] == "backfill is on"
     assert h.policy.channel_settings(CHANNEL_ID).history_backfill
 
     await h.say("doomtp", "!backfill off")
     await h.settle()
+    assert h.twitch.sent[-1][1] == "backfill is off"
     assert not h.policy.channel_settings(CHANNEL_ID).history_backfill
+
+    await h.say("doomtp", "!backfill on")
+    await h.settle()
+    assert h.policy.channel_settings(CHANNEL_ID).history_backfill
 
 
 async def test_the_broadcaster_queues_and_cancels_backfill_jobs(h: Harness) -> None:
@@ -439,6 +443,7 @@ async def test_the_broadcaster_queues_and_cancels_backfill_jobs(h: Harness) -> N
         await h.settle()
         return h.twitch.sent[-1][1]
 
+    await reply("doomtp", "!backfill off")
     assert await reply("doomtp", "!backfill 6h") == "backfill is off for this channel"
     await reply("doomtp", "!backfill on")
     assert await reply("bob", "!backfill 6h") == "only the broadcaster can change backfill"

@@ -24,7 +24,7 @@ class ChannelSettings:
     prefix: str = DEFAULT_PREFIX
     reply_hold_ms: int = 0
     log_enabled: bool = True
-    history_backfill: bool = False
+    history_backfill: bool = True  # on for new channels (ADR-0008, amended 2026-09-30)
     public_log: bool = True  # anyone may read the log while log_enabled is on too (ADR-0026)
     quiet_errors: bool = False
     cc_edit_notice: bool = False  # say when a published command changed (ADR-0009)
