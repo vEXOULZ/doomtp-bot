@@ -100,9 +100,10 @@ async def _packs_json(request: Request, channel_id: str, *, include_global: bool
     return found
 
 
+# ADR-0012
 @router.get("/packs")
 async def global_packs(request: Request) -> dict[str, Any]:
-    """Packs published everywhere (ADR-0012): their commands work in every channel."""
+    """Packs published everywhere: their commands work in every channel."""
     return {"packs": await _packs_json(request, GLOBAL, include_global=False)}
 
 
