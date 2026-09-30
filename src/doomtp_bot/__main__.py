@@ -31,7 +31,8 @@ from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
-from doomtp_bot.history.provider import RecentMessagesProvider
+from doomtp_bot.history.enrich import Enricher, TwitchCdn
+from doomtp_bot.history.provider import IvrLogsProvider
 from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.automod import AutoMod
@@ -94,7 +95,7 @@ async def run(settings: Settings) -> None:
     except CoreNotInstalled:
         await dbs.close()
         raise
-    history = RecentMessagesProvider(settings.history_provider_url)
+    history = IvrLogsProvider(settings.ivr_logs_url)
     triggers = TriggerService(dbs.bot, filters=content_filter)
     await triggers.reload()
     activity = ChatActivity()
@@ -129,7 +130,11 @@ async def run(settings: Settings) -> None:
     # `!explain` links its full report only where chat can open it (architecture §4.4).
     explain_reports = ReportStore(settings.public_base_url if settings.public_web_ui else None)
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
-    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
+    emote_cdn = TwitchCdn()
+    enricher = Enricher(dbs.chatlog, twitch, emote_cdn)  # what backfilled lines lack (ADR-0024 §3)
+    backfill = BackfillService(
+        conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher
+    )
     backfill_queue = BackfillQueue(backfill)  # `!backfill gaps` and the API queue jobs (ADR-0024 §5)
     services: dict[str, object] = {
         "policy": policy,
@@ -252,7 +257,6 @@ async def run(settings: Settings) -> None:
                 if queued:
                     log.info("history.startup_backfill", channels=len(queued))
                 backfill_queue.start()
-                backfill.start_keep_warm()
         except Exception:
             log.exception("twitch.start_failed")
 
@@ -433,8 +437,8 @@ async def run(settings: Settings) -> None:
         if poller is not None:
             await poller.stop()
         await backfill_queue.stop()
-        await backfill.stop()
         await history.close()
+        await emote_cdn.close()
         twitch_start.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await twitch_start

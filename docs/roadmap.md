@@ -20,7 +20,7 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0005](adr/0005-command-pipeline-runtime.md) | Parse → resolve → preflight → execute | 6/6 | Complete |
 | [0006](adr/0006-permissions-cooldowns-toggles.md) | Ranked roles, two cooldowns, layered toggles | 5/5 | Complete |
 | [0007](adr/0007-channel-access-tiers.md) | Basic, moderator and full channel tiers | 5/5 | Complete |
-| [0008](adr/0008-history-backfill-recent-messages.md) | Fill log gaps from recent-messages | 5/6 | One blocked |
+| [0008](adr/0008-history-backfill-recent-messages.md) | Fill log gaps from logs.ivr.fi | 5/6 | One blocked |
 | [0009](adr/0009-user-custom-commands-sharing.md) | User-owned commands: link, publish, version | 6/6 | Complete |
 | [0010](adr/0010-variables-scopes.md) | Seven namespaces, exact-name write grants | 4/4 | Complete |
 | [0011](adr/0011-parser-and-web-editor.md) | One server-side PEG parser, a local highlighter | 6/6 | Complete |
@@ -36,12 +36,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0021](adr/0021-integrate-on-dev-release-to-main.md) | Integrate on `dev`, release to `main` | 4/4 | Complete: `v0.2.0` released on 2026-09-28 |
 | [0022](adr/0022-alembic-migrations-with-a-migrate-step.md) | Alembic migrations, run by a migrate step before the bot | 3/3 | Complete: rolled back and forward on guest 221 |
 | [0023](adr/0023-shared-sign-in-through-vexoulz-auth.md) | Shared sign-in through vexoulz-auth | 1/2 | Built; switched on once vexoulz-auth is deployed |
-| [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 3/9 | Events stored as Twitch sent them (chatlog 0002, the adapter's capture); backfill runs as queued jobs (chatlog 0003, `!backfill`, the API); readers, enrichment and ivr.fi to come |
+| [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 5/9 | Events stored as Twitch sent them (chatlog 0002, the adapter's capture); backfill runs as queued jobs (chatlog 0003, `!backfill`, the API); logs.ivr.fi is the history provider (chatlog 0005); readers and enrichment to come |
 | [0025](adr/0025-chat-log-timeline-api.md) | The chat log as a paged timeline on the API | 1/3 | API built; the site's log viewer and the archive's enrichment are next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**129 of 139 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
-item 2 (switching the shared sign-in on once vexoulz-auth is deployed); the other eight are the rest of ADR-0024
+**131 of 139 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
+item 2 (switching the shared sign-in on once vexoulz-auth is deployed); the other six are the rest of ADR-0024
 and ADR-0025, both accepted on 2026-09-28. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
@@ -59,10 +59,10 @@ override has to reach the deploy scripts through `COMPOSE_FILE`.
 
 ### Waiting on a reply — ADR-0008 item 4
 
-Backfill reads from `recent-messages.robotty.de`, a service someone else runs and pays for. The bot
-already asks each channel before using it (`!backfill`), records what it filled, and keeps its requests
-within the documented reach. **Contacting the maintainer about the bot integration and the keep-warm
-interval is still open, and should happen before backfill is enabled for a real channel.** This is a
+Backfill reads from `logs.ivr.fi`, a service someone else runs and pays for, with no published terms or
+contact. The bot already asks each channel before using it (`!backfill`), records what it filled, and
+keeps to its own generous limits (one request every 10 s, 200 a day, backoff). **Telling ivr.fi about the
+bot integration is still open, if a contact turns up.** This is a
 courtesy item, not a technical one — which is exactly the sort that quietly never gets done.
 
 ### Promised in the architecture, not yet built
@@ -123,7 +123,7 @@ psycopg in place of aiosqlite, and full-text search on a `tsvector` column inste
 
 ## Next, in the order it makes sense
 
-1. **Write to the recent-messages maintainer** (ADR-0008 item 4), then turn backfill on for one channel
+1. **Tell ivr.fi about the integration** if a contact turns up (ADR-0008 item 4), turn backfill on for one channel
    and read what `scripts/coverage.py` says the next morning.
 2. **Sign the bot in again** once it runs there: `!shoutout` needs `moderator:manage:shoutouts`, which a
    token from before 2026-09-23 doesn't carry, and `!warn`, `!announce`, `!chatmode` and `!shield` need

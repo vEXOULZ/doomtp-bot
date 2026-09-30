@@ -6,12 +6,11 @@ import asyncio
 
 import pytest
 
-from doomtp_bot.history.backfill import OUT_OF_REACH
-from doomtp_bot.history.provider import HistoryResponse
+from doomtp_bot.history.provider import PAUSED, HistoryResponse
 from doomtp_bot.history.queue import GAPS, STARTUP, BackfillQueue, BackfillRefused
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.storage.db import Databases
-from tests.test_history import CHANNEL_ID, CHANNEL_LOGIN, PRIVMSG, FakeProvider, backfill_for, privmsg
+from tests.test_history import CHANNEL_ID, PRIVMSG, FakeProvider, backfill_for, privmsg
 
 SESSIONS = """
 INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason) VALUES ('100', 0, 1100, 'shutdown');
@@ -35,7 +34,7 @@ async def test_a_range_is_queued_once_run_and_recorded(dbs: Databases) -> None:
     (done,) = await queue.drain()
     await queue.service.writer.stop()
     assert (done.id, done.state, done.fetched, done.inserted, done.complete) == (job.id, "done", 1, 1, True)
-    assert provider.calls == [(CHANNEL_LOGIN, 0, 6001, 800)]
+    assert provider.calls == [(CHANNEL_ID, 0, 6001, 1000, 0)]
     assert await queue.run_next() is None
     # Finished, the same range can be asked for again.
     assert await queue.queue_range(CHANNEL_ID, 1100, 6000, "chat:1") is not None
@@ -86,32 +85,32 @@ async def test_startup_queues_one_job_for_the_gaps_and_the_job_a_stop_cut_short(
     assert await queue.queue_gaps(CHANNEL_ID, "chat:1") == (gaps, False)
     await queue.drain()
     await queue.service.writer.stop()
-    # Both gaps from one request: history from 1005 reaches back past the first one.
     assert provider.calls == [
-        (CHANNEL_LOGIN, 0, 201, 800),
-        (CHANNEL_LOGIN, 0, 90001, 800),
-    ]  # the range, the gaps
+        (CHANNEL_ID, 0, 201, 1000, 0),
+        (CHANNEL_ID, 0, 60001, 1000, 0),
+        (CHANNEL_ID, 65000, 90001, 1000, 0),
+    ]  # the range, then each gap
     assert await queue.queue_startup() == []  # the gaps are filled now
     assert await queue.queue_gaps(CHANNEL_ID, "chat:1") == (None, False)
 
 
-async def test_a_gap_older_than_the_history_is_not_queued_again(dbs: Databases) -> None:
-    # History starts at 64000: the first gap (1100-60000) can't be reached, the second (70000-90000) can.
-    provider = FakeProvider(HistoryResponse(lines=(privmsg(64000, "a"), privmsg(80000, "b"))))
+async def test_a_paused_job_waits_in_the_queue_and_resumes(dbs: Databases) -> None:
+    """The provider spent its day's budget: the job goes back to the queue rather than failing."""
+    paused = HistoryResponse(error_code=PAUSED, retry_at_ms=86_400_000)
+    page = HistoryResponse((privmsg(2000, "a"),), hit_limit=True)
+    provider = FakeProvider(HistoryResponse((privmsg(3000, "b"),)), responses=[page, paused])
     queue = await queue_for(dbs, provider)
-    await dbs.chatlog.execute(SESSIONS)
-    await queue.queue_startup()
-    (job,) = await queue.drain()
+    job = await queue.queue_range(CHANNEL_ID, 1100, 6000, "chat:1")
+    assert job is not None
+
+    (waiting,) = await queue.drain()  # stops at the pause rather than asking again
+    assert (waiting.id, waiting.state, waiting.error) == (job.id, "queued", PAUSED)
+    assert queue.paused_until_ms == 86_400_000
+
+    (done,) = await queue.drain()
     await queue.service.writer.stop()
-    assert (job.state, job.fetched, job.inserted, job.complete, job.error) == ("done", 2, 1, False, None)
-    async with await dbs.chatlog.execute(
-        "SELECT gap_from, complete, error FROM backfill_runs ORDER BY gap_from"
-    ) as cur:
-        assert [tuple(r.values()) for r in await cur.fetchall()] == [
-            (1100, False, OUT_OF_REACH),
-            (70000, True, None),
-        ]
-    assert await queue.queue_startup() == []  # asking again can't reach further back
+    assert (done.id, done.state, done.complete) == (job.id, "done", True)
+    assert provider.calls[-1] == (CHANNEL_ID, 2000, 6001, 1000, 0)  # where the first run stopped
 
 
 async def test_only_a_queued_job_can_be_cancelled(dbs: Databases) -> None:
@@ -131,12 +130,12 @@ async def test_only_a_queued_job_can_be_cancelled(dbs: Databases) -> None:
 
 
 async def test_a_failing_provider_fails_the_job_and_the_next_one_still_runs(dbs: Databases) -> None:
-    provider = FakeProvider(HistoryResponse(error_code="channel_not_joined"))
+    provider = FakeProvider(HistoryResponse(error_code="channel_not_logged"))
     queue = await queue_for(dbs, provider)
     await queue.queue_range(CHANNEL_ID, 1100, 6000, "chat:1")
     await queue.queue_range(CHANNEL_ID, 7000, 8000, "chat:1")
     jobs = await queue.drain()
-    assert [(j.state, j.error) for j in jobs] == [("failed", "channel_not_joined")] * 2
+    assert [(j.state, j.error) for j in jobs] == [("failed", "channel_not_logged")] * 2
 
 
 async def test_the_worker_runs_what_is_queued_while_it_waits(dbs: Databases) -> None:
@@ -165,16 +164,11 @@ class HeldProvider(FakeProvider):
         self.answer = asyncio.Event()
 
     async def fetch(
-        self,
-        channel_login: str,
-        *,
-        after_ms: int | None = None,
-        before_ms: int | None = None,
-        limit: int = 800,
+        self, channel_id: str, *, from_ms: int, to_ms: int, limit: int = 1000, offset: int = 0
     ) -> HistoryResponse:
         self.asked.set()
         await self.answer.wait()
-        return await super().fetch(channel_login, after_ms=after_ms, before_ms=before_ms, limit=limit)
+        return await super().fetch(channel_id, from_ms=from_ms, to_ms=to_ms, limit=limit, offset=offset)
 
 
 async def test_stopping_lets_the_running_job_finish(dbs: Databases) -> None:

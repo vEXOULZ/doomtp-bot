@@ -91,7 +91,7 @@ class ChatLogWriter:
                 msg.message_type, json.dumps([asdict(b) for b in msg.badges]), json.dumps(list(msg.fragments)),
                 msg.bits, msg.reply_parent_id, msg.reward_id, msg.source_channel_id, msg.is_self,
                 is_command, msg.source, *_raw(msg.raw_event, msg.raw_line, lambda: legacy.message(msg)),
-                msg.sent_at, msg.received_at,
+                None if msg.enrichment is None else json.dumps(msg.enrichment), msg.sent_at, msg.received_at,
             ),
         )  # fmt: skip
 
@@ -113,8 +113,8 @@ class ChatLogWriter:
                 await self._put("flag_deleted", (event.at, event.message_id))
             case UserMessagesCleared():
                 await self._mod_event(event.channel_id, "user_clear", event.source, event.at,
-                                      target=event.target_user_id, raw_event=event.raw_event,
-                                      raw_line=event.raw_line)  # fmt: skip
+                                      target=event.target_user_id, duration_s=event.duration_s,
+                                      raw_event=event.raw_event, raw_line=event.raw_line)  # fmt: skip
                 await self._put(
                     "flag_user_cleared", (event.at, event.channel_id, event.target_user_id, event.at)
                 )
@@ -338,8 +338,8 @@ _SQL: dict[str, str] = {
     "message": (
         "INSERT INTO messages (message_id, channel_id, user_id, user_login, display_name, text, message_type,"
         " badges, fragments, bits, reply_parent_id, reward_id, source_channel_id, is_self, is_command, source, raw,"
-        " raw_format, sent_at, received_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " raw_format, enrichment, sent_at, received_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         # Backfill re-offers messages EventSub already logged; the first one wins (ADR-0008).
         " ON CONFLICT DO NOTHING"
     ),

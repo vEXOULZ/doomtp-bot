@@ -25,7 +25,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from doomtp_bot.config import Settings
-from doomtp_bot.history.backfill import OUT_OF_REACH, gaps_between
+from doomtp_bot.history.backfill import gaps_between
 
 RECENT_DEFAULT = 7
 POLL_S = 5
@@ -78,8 +78,6 @@ def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap:
         return f"{job['state']} as backfill job #{job['id']}"
     if row is None:
         return "no backfill run"
-    if row["error"] == OUT_OF_REACH:
-        return f"older than the history service keeps ({row['inserted']} messages)"
     if row["error"]:
         return f"backfill failed: {row['error']}"
     if not row["complete"]:
