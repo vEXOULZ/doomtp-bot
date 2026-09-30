@@ -625,6 +625,32 @@ class TwitchService:
             return []
         return sorted(upcoming, key=lambda s: s["start"])
 
+    async def fetch_emotes(self, channel_id: str) -> list[dict[str, Any]]:
+        """The channel's own emotes and the global ones from Helix, as {id, set_id, owner_id, formats}, for
+        backfill's enrichment (ADR-0024 §3). A channel's own emotes are its own; Helix names no set or owner
+        for a global emote. Raises if a request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        found: list[dict[str, Any]] = [
+            {"id": e.id, "set_id": e.set_id, "owner_id": channel_id, "formats": list(e.format)}
+            for e in await self.client.create_partialuser(channel_id).fetch_channel_emotes()
+        ]
+        found += [
+            {"id": e.id, "set_id": None, "owner_id": None, "formats": list(e.format)}
+            for e in await self.client.fetch_emotes()
+        ]
+        return found
+
+    async def fetch_cheermotes(self, channel_id: str) -> dict[str, list[int]]:
+        """The cheermote prefixes usable in the channel, lower case, each with its tiers' minimum bits in
+        ascending order. Raises if the request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        return {
+            c.prefix.lower(): sorted(t.min_bits for t in c.tiers)
+            for c in await self.client.fetch_cheermotes(broadcaster_id=channel_id)
+        }
+
     async def try_moderator_subscription(self, channel_id: str) -> bool:
         """Subscribe to `channel.follow`, which only a moderator may. Success *is* the mod check.
 

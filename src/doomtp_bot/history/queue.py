@@ -1,8 +1,12 @@
 """Backfill as queued jobs (ADR-0024 §5).
 
-A job asks for one channel's range. Startup queues one per open gap, and the broadcaster (`!backfill gaps`,
-`!backfill 6h`) or an admin (the API) queues more. One worker takes the oldest queued job and fills it
-through `BackfillService.fill`, so jobs never run side by side and a rate-limited provider sees one caller.
+A `gaps` job fills every open gap of one channel, found when it runs (`BackfillService.fill_many`). A
+channel has at most one waiting, so startup, a reconnect and `!backfill gaps` join it. A `range` job fills
+one range asked for by hand (`!backfill 6h`, the API). One worker takes the oldest queued job, so jobs never
+run side by side and the rate-limited provider sees one caller.
+
+When the provider pauses (its daily budget is spent, or the service kept failing), the job goes back to
+the queue and the worker waits until the provider asks again; the job then resumes where it stopped.
 
 Consent is checked twice: a channel with backfill off can queue nothing, and a job whose channel turned it
 off while it waited is cancelled rather than run.
@@ -25,6 +29,7 @@ log = structlog.get_logger(__name__)
 
 STARTUP = "startup"
 OPEN_STATES = ("queued", "running")
+GAPS, RANGE = "gaps", "range"
 
 
 class BackfillRefused(Exception):
@@ -46,6 +51,7 @@ class BackfillJob:
     inserted: int = 0
     complete: bool | None = None
     error: str | None = None
+    kind: str = RANGE
 
     @classmethod
     def of(cls, row: dict[str, Any]) -> BackfillJob:
@@ -62,6 +68,7 @@ class BackfillQueue:
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self.paused_until_ms: int | None = None  # the provider paused: nothing runs before then
 
     # ── queueing ──
     async def queue_range(
@@ -78,8 +85,8 @@ class BackfillQueue:
                 self.conn,
                 "INSERT INTO backfill_jobs (channel_id, from_ms, to_ms, requested_by, requested_at)"
                 " VALUES (%s, %s, %s, %s, %s)"
-                " ON CONFLICT (channel_id, from_ms, to_ms) WHERE state IN ('queued', 'running') DO NOTHING"
-                " RETURNING *",
+                " ON CONFLICT (channel_id, from_ms, to_ms) WHERE kind = 'range' AND state IN ('queued', 'running')"
+                " DO NOTHING RETURNING *",
                 (channel_id, from_ms, to_ms, requested_by, now_ms()),
             )
         if row is None:
@@ -89,20 +96,35 @@ class BackfillQueue:
         log.info("history.job_queued", job=job.id, channel=channel_id, by=requested_by)
         return job
 
-    async def queue_gaps(self, channel_id: str, requested_by: str) -> list[BackfillJob]:
-        """A job for each open gap in the channel's log that isn't queued already."""
+    async def queue_gaps(self, channel_id: str, requested_by: str) -> tuple[BackfillJob | None, bool]:
+        """The channel's one job for its open gaps, and whether it is new. A job already waiting takes in the
+        gaps found since (it looks for them when it runs); None when no gap is open."""
         login = self.service.login_if_enabled(channel_id)
         if login is None:
             raise BackfillRefused("backfill is off for this channel")
-        jobs = []
-        for gap in await self.service.open_gaps(channel_id, login):
-            job = await self.queue_range(channel_id, gap.from_ms, gap.to_ms, requested_by)
-            if job is not None:
-                jobs.append(job)
-        return jobs
+        gaps = await self.service.open_gaps(channel_id, login)
+        if not gaps:
+            return None, False
+        async with transaction(self.conn):
+            row = await fetch_one(
+                self.conn,
+                "INSERT INTO backfill_jobs (channel_id, kind, from_ms, to_ms, requested_by, requested_at)"
+                " VALUES (%s, 'gaps', %s, %s, %s, %s)"
+                " ON CONFLICT (channel_id) WHERE kind = 'gaps' AND state = 'queued' DO UPDATE SET"
+                " from_ms = LEAST(backfill_jobs.from_ms, EXCLUDED.from_ms),"
+                " to_ms = GREATEST(backfill_jobs.to_ms, EXCLUDED.to_ms)"
+                " RETURNING *, xmax = 0 AS created",
+                (channel_id, gaps[0].from_ms, max(g.to_ms for g in gaps), requested_by, now_ms()),
+            )
+        assert row is not None
+        job = BackfillJob.of(row)
+        if row["created"]:
+            self._wake.set()
+            log.info("history.job_queued", job=job.id, channel=channel_id, by=requested_by, gaps=len(gaps))
+        return job, bool(row["created"])
 
     async def queue_startup(self) -> list[BackfillJob]:
-        """Every opted-in channel's open gaps (ADR-0024 §5). Before the worker first starts, a job the last
+        """A job for each opted-in channel with open gaps (ADR-0024 §5). Before the worker first starts, a job the last
         stop cut short is put back too; on a reconnect the worker is still running its job."""
         if self._task is None:
             async with transaction(self.conn):
@@ -111,7 +133,9 @@ class BackfillQueue:
                 )
         jobs: list[BackfillJob] = []
         for channel_id, _ in self.service.enabled_channels():
-            jobs.extend(await self.queue_gaps(channel_id, STARTUP))
+            job, created = await self.queue_gaps(channel_id, STARTUP)
+            if job is not None and created:
+                jobs.append(job)
         self._wake.set()  # interrupted jobs are waiting too
         return jobs
 
@@ -156,10 +180,18 @@ class BackfillQueue:
         if login is None:
             return await self._finish(job, "cancelled", error="backfill is off for this channel")
         try:
-            outcome = await self.service.fill(Gap(job.channel_id, login, job.from_ms, job.to_ms))
+            if job.kind == GAPS:
+                gaps = await self.service.open_gaps(job.channel_id, login)  # the ones still open now
+            else:
+                gaps = [Gap(job.channel_id, login, job.from_ms, job.to_ms)]
+            outcome = await self.service.fill_many(gaps)
         except Exception as exc:
             log.exception("history.job_failed", job=job.id)
             return await self._finish(job, "failed", error=repr(exc))
+        if outcome.retry_at_ms is not None:
+            self.paused_until_ms = outcome.retry_at_ms
+            log.info("history.job_paused", job=job.id, until=outcome.retry_at_ms)
+            return await self._requeue(job, outcome.error)
         return await self._finish(
             job,
             "failed" if outcome.error else "done",
@@ -170,11 +202,25 @@ class BackfillQueue:
         )
 
     async def drain(self) -> list[BackfillJob]:
-        """Run jobs until none is queued."""
+        """Run jobs until none is queued, or the provider pauses."""
         done = []
         while (job := await self.run_next()) is not None:
             done.append(job)
+            if job.state == "queued":
+                break
         return done
+
+    async def _requeue(self, job: BackfillJob, error: str) -> BackfillJob:
+        """Back in the queue, in its place: it runs first once the provider asks again."""
+        async with transaction(self.conn):
+            row = await fetch_one(
+                self.conn,
+                "UPDATE backfill_jobs SET state = 'queued', started_at = NULL, error = %s WHERE id = %s"
+                " RETURNING *",
+                (error, job.id),
+            )
+        assert row is not None
+        return BackfillJob.of(row)
 
     async def _finish(
         self,
@@ -207,7 +253,7 @@ class BackfillQueue:
 
         The worker is asked, never cancelled: it shares the connection with the rest of the process, and
         a cancel that lands while psycopg enters or leaves a savepoint leaves the connection's nesting
-        count wrong, so the next transaction on it fails. The provider's timeout bounds the wait. A job
+        count wrong, so the next transaction on it fails. The provider's timeout and waits bound it. A job
         a crash cuts short stays `running` and is queued again at the next startup.
         """
         if self._task is not None:
@@ -219,6 +265,13 @@ class BackfillQueue:
     async def _work(self) -> None:
         while not self._stopping.is_set():
             self._wake.clear()
+            if self.paused_until_ms is not None:
+                wait_s = (self.paused_until_ms - now_ms()) / 1000
+                if wait_s > 0:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stopping.wait(), wait_s)
+                    continue
+                self.paused_until_ms = None
             try:
                 job = await self.run_next()
             except Exception:

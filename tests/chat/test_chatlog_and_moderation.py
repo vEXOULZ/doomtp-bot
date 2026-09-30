@@ -29,9 +29,11 @@ async def test_writer_batches_and_is_idempotent(dbs: Databases) -> None:
     await writer.message(msg("m1"))  # EventSub redelivery
     await writer.message(msg("m2", text="the doom slayer"))
     await writer.stop()
-    assert await rows(dbs, "SELECT message_id, is_command, badges FROM messages ORDER BY message_id") == [
-        ("m1", True, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
-        ("m2", False, '[{"set_id": "subscriber", "id": "3", "info": ""}]'),
+    assert await rows(
+        dbs, "SELECT message_id, is_command, raw->'badges' FROM messages ORDER BY message_id"
+    ) == [
+        ("m1", True, [{"set_id": "subscriber", "id": "3", "info": ""}]),
+        ("m2", False, [{"set_id": "subscriber", "id": "3", "info": ""}]),
     ]
     assert (
         await rows(

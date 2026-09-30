@@ -6,13 +6,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from doomtp_bot.chatlog import events
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core import metrics
 from doomtp_bot.core.events import ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
 from doomtp_bot.history.backfill import BackfillService, Gap, find_gaps, to_events
 from doomtp_bot.history.irc_parse import badges, parse_line, unescape_tag
-from doomtp_bot.history.provider import HistoryResponse
+from doomtp_bot.history.provider import PAUSED, HistoryResponse
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.storage.db import Databases
 from tests.fakes import policy_with_channels
@@ -21,7 +22,7 @@ CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 
 PRIVMSG = (
     "@badge-info=subscriber/12;badges=subscriber/12,moderator/1;color=#1E90FF;display-name=Alice;"
-    "id=abc-123;user-id=400;tmi-sent-ts=1000;rm-received-ts=1005 "
+    "id=abc-123;user-id=400;tmi-sent-ts=1000 "
     ":alice!alice@alice.tmi.twitch.tv PRIVMSG #doomtp :hello there"
 )
 CLEARMSG = (
@@ -36,6 +37,11 @@ USERNOTICE = (
     "@msg-id=resub;msg-param-cumulative-months=12;system-msg=Alice\\ssubscribed\\sfor\\s12\\smonths;"
     "id=note-1;user-id=400;tmi-sent-ts=5000 :tmi.twitch.tv USERNOTICE #doomtp :thanks!"
 )
+
+
+def privmsg(at: int, message_id: str) -> str:
+    """A chat line sent at `at`."""
+    return f"@id={message_id};user-id=400;tmi-sent-ts={at} :alice!alice@x PRIVMSG #doomtp :line {message_id}"
 
 
 # ── IRC parsing ────────────────────────────────────────────────────────────
@@ -78,8 +84,8 @@ def test_privmsg_becomes_a_message_marked_as_history() -> None:
     event = to_events(line, CHANNEL_ID, CHANNEL_LOGIN, PRIVMSG)
     assert isinstance(event, ChatMessage)
     assert (event.message_id, event.user_id, event.text) == ("abc-123", "400", "hello there")
-    assert event.source == "recent-messages" and event.raw_line == PRIVMSG
-    assert event.sent_at == 1000 and event.received_at == 1005
+    assert event.source == "ivr-logs" and event.raw_line == PRIVMSG
+    assert event.sent_at == 1000 and event.received_at == 1000
 
 
 @pytest.mark.parametrize(
@@ -126,14 +132,17 @@ async def test_short_interruptions_are_not_gaps(dbs: Databases) -> None:
 # ── filling them ───────────────────────────────────────────────────────────
 @dataclass
 class FakeProvider:
+    """Gives `response` to every request, or each of `responses` in turn and then `response`."""
+
     response: HistoryResponse = field(default_factory=HistoryResponse)
-    calls: list[tuple[str, int | None, int]] = field(default_factory=list)
+    responses: list[HistoryResponse] = field(default_factory=list)
+    calls: list[tuple[str, int, int, int, int]] = field(default_factory=list)
 
     async def fetch(
-        self, channel_login: str, *, after_ms: int | None = None, limit: int = 800
+        self, channel_id: str, *, from_ms: int, to_ms: int, limit: int = 1000, offset: int = 0
     ) -> HistoryResponse:
-        self.calls.append((channel_login, after_ms, limit))
-        return self.response
+        self.calls.append((channel_id, from_ms, to_ms, limit, offset))
+        return self.responses.pop(0) if self.responses else self.response
 
 
 async def backfill_for(dbs: Databases, provider: FakeProvider, *, opted_in: bool = True) -> BackfillService:
@@ -148,22 +157,23 @@ async def backfill_for(dbs: Databases, provider: FakeProvider, *, opted_in: bool
 async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None:
     provider = FakeProvider(HistoryResponse(lines=(PRIVMSG, CLEARMSG, USERNOTICE)))
     service = await backfill_for(dbs, provider)
-    gap = Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)  # the oldest line (1005) predates the gap
+    gap = Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)
 
     inserted = metrics.BACKFILL_INSERTED.value()
-    logged = metrics.MESSAGES_LOGGED.value(source="recent-messages")
+    logged = metrics.MESSAGES_LOGGED.value(source="ivr-logs")
     outcome = await service.fill(gap)
     await service.writer.stop()
 
     assert metrics.BACKFILL_INSERTED.value() - inserted == 3
-    assert metrics.MESSAGES_LOGGED.value(source="recent-messages") - logged == 1  # one PRIVMSG among them
-    assert provider.calls == [(CHANNEL_LOGIN, 0, 800)]  # asked from 5s before the gap, clamped at 0
+    assert metrics.MESSAGES_LOGGED.value(source="ivr-logs") - logged == 1  # one PRIVMSG among them
+    # From 5s before the gap (clamped at 0) to its end; the end the service takes is exclusive.
+    assert provider.calls == [(CHANNEL_ID, 0, 6001, 1000, 0)]
     assert (outcome.fetched, outcome.inserted, outcome.complete) == (3, 3, True)
     async with await dbs.chatlog.execute(
         "SELECT message_id, source, raw_format, raw->>'line' AS line FROM messages"
     ) as cur:
         rows = [tuple(r.values()) for r in await cur.fetchall()]
-    assert rows == [("abc-123", "recent-messages", "irc", PRIVMSG)]
+    assert rows == [("abc-123", "ivr-logs", "irc", PRIVMSG)]
     async with await dbs.chatlog.execute(
         "SELECT type, raw_format, raw ? 'line' AS kept FROM mod_events"
     ) as cur:
@@ -174,46 +184,120 @@ async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None
         assert (await cur.fetchone())[
             "deleted_at"
         ] == 2000  # the CLEARMSG flagged it, without deleting the row
-    async with await dbs.chatlog.execute("SELECT fetched, inserted, complete FROM backfill_runs") as cur:
-        assert [tuple(r.values()) for r in await cur.fetchall()] == [(3, 3, 1)]
+    async with await dbs.chatlog.execute(
+        "SELECT fetched, inserted, complete, provider FROM backfill_runs"
+    ) as cur:
+        assert [tuple(r.values()) for r in await cur.fetchall()] == [(3, 3, 1, "ivr-logs")]
 
 
-@pytest.mark.parametrize(
-    ("response", "gap_from", "why"),
-    [
-        (HistoryResponse(lines=(PRIVMSG,), hit_limit=True), 900, "the service hit its cap"),
-        (HistoryResponse(lines=(PRIVMSG,)), 500, "history starts after the gap did"),
-    ],
-)
-async def test_a_gap_that_cannot_be_proven_covered_is_incomplete(
-    dbs: Databases, response: HistoryResponse, gap_from: int, why: str
-) -> None:
-    """ADR-0008: partial coverage is recorded as partial rather than quietly called complete."""
-    service = await backfill_for(dbs, FakeProvider(response))
-    incomplete = metrics.BACKFILL_INCOMPLETE.value()
-    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, gap_from, 6000))
+@dataclass
+class ServiceLike:
+    """Answers the way logs.ivr.fi does: lines from `from_ms` (inclusive) to `to_ms` (exclusive), oldest
+    first, `limit` of them after skipping `offset`."""
+
+    lines: list[tuple[int, str]]
+    calls: list[tuple[int, int, int]] = field(default_factory=list)
+
+    async def fetch(
+        self, channel_id: str, *, from_ms: int, to_ms: int, limit: int = 1000, offset: int = 0
+    ) -> HistoryResponse:
+        self.calls.append((from_ms, to_ms, offset))
+        found = [line for at, line in sorted(self.lines) if from_ms <= at < to_ms][offset : offset + limit]
+        return HistoryResponse(tuple(found), hit_limit=len(found) >= limit)
+
+
+def chat(*at: int) -> list[tuple[int, str]]:
+    return [(t, privmsg(t, f"m{t}")) for t in at]
+
+
+async def service_with(dbs: Databases, provider: ServiceLike) -> BackfillService:
+    service = await backfill_for(dbs, FakeProvider())
+    service.provider = provider
+    return service
+
+
+async def stored(dbs: Databases) -> list[str]:
+    async with await dbs.chatlog.execute("SELECT message_id FROM messages ORDER BY sent_at") as cur:
+        return [r["message_id"] for r in await cur.fetchall()]
+
+
+async def test_a_range_from_months_ago_is_filled(dbs: Databases) -> None:
+    """Why logs.ivr.fi: a range far older than a day, with plenty of newer chat after it."""
+    provider = ServiceLike(chat(10000, 12000, 14000, *range(100000, 101000)))
+    service = await service_with(dbs, provider)
+    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 10000, 20000))
     await service.writer.stop()
-    assert not outcome.complete, why
-    assert metrics.BACKFILL_INCOMPLETE.value() - incomplete == 1
-    async with await dbs.chatlog.execute("SELECT complete FROM backfill_runs") as cur:
-        assert [r["complete"] for r in await cur.fetchall()] == [False]
+
+    assert provider.calls == [(5000, 20001, 0)]
+    assert (outcome.inserted, outcome.complete) == (3, True)
+    assert await stored(dbs) == ["m10000", "m12000", "m14000"]
 
 
-async def test_a_service_error_leaves_the_gap_open(dbs: Databases) -> None:
-    provider = FakeProvider(HistoryResponse(error_code="channel_not_joined"))
+async def test_each_gap_is_asked_for_on_its_own(dbs: Databases) -> None:
+    provider = ServiceLike(chat(1005, 3000, 50000, 80000, 95000))
+    service = await service_with(dbs, provider)
+    gaps = [Gap(CHANNEL_ID, CHANNEL_LOGIN, 70000, 90000), Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)]
+    result = await service.fill_many(gaps)
+    await service.writer.stop()
+
+    assert provider.calls == [(0, 6001, 0), (65000, 90001, 0)]  # oldest first, each from 5s early
+    assert (result.fetched, result.inserted, result.complete) == (3, 3, True)
+    assert [(o.gap.from_ms, o.inserted, o.complete) for o in result.outcomes] == [
+        (1100, 2, True),
+        (70000, 1, True),
+    ]
+    assert await stored(dbs) == ["m1005", "m3000", "m80000"]  # not the chat between them
+
+
+async def test_a_full_page_is_followed_by_the_next(dbs: Databases, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("doomtp_bot.history.backfill.DEFAULT_LIMIT", 2)
+    provider = ServiceLike(chat(1000, 2000, 3000, 4000, 9000))
+    service = await service_with(dbs, provider)
+    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 5000))
+    await service.writer.stop()
+
+    assert provider.calls == [(0, 5001, 0), (0, 5001, 2), (0, 5001, 4)]
+    assert (outcome.inserted, outcome.complete, outcome.reached_ms) == (4, True, 4000)
+
+
+async def test_a_service_error_leaves_the_gaps_open(dbs: Databases) -> None:
+    provider = FakeProvider(HistoryResponse(error_code="channel_not_logged"))
     service = await backfill_for(dbs, provider)
-    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 0, 6000))
-    assert (outcome.complete, outcome.error) == (False, "channel_not_joined")
+    gaps = [Gap(CHANNEL_ID, CHANNEL_LOGIN, 0, 6000), Gap(CHANNEL_ID, CHANNEL_LOGIN, 9000, 10000)]
+    incomplete = metrics.BACKFILL_INCOMPLETE.value()
+    result = await service.fill_many(gaps)
+    assert len(provider.calls) == 1  # the second gap isn't asked for: the answer would be the same
+    assert [(o.complete, o.error) for o in result.outcomes] == [(False, "channel_not_logged")] * 2
+    assert metrics.BACKFILL_INCOMPLETE.value() - incomplete == 2
     async with await dbs.chatlog.execute("SELECT error FROM backfill_runs") as cur:
-        assert [r["error"] for r in await cur.fetchall()] == ["channel_not_joined"]
+        assert [r["error"] for r in await cur.fetchall()] == ["channel_not_logged"] * 2
 
 
-async def test_only_opted_in_channels_are_backfilled_or_kept_warm(dbs: Databases) -> None:
+async def test_a_paused_fill_resumes_where_it_stopped(dbs: Databases) -> None:
+    paused = HistoryResponse(error_code=PAUSED, retry_at_ms=86_400_000)
+    first_page = HistoryResponse((privmsg(2000, "a"), privmsg(3000, "b")), hit_limit=True)
+    provider = FakeProvider(responses=[first_page, paused])
+    service = await backfill_for(dbs, provider)
+    gap = Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)
+
+    result = await service.fill_many([gap])
+    assert result.retry_at_ms == 86_400_000
+    (outcome,) = result.outcomes
+    assert (outcome.inserted, outcome.complete, outcome.error, outcome.reached_ms) == (2, False, PAUSED, 3000)
+
+    provider.response = HistoryResponse((privmsg(3000, "b"), privmsg(4000, "c")))
+    (again,) = (await service.fill_many([gap])).outcomes
+    await service.writer.stop()
+    assert provider.calls[-1] == (CHANNEL_ID, 3000, 6001, 1000, 0)  # from the newest line stored
+    assert again.complete
+    assert await stored(dbs) == ["a", "b", "c"]
+
+
+async def test_only_opted_in_channels_are_backfilled(dbs: Databases) -> None:
     provider = FakeProvider()
     service = await backfill_for(dbs, provider, opted_in=False)
     assert service.enabled_channels() == []
     assert service.login_if_enabled(CHANNEL_ID) is None
-    assert await service.keep_warm_once() == 0
     assert provider.calls == []
 
 
@@ -244,10 +328,62 @@ async def test_a_gap_that_took_two_runs_to_fill_is_not_fetched_again(dbs: Databa
              VALUES ('100', 0, 1100, 'shutdown');
         INSERT INTO log_sessions (channel_id, started_at) VALUES ('100', 60000);
         INSERT INTO backfill_runs (channel_id, gap_from, gap_to, fetched, inserted, complete, error, at)
-             VALUES ('100', 1100, 60000, 0, 0, false, 'channel_not_joined', 1),
+             VALUES ('100', 1100, 60000, 0, 0, false, 'channel_not_logged', 1),
                     ('100', 1100, 60000, 1, 1, true, '', 2);
         """
     )
 
     assert await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN) == []
     await service.writer.stop()
+
+
+async def test_a_gap_recent_messages_could_not_reach_is_open_again(dbs: Databases) -> None:
+    """recent-messages kept about a day and recorded older gaps as out of its reach; ivr.fi can fill them."""
+    service = await backfill_for(dbs, FakeProvider())
+    await dbs.chatlog.execute(
+        """
+        INSERT INTO log_sessions (channel_id, started_at, ended_at, end_reason)
+             VALUES ('100', 0, 1100, 'shutdown');
+        INSERT INTO log_sessions (channel_id, started_at) VALUES ('100', 60000);
+        INSERT INTO backfill_runs (channel_id, gap_from, gap_to, complete, error, provider, at)
+             VALUES ('100', 1100, 60000, false, 'out_of_reach', 'recent-messages', 1);
+        """
+    )
+    gaps = await service.open_gaps(CHANNEL_ID, CHANNEL_LOGIN)
+    assert [(g.from_ms, g.to_ms) for g in gaps] == [(1100, 60000)]
+
+
+async def test_a_delete_names_the_author_by_id(dbs: Databases) -> None:
+    """Twitch's CLEARMSG gives only the author's login: the id comes from the message it deleted."""
+    in_fill = "@login=alice;target-msg-id=m-new;tmi-sent-ts=3000 :tmi.twitch.tv CLEARMSG #doomtp :x"
+    logged = "@login=bob;target-msg-id=m-old;tmi-sent-ts=3100 :tmi.twitch.tv CLEARMSG #doomtp :x"
+    unknown = "@login=carol;target-msg-id=m-gone;tmi-sent-ts=3200 :tmi.twitch.tv CLEARMSG #doomtp :x"
+    await dbs.chatlog.execute(
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m-old', '100', '500', 'bob', 'old', '{}', 'legacy', 500, 500)"
+    )
+    provider = FakeProvider(HistoryResponse((privmsg(2000, "m-new"), in_fill, logged, unknown)))
+    service = await backfill_for(dbs, provider)
+    await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000))
+    await service.writer.stop()
+    async with await dbs.chatlog.execute(
+        "SELECT message_id, target_user_id FROM mod_events ORDER BY at"
+    ) as cur:
+        assert [tuple(r.values()) for r in await cur.fetchall()] == [
+            ("m-new", "400"),
+            ("m-old", "500"),
+            ("m-gone", None),  # not in the log: unknown, rather than a login in a user id column
+        ]
+
+
+async def test_a_backfilled_timeout_keeps_its_length(dbs: Databases) -> None:
+    provider = FakeProvider(HistoryResponse((CLEARCHAT_USER,)))
+    service = await backfill_for(dbs, provider)
+    await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000))
+    await service.writer.stop()
+    async with await dbs.chatlog.execute(
+        "SELECT type, target_user_id, raw, raw_format FROM mod_events"
+    ) as cur:
+        found = await cur.fetchall()
+    assert [(r["type"], r["target_user_id"]) for r in found] == [("user_clear", "400")]
+    assert events.moderation(found[0]["raw_format"], found[0]["raw"])["irc"]["ban-duration"] == "600"

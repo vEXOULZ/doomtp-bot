@@ -170,8 +170,8 @@ with `!cc grant deaths channel.deaths`.
 
 ## Deploying an update
 
-The chat log records when the bot was listening, and fills what it missed from the recent-messages
-service when it comes back (ADR-0008). That only works if the old process is allowed to finish: stop it
+The chat log records when the bot was listening, and fills what it missed from logs.ivr.fi when it
+comes back (ADR-0008). That only works if the old process is allowed to finish: stop it
 with a signal, never with a kill.
 
 ```bash
@@ -194,9 +194,9 @@ It prints how each channel's last session ended and, for channels with backfill 
 week with whether it was filled. A gap a job is still to fill shows as `OPEN — queued as backfill job #N`
 (or `running`), and `--wait` checks again every few seconds until no gap is waiting or the time is up.
 `!backfill queue` in chat and `GET /api/v1/channels/{login}/backfill` show the same queue. Exit code 1
-means a gap is still open — the usual causes are the
-recent-messages service being down or the outage being longer than its 800-message reach, and both are
-worth seeing in the log before you assume the history is complete.
+means a gap is still open — the usual causes are
+logs.ivr.fi being down, the bot's own daily request budget for it being spent (the job waits for the next
+day), or a channel it doesn't log, and all are worth seeing in the log before you assume the history is complete.
 
 ## Deploying to a server, step by step
 

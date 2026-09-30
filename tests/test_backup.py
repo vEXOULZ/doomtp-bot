@@ -70,8 +70,8 @@ def test_the_client_major_is_read_from_its_version_line(line: str, major: int) -
 async def test_a_dump_can_be_restored(tmp_path: Path, committed_database: tuple[str, Databases]) -> None:
     dsn, dbs = committed_database
     await dbs.chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m1', 'c1', 'u1', 'alice', 'hello', 1, 1)"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m1', 'c1', 'u1', 'alice', 'hello', '{}', 'legacy', 1, 1)"
     )
 
     written = backup_schema(dsn, "chatlog", tmp_path / "backups")

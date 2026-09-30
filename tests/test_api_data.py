@@ -461,8 +461,8 @@ async def test_runs_messages_and_audit_are_readable(
 ) -> None:
     chatlog = app_and_keys[0].state.chatlog
     await chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m1', %s, '400', 'alice', 'hello world', %s, %s)",
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m1', %s, '400', 'alice', 'hello world', '{}', 'legacy', %s, %s)",
         (CHANNEL_ID, now_ms(), now_ms()),
     )
     await chatlog.execute(
@@ -532,7 +532,13 @@ async def test_channel_variables_are_readable(
 
     body = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/variables", headers=auth(write_key))).json()
     assert body["variables"] == [
-        {"name": "deaths", "value": 7, "updated_at": body["variables"][0]["updated_at"], "updated_by": "300"}
+        {
+            "name": "deaths",
+            "value": 7,
+            "updated_at": body["variables"][0]["updated_at"],
+            "updated_by": "300",
+            "updated_by_login": "mod",
+        }
     ]
 
 

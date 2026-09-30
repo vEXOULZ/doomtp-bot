@@ -108,7 +108,7 @@ sensitive than `/readyz`'s (no channel names at all).
 
 | Counter | Labels | Incremented by |
 |---------|--------|----------------|
-| `messages_logged_total` | `source` (`eventsub`, `recent-messages`) | `ChatLogWriter`, per row Postgres inserted |
+| `messages_logged_total` | `source` (`eventsub`, `ivr-logs`) | `ChatLogWriter`, per row Postgres inserted |
 | `backfill_inserted_total` | — | `BackfillService.fill` |
 | `backfill_incomplete_total` | — | `BackfillService.fill`, per run marked incomplete |
 | `runs_total` | `code` | `Runtime.run`, per finished run (not `!explain`'s dry runs) |

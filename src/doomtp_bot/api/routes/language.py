@@ -101,9 +101,10 @@ def _spans(node: Node) -> list[dict[str, Any]]:
     ]
 
 
+# ADR-0011
 @router.post("/parse")
 async def parse_expression(request: Request, body: ParseRequest) -> dict[str, Any]:
-    """Parse text and return the AST or the first error, with its span (ADR-0011)."""
+    """Parse text and return the AST or the first error, with its span."""
     runtime = _runtime(request)
     channel = _channel(request, body.channel)
     context = Context(body.context)
@@ -152,9 +153,10 @@ async def chatter_for(request: Request, channel: Any, login: str, badges: frozen
     return policy.build_chatter(channel.id, user["id"], user["name"], user["display"], badges)
 
 
+# ADR-0011
 @router.get("/language")
 async def language(request: Request) -> dict[str, Any]:
-    """Everything the editor needs for autocomplete and hover docs (ADR-0011)."""
+    """Everything the editor needs for autocomplete and hover docs."""
     runtime = getattr(request.app.state, "runtime", None)
     raw_tail = (
         {c.spec.name: c.spec.raw_tail_from for c in runtime.registry.all() if c.spec.raw_tail_from}
@@ -189,9 +191,10 @@ async def language(request: Request) -> dict[str, Any]:
     }
 
 
+# architecture §4.2
 @router.get("/commands")
 async def commands(request: Request) -> dict[str, Any]:
-    """Every built-in command with its usage, parameters and examples (architecture §4.2)."""
+    """Every built-in command with its usage, parameters and examples."""
     runtime = _runtime(request)
     listing = []
     for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver):
