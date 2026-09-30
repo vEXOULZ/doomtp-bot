@@ -30,13 +30,17 @@ Twitch has no chat history API. Whenever the bot is offline, whether from a cras
   - `log_sessions` records the live coverage for each channel.
   - A gap is `(last message received or session end) → (new session start)`.
   - Gaps are checked at startup and after each EventSub reconnect longer than 5 s.
-- **Fetch:** `?after=<gap_from − 5 s>&limit=800`, requested per channel with backoff on errors.
+- **Fetch:** `?after=<gap_from − 5 s>&limit=800`, requested per channel with backoff on errors. *(2026-09-29: one
+  request covers all of a channel's gaps, from the oldest one; a page the cap cuts short is followed by the next,
+  and only lines inside a gap are stored. See ADR-0024 §5.)*
 - **Parse and map:**
   - `PRIVMSG`: a `messages` row. `id` becomes `message_id` (the same UUID EventSub uses, so it dedupes via `INSERT OR IGNORE`), `user-id`, `tmi-sent-ts` becomes `sent_at`, `badges`. `source='recent-messages'` and the raw line is stored.
   - `rm-deleted=1` sets `deleted_at`, using the `CLEARMSG`/`CLEARCHAT` time when present.
   - `CLEARMSG` becomes a delete `mod_event`. `CLEARCHAT` with a target becomes a `user_clear` (with `ban-duration`), and without a target a `chat_clear`.
   - `USERNOTICE` becomes a `chat_notifications` row.
-- **Completeness:** if the oldest returned `rm-received-ts` is after `gap_from`, or the response hit 800, or it returned `channel_not_joined`, then `backfill_runs.complete=0`. That gap is still visible as partial.
+- **Completeness:** if the oldest returned `rm-received-ts` is after `gap_from`, or the response hit 800, or it returned `channel_not_joined`, then `backfill_runs.complete=0`. That gap is still visible as partial. *(2026-09-29: a gap whose history starts
+  after it did is recorded with `error='out_of_reach'` and is not fetched again: the service only moves forward, so
+  asking again can't reach further back. A gap cut short by the cap or an error stays open.)*
 - **Never act on history.** Backfilled events go to the log only, never to commands, listeners, triggers or variables.
 - **Keep warm:** for channels with backfill enabled, send `limit=1` every 30 minutes so the service stays joined. The interval should be tuned after contacting the maintainer.
 - **Consent:** `channels.history_backfill` is **opt-in** at onboarding. The prompt names the service and links it, per its guidelines.

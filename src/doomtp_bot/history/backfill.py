@@ -31,6 +31,8 @@ log = structlog.get_logger(__name__)
 
 GAP_GRACE_MS = 5_000  # ADR-0008: ask from 5s before the gap, so nothing falls between the cracks
 MIN_GAP_MS = 5_000  # shorter interruptions aren't worth a request
+MAX_PAGES = 20  # requests one fill may make; what's left stays open for the next job
+OUT_OF_REACH = "out_of_reach"  # the service's history starts after the gap did: asking again can't help
 KEEP_WARM_EVERY_S = 30 * 60
 
 
@@ -53,6 +55,20 @@ class BackfillOutcome:
     inserted: int = 0
     complete: bool = True
     error: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class FillResult:
+    """One fill over several gaps: an outcome per gap, and what the requests brought in all."""
+
+    outcomes: tuple[BackfillOutcome, ...]
+    fetched: int = 0
+    inserted: int = 0
+    error: str = ""
+
+    @property
+    def complete(self) -> bool:
+        return all(o.complete for o in self.outcomes)
 
 
 def gaps_between(sessions: Sequence[tuple[int, int | None]]) -> list[tuple[int, int]]:
@@ -163,7 +179,8 @@ class BackfillService:
         return next((login for cid, login in self.enabled_channels() if cid == channel_id), None)
 
     async def open_gaps(self, channel_id: str, channel_login: str) -> list[Gap]:
-        """Coverage gaps no run has filled completely. `BackfillQueue` turns them into jobs (ADR-0024 §5)."""
+        """Coverage gaps no run has settled: filled completely, or found out of the service's reach.
+        `BackfillQueue` fills them in one job per channel (ADR-0024 §5)."""
         filled = await self._filled_gaps(channel_id)
         return [
             gap
@@ -172,45 +189,101 @@ class BackfillService:
         ]
 
     async def fill(self, gap: Gap) -> BackfillOutcome:
-        response = await self.provider.fetch(
-            gap.channel_login, after_ms=max(0, gap.from_ms - GAP_GRACE_MS), limit=DEFAULT_LIMIT
-        )
-        if not response.ok:
-            outcome = BackfillOutcome(gap, complete=False, error=response.error_code)
+        (outcome,) = (await self.fill_many([gap])).outcomes
+        return outcome
+
+    async def fill_many(self, gaps: Sequence[Gap]) -> FillResult:
+        """Fill one channel's gaps with as few requests as the service allows (ADR-0024 §5).
+
+        The service takes a start and no end, and answers oldest first, so one request from the oldest gap
+        covers every later gap its 800 lines reach. Only lines inside a gap are stored; the live log has the
+        rest. When the cap cuts a page short, the next one carries on from its newest line; when the next gap
+        starts past that, it starts at the gap instead, skipping the chat in between.
+
+        A gap is complete when history reaches back to its start and forward past its end (ADR-0008). History
+        that starts after a gap did can't be made to reach further back by asking again: the gap is recorded
+        `out_of_reach` and not queued again.
+        """
+        pending = sorted(gaps, key=lambda g: g.from_ms)
+        if not pending:
+            return FillResult(())
+        channel_id, login = pending[0].channel_id, pending[0].channel_login
+        outcomes: list[BackfillOutcome] = []
+        per_gap: dict[Gap, int] = dict.fromkeys(pending, 0)
+        seen: set[str] = set()
+        fetched = pages = 0
+        error = ""
+        covered_from: int | None = None  # history is unbroken from here to the end of the last page
+        chain_at: int | None = None  # the newest line of the last page, when the cap cut it short
+        while pending and pages < MAX_PAGES:
+            start = max(0, pending[0].from_ms - GAP_GRACE_MS)
+            chained = chain_at is not None and chain_at >= start
+            after = chain_at if chained and chain_at is not None else start
+            response = await self.provider.fetch(login, after_ms=after, limit=DEFAULT_LIMIT)
+            pages += 1
+            if not response.ok:
+                error = response.error_code
+                break
+            oldest: int | None = None
+            newest: int | None = None
+            for raw in response.lines:
+                line = parse_line(raw)
+                if line is None:
+                    continue
+                at = line.tag_int("rm-received-ts") or line.tag_int("tmi-sent-ts")
+                if at:
+                    oldest = at if oldest is None else min(oldest, at)
+                    newest = at if newest is None else max(newest, at)
+                if raw in seen:
+                    continue  # a chained page starts with the last one's newest lines
+                seen.add(raw)
+                fetched += 1
+                event = to_events(line, channel_id, login, raw)
+                if event is None:
+                    continue
+                gap: Gap | None = pending[0]
+                if at:
+                    gap = next((g for g in pending if g.from_ms - GAP_GRACE_MS <= at <= g.to_ms), None)
+                if gap is None:
+                    continue  # between gaps: the live log already has it
+                await self._store(event)
+                per_gap[gap] += 1
+            if not chained:
+                covered_from = oldest
+            reached = (newest or 0) if response.hit_limit else None  # None: up to now
+            still: list[Gap] = []
+            for gap in pending:
+                if reached is not None and gap.to_ms > reached:
+                    still.append(gap)
+                    continue
+                complete = covered_from is None or covered_from <= gap.from_ms
+                count = per_gap[gap]
+                outcomes.append(
+                    BackfillOutcome(gap, count, count, complete, "" if complete else OUT_OF_REACH)
+                )
+            pending = still
+            if newest is None or (chain_at is not None and newest <= chain_at):
+                break  # nothing newer came back: asking again would get the same page
+            chain_at = newest
+        # Whatever a failure or the page limit left: incomplete, and open for the next job.
+        outcomes.extend(BackfillOutcome(g, per_gap[g], per_gap[g], False, error) for g in pending)
+
+        for outcome in outcomes:
             await self._record(outcome)
-            return outcome
-
-        fetched = inserted = 0
-        oldest: int | None = None
-        for raw in response.lines:
-            line = parse_line(raw)
-            if line is None:
-                continue
-            fetched += 1
-            event = to_events(line, gap.channel_id, gap.channel_login, raw)
-            if event is None:
-                continue
-            at = line.tag_int("rm-received-ts") or line.tag_int("tmi-sent-ts")
-            oldest = at if oldest is None else min(oldest, at)
-            if at and at > gap.to_ms:
-                continue  # the live session already has it
-            await self._store(event)
-            inserted += 1
-
-        # Complete only if the service reached back past the gap and didn't hit its cap (ADR-0008).
-        complete = not response.hit_limit and (oldest is None or oldest <= gap.from_ms)
-        outcome = BackfillOutcome(gap, fetched, inserted, complete)
-        await self._record(outcome)
+        inserted = sum(per_gap.values())
         metrics.BACKFILL_INSERTED.inc(inserted)
         log.info(
             "history.backfilled",
-            channel=gap.channel_login,
-            gap_ms=gap.length_ms,
+            channel=login,
+            gaps=len(outcomes),
+            requests=pages,
             fetched=fetched,
             inserted=inserted,
-            complete=complete,
+            complete=sum(o.complete for o in outcomes),
+            out_of_reach=sum(o.error == OUT_OF_REACH for o in outcomes),
+            error=error or None,
         )
-        return outcome
+        return FillResult(tuple(sorted(outcomes, key=lambda o: o.gap.from_ms)), fetched, inserted, error)
 
     async def _store(self, event: object) -> None:
         match event:
@@ -222,11 +295,11 @@ class BackfillService:
                 await self.writer.moderation(event)
 
     async def _filled_gaps(self, channel_id: str) -> set[tuple[int, int]]:
-        """Gaps some run has already filled completely, in one query rather than one per gap."""
+        """Gaps some run has settled, in one query rather than one per gap."""
         async with await self.conn.execute(
             "SELECT gap_from, gap_to FROM backfill_runs WHERE channel_id = %s"
-            " GROUP BY gap_from, gap_to HAVING bool_or(complete)",
-            (channel_id,),
+            " GROUP BY gap_from, gap_to HAVING bool_or(complete OR error = %s)",
+            (channel_id, OUT_OF_REACH),
         ) as cur:
             return {(int(r["gap_from"]), int(r["gap_to"])) for r in await cur.fetchall()}
 

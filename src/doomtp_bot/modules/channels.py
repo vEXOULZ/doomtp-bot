@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelBanned
-from doomtp_bot.history.queue import OPEN_STATES, BackfillJob, BackfillQueue, BackfillRefused
+from doomtp_bot.history.queue import GAPS, OPEN_STATES, BackfillJob, BackfillQueue, BackfillRefused
 from doomtp_bot.modules._common import actor, rank, sign_of, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, BROADCASTER_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
@@ -195,12 +195,12 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
     requested_by = f"chat:{ctx.invoker.id if ctx.invoker else '?'}"
     try:
         if action == "gaps":
-            jobs = await queue.queue_gaps(ctx.channel.id, requested_by)
-            ids = ", ".join(f"#{j.id}" for j in jobs)
-            text = (
-                f"queued {len(jobs)} gap{'s' if len(jobs) != 1 else ''}: {ids}" if jobs else "no gaps to fill"
-            )
-            return Result.success(text, {"jobs": [j.to_json() for j in jobs]})
+            gaps_job, created = await queue.queue_gaps(ctx.channel.id, requested_by)
+            if gaps_job is None:
+                return Result.success("no gaps to fill", {"jobs": []})
+            verb = "queued" if created else "already queued as"
+            text = f"{verb} #{gaps_job.id}: {_range_text(gaps_job)}"
+            return Result.success(text, {"jobs": [gaps_job.to_json()]})
         if action == "cancel":
             job_id = args.get("job") or ""
             if not job_id.isdigit():
@@ -232,6 +232,8 @@ def _range_text(job: BackfillJob) -> str:
             break
     else:
         length_text = f"{length}s"
+    if job.kind == GAPS:
+        return f"the gaps over {length_text}"
     if job.to_ms >= job.requested_at - 1000:
         return f"the last {length_text}"
     return f"{length_text} of chat"

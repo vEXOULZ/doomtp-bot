@@ -250,7 +250,7 @@ async def run(settings: Settings) -> None:
                     poller.start()
                 queued = await backfill_queue.queue_startup()  # gaps since the last run (ADR-0008)
                 if queued:
-                    log.info("history.startup_backfill", gaps=len(queued))
+                    log.info("history.startup_backfill", channels=len(queued))
                 backfill_queue.start()
                 backfill.start_keep_warm()
         except Exception:
