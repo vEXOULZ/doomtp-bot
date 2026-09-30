@@ -461,8 +461,8 @@ async def test_runs_messages_and_audit_are_readable(
 ) -> None:
     chatlog = app_and_keys[0].state.chatlog
     await chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m1', %s, '400', 'alice', 'hello world', %s, %s)",
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m1', %s, '400', 'alice', 'hello world', '{}', 'legacy', %s, %s)",
         (CHANNEL_ID, now_ms(), now_ms()),
     )
     await chatlog.execute(

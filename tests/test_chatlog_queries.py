@@ -11,9 +11,10 @@ CHANNEL_ID = "100"
 async def _say(dbs: Databases, message_id: str, text: str, at: int, **flags: object) -> None:
     columns = ", ".join(flags)
     await dbs.chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at"
         + (f", {columns}" if flags else "")
-        + ") VALUES (%s, %s, '400', 'alice', %s, %s, %s"
+        + ") VALUES (%s, %s, '400', 'alice', %s, '{}', 'legacy', %s, %s"
         + ", %s" * len(flags)
         + ")",
         (message_id, CHANNEL_ID, text, at, at, *flags.values()),
@@ -28,8 +29,8 @@ async def test_search_finds_the_newest_first_and_chat_sees_only_what_is_still_in
     await _say(dbs, "m5", "the bot saying doom", 5_000, is_self=True)
     await _say(dbs, "m6", "!logsearch doom", 6_000, is_command=True)
     await dbs.chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('elsewhere', '200', '400', 'alice', 'doom elsewhere', 7000, 7000)"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('elsewhere', '200', '400', 'alice', 'doom elsewhere', '{}', 'legacy', 7000, 7000)"
     )
 
     everything = await search_messages(dbs.chatlog, CHANNEL_ID, "doom")

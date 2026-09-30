@@ -8,14 +8,16 @@ what is still visible in chat, so a search never brings back what moderators rem
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from doomtp_bot.chatlog import events
 from doomtp_bot.storage.db import Connection
 
 MAX_QUERY_CHARS = 200
 
 _SEARCH = (
-    "SELECT m.message_id, m.user_login, m.display_name, m.text, m.sent_at, m.deleted_at"
+    "SELECT m.message_id, m.user_login, m.text, m.sent_at, m.deleted_at, m.raw, m.raw_format"
     " FROM messages m"
     # websearch_to_tsquery takes whatever a person types: an odd query matches nothing instead of
     # raising (ADR-0014). 'simple', unaccented, as the generated tsv column is.
@@ -41,7 +43,14 @@ async def search_messages(
     if user_login:
         params += (user_login.lower(),)
     async with await conn.execute(sql + " ORDER BY m.sent_at DESC LIMIT %s", (*params, limit)) as cur:
-        return [dict(row) for row in await cur.fetchall()]
+        rows = await cur.fetchall()
+    return [_found(dict(row)) for row in rows]
+
+
+def _found(row: dict[str, Any]) -> dict[str, Any]:
+    """A search hit, with the display name the chatter had when they sent it."""
+    event = events.message(row.pop("raw_format"), row.pop("raw"))
+    return row | {"display_name": event.get("chatter_user_name")}
 
 
 async def latest_badges(conn: Connection, user_id: str) -> list[tuple[str, str | None]]:
@@ -50,8 +59,12 @@ async def latest_badges(conn: Connection, user_id: str) -> list[tuple[str, str |
     Seeds the bot's badge cache at startup, so it knows where it is a VIP before it speaks (ADR-0019).
     """
     sql = (
-        "SELECT DISTINCT ON (channel_id) channel_id, badges FROM messages"
+        "SELECT DISTINCT ON (channel_id) channel_id, raw, raw_format FROM messages"
         " WHERE user_id = %s ORDER BY channel_id, sent_at DESC"
     )
     async with await conn.execute(sql, (user_id,)) as cur:
-        return [(row["channel_id"], row["badges"]) for row in await cur.fetchall()]
+        rows = await cur.fetchall()
+    return [
+        (row["channel_id"], json.dumps(events.message(row["raw_format"], row["raw"]).get("badges") or []))
+        for row in rows
+    ]

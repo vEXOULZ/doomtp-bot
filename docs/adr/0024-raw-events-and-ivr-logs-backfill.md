@@ -262,11 +262,17 @@ ivr.fi replaced it (ADR-0008's amendment).
    removed. `backfill_runs.reached_ms` resumes a stopped fill, and old `out_of_reach` gaps are open
    again.)*
 6. [ ] Check whether ivr.fi logs `CLEARCHAT` and `CLEARMSG` for this channel, and contact its
-   maintainers about the integration. **Do this before enabling it for a real channel.**
+   maintainers about the integration. **Do this before enabling it for a real channel.** *(2026-09-29:
+   checked. It logs `CLEARCHAT`: a day of #forsen had 292, every one a timeout or ban that converts with
+   its `ban-duration`. It does not log `CLEARMSG`: none in 100,000 lines of that day, nor in two months
+   of #vexoulz. So a backfilled message a moderator deleted is not marked deleted. Contacting the
+   maintainers is still open, for the owner.)*
 7. [x] The `!backfill` prompt, the admin page and the channels API name ivr.fi and set it per channel.
    *(2026-09-29: the prompt names `IVR_LOGS_URL`; the per-channel setting is `history_backfill`, which
    the admin page and the channels API already set.)*
-8. [ ] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
-   later: see the migration in §1).
+8. [x] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
+   later: see the migration in §1). *(2026-09-29: chatlog revision 0006. Search reads the display name
+   and the bot's badge seed reads its badges from `raw`; downgrade refills the columns from `raw` where
+   it is EventSub-shaped.)*
 9. [x] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
    subcommands and the API.

@@ -113,6 +113,38 @@ def test_0002_keeps_irc_lines_and_rebuilds_the_rest_as_the_writer_would(empty_da
     assert raw == [("m1", None), ("m2", IRC_LINE), ("m3", None)]
 
 
+def test_0006_drops_the_moved_columns_and_its_downgrade_refills_them_from_raw(empty_database: str) -> None:
+    config = schema.config("chatlog", empty_database)
+    command.upgrade(config, "0001")
+    with psycopg.connect(empty_database) as conn:
+        _insert_before_0002(conn, FULL)
+        _insert_before_0002(conn, replace(PLAIN, message_id="m2"), IRC_LINE)
+        conn.execute(
+            "INSERT INTO chatlog.mod_events (channel_id, type, target_user_id, duration_s, reason, at)"
+            " VALUES ('c1', 'timeout', 'u1', 60, 'spam', 5000)"
+        )
+    command.upgrade(config, "0006")
+    with psycopg.connect(empty_database) as conn:
+        columns = {
+            r[0]
+            for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = 'chatlog'"
+                " AND table_name = 'messages'"
+            ).fetchall()
+        }
+    assert "badges" not in columns and "display_name" not in columns and "raw" in columns
+
+    command.downgrade(config, "0005")
+    with psycopg.connect(empty_database) as conn:
+        messages = conn.execute(
+            "SELECT message_id, display_name, bits, reply_parent_id, reward_id FROM chatlog.messages ORDER BY 1"
+        ).fetchall()
+        mod = conn.execute("SELECT duration_s, reason FROM chatlog.mod_events").fetchone()
+    # An IRC line keeps only what needs no parsing.
+    assert messages == [("m1", "Alice", 100, "p1", "r1"), ("m2", None, 0, None, None)]
+    assert mod == (60, "spam")
+
+
 async def _rows(dbs: Databases, sql: str) -> list[tuple[Any, ...]]:
     async with await dbs.chatlog.execute(sql) as cur:
         return [tuple(r.values()) for r in await cur.fetchall()]
