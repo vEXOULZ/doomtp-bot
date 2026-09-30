@@ -195,9 +195,10 @@ async def part_channel(request: Request, login: str, caller: Caller = BROADCASTE
     return {"login": settings.login, "status": "parted"}
 
 
+# ADR-0026
 @router.post("/me/channel", status_code=201)
 async def join_own_channel(request: Request, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
-    """Add the bot to the signed-in user's own channel, the way `!join` does (ADR-0026). Signing in with
+    """Add the bot to the signed-in user's own channel, the way `!join` does. Signing in with
     Twitch proved the channel is theirs. The session manages it from now on, without waiting for a refresh."""
     if caller.user_id is None or caller.login is None:
         raise HTTPException(status_code=400, detail="sign in with Twitch to add the bot to your channel")
@@ -328,12 +329,13 @@ async def toggle_module(
     return {"module": module, "enabled": enabled}
 
 
+# ADR-0012
 @router.get("/channels/{login}/modules")
 async def list_modules(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
     """Each module, whether it is on here, and whether it can be turned off at all.
 
     `kind` says where it comes from: `builtin`, a `pack` published here or globally (its name is its
-    module name, ADR-0012), or `custom`, which holds the commands published one by one and appears when
+    module name), or `custom`, which holds the commands published one by one and appears when
     there are any. `enabled` follows the rules chat applies: this channel's toggle, then the global one,
     then on. Turn any of them off with `PUT …/modules/{module}`, as `!module disable` does in chat.
     """
@@ -922,11 +924,12 @@ def _custom_json(command: Any) -> dict[str, Any]:
     }
 
 
+# ADR-0012
 @router.get("/custom-commands")
 async def custom_commands(
     request: Request, owner: str | None = Query(default=None, max_length=40)
 ) -> dict[str, Any]:
-    """Public: what is published everywhere (ADR-0012), or one owner's shared commands."""
+    """Public: what is published everywhere, or one owner's shared commands."""
     service: CustomCommandService = _state(request, "customcmds")
     if owner is None:
         published = await service.publications_in(GLOBAL)
@@ -1005,9 +1008,10 @@ async def channel_variables(request: Request, login: str, caller: Caller = READ)
     }
 
 
+# ADR-0019
 @router.get("/channels/{login}/storage")
 async def channel_storage(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """How much of its quota the channel uses, per namespace (ADR-0019), like `!var usage channel`."""
+    """How much of its quota the channel uses, per namespace, like `!var usage channel`."""
     settings = _channel(request, login)
     store = _state(request, "variable_store")
     used = await store.usage("channel", settings.channel_id)
@@ -1228,6 +1232,7 @@ async def command_runs(
         return {"runs": [dict(row) for row in await cur.fetchall()]}
 
 
+# architecture §3.3
 @router.get("/channels/{login}/messages")
 async def search_messages(
     request: Request,
@@ -1236,7 +1241,7 @@ async def search_messages(
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
     caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """Full-text search over the channel's log (architecture §3.3). The public see no removed messages."""
+    """Full-text search over the channel's log. The public see no removed messages."""
     settings = _channel(request, login)
     rows = await queries.search_messages(
         _state(request, "chatlog_db"), settings.channel_id, q, limit=limit, visible_only=_is_public(caller)
@@ -1248,6 +1253,7 @@ async def search_messages(
 _KINDS_QUERY = Query(default=None, description="message, notification or moderation; repeat for several")
 
 
+# ADR-0025, ADR-0026
 @router.get("/channels/{login}/log")
 async def channel_log(
     request: Request,
@@ -1263,9 +1269,9 @@ async def channel_log(
     limit: int = Query(default=100, ge=1, le=MAX_ROWS),
     caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """The channel's log as one timeline of messages, notifications and moderation, a page at a time
-    (ADR-0025). Pass `next` back as `cursor`, with the same filters, for the page after. The public get
-    messages and notifications only, without removed messages (ADR-0026)."""
+    """The channel's log as one timeline of messages, notifications and moderation, a page at a time.
+    Pass `next` back as `cursor`, with the same filters, for the page after. The public get
+    messages and notifications only, without removed messages."""
     settings = _channel(request, login)
     kinds = list(kind or timeline.KINDS)
     if _is_public(caller):
@@ -1290,6 +1296,7 @@ async def channel_log(
     }
 
 
+# ADR-0025
 @router.get("/channels/{login}/log/coverage")
 async def channel_log_coverage(
     request: Request,
@@ -1298,13 +1305,14 @@ async def channel_log_coverage(
     until: int | None = Query(default=None, ge=0, description="ms since the epoch; now by default"),
     caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0025)."""
+    """When the bot was listening between `since` and `until`, and which holes backfill filled."""
     if until is not None and until <= since:
         raise HTTPException(status_code=422, detail="until must be after since")
     settings = _channel(request, login)
     return await timeline.coverage(_state(request, "chatlog_db"), settings.channel_id, since, until)
 
 
+# ADR-0026
 @router.get("/audit")
 async def audit(
     request: Request,
@@ -1318,7 +1326,7 @@ async def audit(
     caller: Caller = PERSONAL_READ,
 ) -> dict[str, Any]:
     """The newest changes first, a page at a time: pass `next` back as `before`. A moderator sees the
-    channels they manage; anyone signed in sees their own changes everywhere with `actor=me` (ADR-0026)."""
+    channels they manage; anyone signed in sees their own changes everywhere with `actor=me`."""
     conn, policy = _state(request, "bot_db"), _policy(request)
     known = {c.channel_id: c.login for c in policy.channels()}
     own = actor == "me"

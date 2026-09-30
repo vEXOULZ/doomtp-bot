@@ -33,7 +33,8 @@ async def readyz(request: Request, response: Response) -> dict[str, Any]:
     }
 
 
+# ADR-0015
 @router.get("/metrics", response_class=PlainTextResponse)
 async def metrics_text() -> PlainTextResponse:
-    """Counters in the Prometheus text format, for a scraper on the LAN (ADR-0015). No channel or user in it."""
+    """Counters in the Prometheus text format, for a scraper on the LAN. No channel or user in it."""
     return PlainTextResponse(metrics.render(), media_type=metrics.CONTENT_TYPE)
