@@ -2,16 +2,14 @@
 
 `log_sessions` says when the bot was listening. Anything between the end of one session and the start of
 the next is a gap, and history is fetched to fill it. **Backfilled messages never reach commands,
-listeners, triggers or variables** — they go to the log only, marked `source='recent-messages'`.
+listeners, triggers or variables** — they go to the log only, marked `source='ivr-logs'`.
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Final
 
 import structlog
 
@@ -20,8 +18,9 @@ from doomtp_bot.clock import now_ms
 from doomtp_bot.core import metrics
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
+from doomtp_bot.history import irc_convert
 from doomtp_bot.history.irc_parse import IrcLine, badges, parse_line
-from doomtp_bot.history.provider import DEFAULT_LIMIT, KEEP_WARM_LIMIT, HistoryProvider
+from doomtp_bot.history.provider import DEFAULT_LIMIT, PAUSED, HistoryProvider
 from doomtp_bot.storage.db import Connection, transaction
 
 if TYPE_CHECKING:
@@ -31,9 +30,7 @@ log = structlog.get_logger(__name__)
 
 GAP_GRACE_MS = 5_000  # ADR-0008: ask from 5s before the gap, so nothing falls between the cracks
 MIN_GAP_MS = 5_000  # shorter interruptions aren't worth a request
-MAX_PAGES = 20  # requests one fill may make; what's left stays open for the next job
-OUT_OF_REACH = "out_of_reach"  # the service's history starts after the gap did: asking again can't help
-KEEP_WARM_EVERY_S = 30 * 60
+PROVIDER: Final = "ivr-logs"  # `backfill_runs.provider`, and the `source` of what it brings in
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +52,7 @@ class BackfillOutcome:
     inserted: int = 0
     complete: bool = True
     error: str = ""
+    reached_ms: int | None = None  # the newest line stored: where the next fill of the gap resumes
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +63,7 @@ class FillResult:
     fetched: int = 0
     inserted: int = 0
     error: str = ""
+    retry_at_ms: int | None = None  # the provider paused: the job waits until then
 
     @property
     def complete(self) -> bool:
@@ -98,9 +97,11 @@ async def find_gaps(conn: Connection, channel_id: str, channel_login: str) -> li
 def to_events(
     line: IrcLine, channel_id: str, channel_login: str, raw: str
 ) -> ChatMessage | ChatNotification | MessageDeleted | UserCleared | ChatCleared | None:
-    """One IRC line → the domain event the chat log already knows how to store (ADR-0008)."""
-    sent_at = line.tag_int("tmi-sent-ts") or line.tag_int("rm-received-ts") or now_ms()
+    """One IRC line → the domain event the chat log already knows how to store (ADR-0008), with its fields
+    in EventSub's terms (`irc_convert`)."""
+    sent_at = line.tag_int("tmi-sent-ts") or now_ms()
     if line.command == "PRIVMSG":
+        info = irc_convert.badge_info(line)
         return ChatMessage(
             message_id=line.tag("id"),
             channel_id=channel_id,
@@ -108,42 +109,50 @@ def to_events(
             user_id=line.tag("user-id"),
             user_login=line.nick,
             display_name=line.tag("display-name") or line.nick,
-            text=line.text,
+            text=irc_convert.text(line),
             sent_at=sent_at,
-            received_at=line.tag_int("rm-received-ts") or sent_at,
-            badges=tuple(Badge(set_id, version) for set_id, version in badges(line)),
+            received_at=sent_at,  # the service keeps only when Twitch sent it
+            badges=tuple(Badge(set_id, version, info.get(set_id, "")) for set_id, version in badges(line)),
+            fragments=irc_convert.fragments(line),
+            message_type=irc_convert.message_type(line),
             bits=line.tag_int("bits"),
             reply_parent_id=line.tag("reply-parent-msg-id") or None,
+            reply_parent_user_id=line.tag("reply-parent-user-id") or None,
             reply_parent_login=line.tag("reply-parent-user-login") or None,
             reply_parent_display=line.tag("reply-parent-display-name") or None,
-            source="recent-messages",
+            reward_id=line.tag("custom-reward-id") or None,
+            source_channel_id=line.tag("source-room-id") or None,
+            source=PROVIDER,
             raw_line=raw,
         )
     if line.command == "CLEARMSG":
         return MessageDeleted(
             channel_id=channel_id,
             message_id=line.tag("target-msg-id"),
-            target_user_id=line.tag("target-user-id") or line.tag("login"),
+            # Twitch's CLEARMSG names the author by login only; `fill_many` finds their id.
+            target_user_id=line.tag("target-user-id") or None,
             at=sent_at,
-            source="recent-messages",
+            source=PROVIDER,
             raw_line=raw,
         )
     if line.command == "CLEARCHAT":
         target = line.params[1] if len(line.params) > 1 else ""
         if target:
+            ban = line.tags.get("ban-duration")  # a timeout's length; a ban has none
             return UserCleared(
-                channel_id, line.tag("target-user-id") or target, sent_at, "recent-messages", raw_line=raw
-            )
-        return ChatCleared(channel_id, sent_at, "recent-messages", raw_line=raw)
+                channel_id, line.tag("target-user-id") or target, sent_at, PROVIDER, raw_line=raw,
+                duration_s=int(ban) if ban and ban.isdigit() else None,
+            )  # fmt: skip
+        return ChatCleared(channel_id, sent_at, PROVIDER, raw_line=raw)
     if line.command == "USERNOTICE":
         return ChatNotification(
             id=line.tag("id"),
             channel_id=channel_id,
-            user_id=line.tag("user-id") or None,
-            type=line.tag("msg-id") or "usernotice",
-            payload={k: v for k, v in line.tags.items() if k.startswith("msg-param") or k == "system-msg"},
+            user_id=irc_convert.notice_user_id(line),
+            type=irc_convert.notice_type(line),
+            payload=irc_convert.notice_payload(line),
             sent_at=sent_at,
-            source="recent-messages",
+            source=PROVIDER,
             raw_line=raw,
         )
     return None
@@ -164,7 +173,6 @@ class BackfillService:
         self.writer = writer
         self.provider = provider
         self.policy = policy
-        self._warm_task: asyncio.Task[None] | None = None
 
     def enabled_channels(self) -> list[tuple[str, str]]:
         """(channel_id, login) for channels that opted in (ADR-0008 consent)."""
@@ -179,8 +187,8 @@ class BackfillService:
         return next((login for cid, login in self.enabled_channels() if cid == channel_id), None)
 
     async def open_gaps(self, channel_id: str, channel_login: str) -> list[Gap]:
-        """Coverage gaps no run has settled: filled completely, or found out of the service's reach.
-        `BackfillQueue` fills them in one job per channel (ADR-0024 §5)."""
+        """Coverage gaps no run has filled completely. `BackfillQueue` fills them in one job per channel
+        (ADR-0024 §5)."""
         filled = await self._filled_gaps(channel_id)
         return [
             gap
@@ -193,98 +201,83 @@ class BackfillService:
         return outcome
 
     async def fill_many(self, gaps: Sequence[Gap]) -> FillResult:
-        """Fill one channel's gaps with as few requests as the service allows (ADR-0024 §5).
+        """Fill one channel's gaps, oldest first (ADR-0008, ADR-0024 §5).
 
-        The service takes a start and an end (`after` and `before`, both exclusive) and, when more lines match
-        than the cap, answers with the newest of them. So one request spans every gap, from the oldest gap's
-        start to the newest one's end, and when the cap cuts it short the next page ends where that one's
-        oldest line was. Gaps the pages have reached back past are done; when the next gap ends before that
-        line, the next page ends at the gap instead, skipping the chat in between. Only lines inside a gap are
-        stored; the live log has the rest.
-
-        A gap is complete when history reaches back to its start (ADR-0008). History that starts after a gap
-        did can't be made to reach further back by asking again: the gap is recorded `out_of_reach` and not
-        queued again.
+        Each gap is asked for on its own, from 5s before it starts to its end, and paged through oldest
+        first: gaps can lie months apart, and the chat between them is in the live log already. A gap is
+        complete once a page comes back short. When the provider stops a fill (a failure, or its daily
+        budget), the gap is recorded incomplete with the newest line stored, and the next fill resumes
+        there rather than asking for the same lines again. The gaps after it wait for that fill too.
         """
         ordered = sorted(gaps, key=lambda g: g.from_ms)
         if not ordered:
             return FillResult(())
-        pending = list(ordered)
-        channel_id, login = pending[0].channel_id, pending[0].channel_login
+        channel_id, login = ordered[0].channel_id, ordered[0].channel_login
+        resume = await self._resume_points(channel_id)
         outcomes: list[BackfillOutcome] = []
-        per_gap: dict[Gap, int] = dict.fromkeys(pending, 0)
-        seen: set[str] = set()
-        fetched = pages = 0
+        authors: dict[str, str] = {}  # message id → user id, for the deletes that name only a login
+        fetched = inserted = requests = 0
         error = ""
-        cut_at: int | None = None  # the oldest line of the last page, when the cap cut it short
-        while pending and pages < MAX_PAGES:
-            start = max(0, pending[0].from_ms - GAP_GRACE_MS)
-            end = pending[-1].to_ms + 1  # a gap's end is inclusive; `before` is not
-            if cut_at is not None:
-                end = min(end, cut_at + 1)  # lines at `cut_at` itself may not all have fit
-            response = await self.provider.fetch(login, after_ms=start, before_ms=end, limit=DEFAULT_LIMIT)
-            pages += 1
-            if not response.ok:
-                error = response.error_code
-                break
-            oldest: int | None = None
-            for raw in response.lines:
-                line = parse_line(raw)
-                if line is None:
-                    continue
-                at = line.tag_int("rm-received-ts") or line.tag_int("tmi-sent-ts")
-                if at:
-                    oldest = at if oldest is None else min(oldest, at)
-                if raw in seen:
-                    continue  # a page ending at `cut_at + 1` repeats the last one's oldest lines
-                seen.add(raw)
-                fetched += 1
-                event = to_events(line, channel_id, login, raw)
-                if event is None:
-                    continue
-                gap: Gap | None = pending[-1]
-                if at:
-                    gap = next((g for g in ordered if g.from_ms - GAP_GRACE_MS <= at <= g.to_ms), None)
-                if gap is None:
-                    continue  # between gaps: the live log already has it
-                await self._store(event)
-                per_gap[gap] += 1
-            if not response.hit_limit:
-                # Everything from `start` to `end` came back: every gap left is settled.
-                for gap in pending:
-                    complete = oldest is None or oldest <= gap.from_ms
-                    count = per_gap[gap]
-                    outcomes.append(
-                        BackfillOutcome(gap, count, count, complete, "" if complete else OUT_OF_REACH)
-                    )
-                pending = []
-                break
-            if oldest is None or (cut_at is not None and oldest >= cut_at):
-                break  # nothing older came back: asking again would get the same page
-            for gap in pending:
-                if gap.from_ms >= oldest:
-                    outcomes.append(BackfillOutcome(gap, per_gap[gap], per_gap[gap], True))
-            pending = [g for g in pending if g.from_ms < oldest]
-            cut_at = oldest
-        # Whatever a failure or the page limit left: incomplete, and open for the next job.
-        outcomes.extend(BackfillOutcome(g, per_gap[g], per_gap[g], False, error) for g in pending)
+        retry_at: int | None = None
+        for gap in ordered:
+            reached = resume.get((gap.from_ms, gap.to_ms))
+            if error:
+                outcomes.append(BackfillOutcome(gap, complete=False, error=error, reached_ms=reached))
+                continue
+            start = max(gap.from_ms - GAP_GRACE_MS, 0)
+            if reached is not None:
+                start = max(start, reached)  # inclusive: lines at `reached` itself are stored once
+            count = stored = offset = 0
+            complete = False
+            while True:
+                response = await self.provider.fetch(
+                    channel_id, from_ms=start, to_ms=gap.to_ms + 1, limit=DEFAULT_LIMIT, offset=offset
+                )
+                requests += 1
+                if not response.ok:
+                    error = response.error_code
+                    if error == PAUSED:
+                        retry_at = response.retry_at_ms
+                    break
+                offset += len(response.lines)
+                for raw in response.lines:
+                    line = parse_line(raw)
+                    if line is None:
+                        continue
+                    count += 1
+                    event = to_events(line, channel_id, login, raw)
+                    if event is None:
+                        continue
+                    if isinstance(event, ChatMessage):
+                        authors[event.message_id] = event.user_id
+                    elif isinstance(event, MessageDeleted) and event.target_user_id is None:
+                        author = authors.get(event.message_id) or await self._author(event.message_id)
+                        event = replace(event, target_user_id=author)
+                    await self._store(event)
+                    stored += 1
+                    if at := line.tag_int("tmi-sent-ts"):
+                        reached = at if reached is None else max(reached, at)
+                if not response.hit_limit:
+                    complete = True
+                    break
+            fetched += count
+            inserted += stored
+            outcomes.append(BackfillOutcome(gap, count, stored, complete, "" if complete else error, reached))
 
         for outcome in outcomes:
             await self._record(outcome)
-        inserted = sum(per_gap.values())
         metrics.BACKFILL_INSERTED.inc(inserted)
         log.info(
             "history.backfilled",
             channel=login,
             gaps=len(outcomes),
-            requests=pages,
+            requests=requests,
             fetched=fetched,
             inserted=inserted,
             complete=sum(o.complete for o in outcomes),
-            out_of_reach=sum(o.error == OUT_OF_REACH for o in outcomes),
             error=error or None,
         )
-        return FillResult(tuple(sorted(outcomes, key=lambda o: o.gap.from_ms)), fetched, inserted, error)
+        return FillResult(tuple(outcomes), fetched, inserted, error, retry_at)
 
     async def _store(self, event: object) -> None:
         match event:
@@ -295,14 +288,31 @@ class BackfillService:
             case MessageDeleted() | UserCleared() | ChatCleared():
                 await self.writer.moderation(event)
 
+    async def _author(self, message_id: str) -> str | None:
+        """Who sent a message the log already has, for a delete that came before this fill."""
+        async with await self.conn.execute(
+            "SELECT user_id FROM messages WHERE message_id = %s", (message_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return None if row is None else str(row["user_id"])
+
     async def _filled_gaps(self, channel_id: str) -> set[tuple[int, int]]:
-        """Gaps some run has settled, in one query rather than one per gap."""
+        """Gaps some run has filled completely, in one query rather than one per gap."""
         async with await self.conn.execute(
             "SELECT gap_from, gap_to FROM backfill_runs WHERE channel_id = %s"
-            " GROUP BY gap_from, gap_to HAVING bool_or(complete OR error = %s)",
-            (channel_id, OUT_OF_REACH),
+            " GROUP BY gap_from, gap_to HAVING bool_or(complete)",
+            (channel_id,),
         ) as cur:
             return {(int(r["gap_from"]), int(r["gap_to"])) for r in await cur.fetchall()}
+
+    async def _resume_points(self, channel_id: str) -> dict[tuple[int, int], int]:
+        """For each gap a fill was stopped in, the newest line stored for it."""
+        async with await self.conn.execute(
+            "SELECT gap_from, gap_to, max(reached_ms) AS reached FROM backfill_runs"
+            " WHERE channel_id = %s AND provider = %s AND reached_ms IS NOT NULL GROUP BY gap_from, gap_to",
+            (channel_id, PROVIDER),
+        ) as cur:
+            return {(int(r["gap_from"]), int(r["gap_to"])): int(r["reached"]) for r in await cur.fetchall()}
 
     async def _record(self, outcome: BackfillOutcome) -> None:
         if not outcome.complete:
@@ -310,33 +320,8 @@ class BackfillService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, fetched, inserted, complete,"
-                " error, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                " error, provider, reached_ms, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (outcome.gap.channel_id, outcome.gap.from_ms, outcome.gap.to_ms, outcome.fetched,
-                 outcome.inserted, outcome.complete, outcome.error or None, now_ms()),
+                 outcome.inserted, outcome.complete, outcome.error or None, PROVIDER, outcome.reached_ms,
+                 now_ms()),
             )  # fmt: skip
-
-    # ── keep warm (ADR-0008): the service only collects channels it's asked about ──
-    def start_keep_warm(self, every_s: float = KEEP_WARM_EVERY_S) -> None:
-        if self._warm_task is None:
-            self._warm_task = asyncio.create_task(self._keep_warm_loop(every_s), name="history-keep-warm")
-
-    async def stop(self) -> None:
-        if self._warm_task is not None:
-            self._warm_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._warm_task
-            self._warm_task = None
-
-    async def keep_warm_once(self) -> int:
-        channels = self.enabled_channels()
-        for _, login in channels:
-            await self.provider.fetch(login, after_ms=None, limit=KEEP_WARM_LIMIT)
-        return len(channels)
-
-    async def _keep_warm_loop(self, every_s: float) -> None:
-        while True:
-            await asyncio.sleep(every_s)
-            try:
-                await self.keep_warm_once()
-            except Exception:
-                log.exception("history.keep_warm_failed")

@@ -113,8 +113,8 @@ class ChatLogWriter:
                 await self._put("flag_deleted", (event.at, event.message_id))
             case UserMessagesCleared():
                 await self._mod_event(event.channel_id, "user_clear", event.source, event.at,
-                                      target=event.target_user_id, raw_event=event.raw_event,
-                                      raw_line=event.raw_line)  # fmt: skip
+                                      target=event.target_user_id, duration_s=event.duration_s,
+                                      raw_event=event.raw_event, raw_line=event.raw_line)  # fmt: skip
                 await self._put(
                     "flag_user_cleared", (event.at, event.channel_id, event.target_user_id, event.at)
                 )

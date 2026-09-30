@@ -122,10 +122,10 @@ async def test_the_writer_stores_what_each_event_was_made_from(dbs: Databases) -
     event = {"message_id": "m1", "color": "#FF0000", "message": {"text": "hi", "fragments": []}}
     writer = ChatLogWriter(dbs.chatlog)
     await writer.message(replace(FULL, raw_event=event))
-    await writer.message(replace(PLAIN, raw_line=IRC_LINE, source="recent-messages"))
+    await writer.message(replace(PLAIN, raw_line=IRC_LINE, source="ivr-logs"))
     await writer.notification(NOTICE)
     await writer.moderation(MessageDeleted("c1", "m1", "u1", 5000, raw_event={"message_id": "m1"}))
-    await writer.moderation(ChatCleared("c1", 6000, "recent-messages", raw_line="@x :tmi CLEARCHAT #doomtp"))
+    await writer.moderation(ChatCleared("c1", 6000, "ivr-logs", raw_line="@x :tmi CLEARCHAT #doomtp"))
     await writer.stop()
 
     assert await _rows(dbs, "SELECT message_id, raw_format, raw FROM messages ORDER BY 1") == [

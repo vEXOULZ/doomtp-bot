@@ -370,7 +370,7 @@ async def coverage(conn: Connection, channel_id: str, since: int, until: int | N
         backfill = None
         if reason == "between_sessions":
             async with await conn.execute(
-                "SELECT complete, inserted, error FROM backfill_runs"
+                "SELECT complete, inserted, error, provider FROM backfill_runs"
                 " WHERE channel_id = %s AND gap_from = %s AND gap_to = %s ORDER BY at DESC LIMIT 1",
                 (channel_id, start, end),
             ) as cur:

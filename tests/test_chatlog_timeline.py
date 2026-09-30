@@ -248,7 +248,12 @@ async def test_coverage_names_every_hole_and_what_filled_it(
         (T + 120_000, T + 125_000, "between_sessions"),
         (T + 200_000, T + 210_000, "not_listening"),
     ]
-    assert whole["gaps"][1]["backfill"] == {"complete": True, "inserted": 10, "error": None}
+    assert whole["gaps"][1]["backfill"] == {
+        "complete": True,
+        "inserted": 10,
+        "error": None,
+        "provider": "ivr-logs",
+    }
     assert whole["gaps"][2]["backfill"] is None and whole["complete"] is False
     assert len(whole["sessions"]) == 3
 

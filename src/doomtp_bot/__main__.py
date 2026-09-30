@@ -31,7 +31,7 @@ from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
-from doomtp_bot.history.provider import RecentMessagesProvider
+from doomtp_bot.history.provider import IvrLogsProvider
 from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.automod import AutoMod
@@ -94,7 +94,7 @@ async def run(settings: Settings) -> None:
     except CoreNotInstalled:
         await dbs.close()
         raise
-    history = RecentMessagesProvider(settings.history_provider_url)
+    history = IvrLogsProvider(settings.ivr_logs_url)
     triggers = TriggerService(dbs.bot, filters=content_filter)
     await triggers.reload()
     activity = ChatActivity()
@@ -252,7 +252,6 @@ async def run(settings: Settings) -> None:
                 if queued:
                     log.info("history.startup_backfill", channels=len(queued))
                 backfill_queue.start()
-                backfill.start_keep_warm()
         except Exception:
             log.exception("twitch.start_failed")
 
@@ -433,7 +432,6 @@ async def run(settings: Settings) -> None:
         if poller is not None:
             await poller.stop()
         await backfill_queue.stop()
-        await backfill.stop()
         await history.close()
         twitch_start.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):

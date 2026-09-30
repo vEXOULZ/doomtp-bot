@@ -1,1 +1,1 @@
-"""History backfill from recent-messages (ADR-0008)."""
+"""History backfill from logs.ivr.fi (ADR-0008)."""

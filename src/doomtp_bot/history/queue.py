@@ -1,10 +1,12 @@
 """Backfill as queued jobs (ADR-0024 §5).
 
-A `gaps` job fills every open gap of one channel, found when it runs, with as few requests as the service
-allows (`BackfillService.fill_many`): one request spans all of them, from the oldest gap's start to the
-newest one's end. A channel has at most one waiting, so startup, a reconnect and `!backfill gaps`
-join it. A `range` job fills one range asked for by hand (`!backfill 6h`, the API). One worker takes the
-oldest queued job, so jobs never run side by side and a rate-limited provider sees one caller.
+A `gaps` job fills every open gap of one channel, found when it runs (`BackfillService.fill_many`). A
+channel has at most one waiting, so startup, a reconnect and `!backfill gaps` join it. A `range` job fills
+one range asked for by hand (`!backfill 6h`, the API). One worker takes the oldest queued job, so jobs never
+run side by side and the rate-limited provider sees one caller.
+
+When the provider pauses (its daily budget is spent, or the service kept failing), the job goes back to
+the queue and the worker waits until the provider asks again; the job then resumes where it stopped.
 
 Consent is checked twice: a channel with backfill off can queue nothing, and a job whose channel turned it
 off while it waited is cancelled rather than run.
@@ -66,6 +68,7 @@ class BackfillQueue:
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self.paused_until_ms: int | None = None  # the provider paused: nothing runs before then
 
     # ── queueing ──
     async def queue_range(
@@ -185,6 +188,10 @@ class BackfillQueue:
         except Exception as exc:
             log.exception("history.job_failed", job=job.id)
             return await self._finish(job, "failed", error=repr(exc))
+        if outcome.retry_at_ms is not None:
+            self.paused_until_ms = outcome.retry_at_ms
+            log.info("history.job_paused", job=job.id, until=outcome.retry_at_ms)
+            return await self._requeue(job, outcome.error)
         return await self._finish(
             job,
             "failed" if outcome.error else "done",
@@ -195,11 +202,25 @@ class BackfillQueue:
         )
 
     async def drain(self) -> list[BackfillJob]:
-        """Run jobs until none is queued."""
+        """Run jobs until none is queued, or the provider pauses."""
         done = []
         while (job := await self.run_next()) is not None:
             done.append(job)
+            if job.state == "queued":
+                break
         return done
+
+    async def _requeue(self, job: BackfillJob, error: str) -> BackfillJob:
+        """Back in the queue, in its place: it runs first once the provider asks again."""
+        async with transaction(self.conn):
+            row = await fetch_one(
+                self.conn,
+                "UPDATE backfill_jobs SET state = 'queued', started_at = NULL, error = %s WHERE id = %s"
+                " RETURNING *",
+                (error, job.id),
+            )
+        assert row is not None
+        return BackfillJob.of(row)
 
     async def _finish(
         self,
@@ -232,7 +253,7 @@ class BackfillQueue:
 
         The worker is asked, never cancelled: it shares the connection with the rest of the process, and
         a cancel that lands while psycopg enters or leaves a savepoint leaves the connection's nesting
-        count wrong, so the next transaction on it fails. The provider's timeout bounds the wait. A job
+        count wrong, so the next transaction on it fails. The provider's timeout and waits bound it. A job
         a crash cuts short stays `running` and is queued again at the next startup.
         """
         if self._task is not None:
@@ -244,6 +265,13 @@ class BackfillQueue:
     async def _work(self) -> None:
         while not self._stopping.is_set():
             self._wake.clear()
+            if self.paused_until_ms is not None:
+                wait_s = (self.paused_until_ms - now_ms()) / 1000
+                if wait_s > 0:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stopping.wait(), wait_s)
+                    continue
+                self.paused_until_ms = None
             try:
                 job = await self.run_next()
             except Exception:

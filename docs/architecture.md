@@ -21,7 +21,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | [ADR-0005](adr/0005-command-pipeline-runtime.md) | Command runtime: an AST, preflight checks, and a three-part `Result` |
 | [ADR-0006](adr/0006-permissions-cooldowns-toggles.md) | Ranked roles, per-tier and per-user cooldowns, layered toggles |
 | [ADR-0007](adr/0007-channel-access-tiers.md) | Join channels in basic, moderator and full tiers, with capability detection |
-| [ADR-0008](adr/0008-history-backfill-recent-messages.md) | Fill chat log gaps from recent-messages.robotty.de |
+| [ADR-0008](adr/0008-history-backfill-recent-messages.md) | Fill chat log gaps from logs.ivr.fi (amended 2026-09-29; was recent-messages) |
 | [ADR-0009](adr/0009-user-custom-commands-sharing.md) | User-owned custom commands: link, publish, edit, versions |
 | [ADR-0010](adr/0010-variables-scopes.md) | Variables: seven namespaces, exact-name write grants, all public for now |
 | [ADR-0011](adr/0011-parser-and-web-editor.md) | One authoritative server-side PEG parser. The web editor highlights locally and gets diagnostics from the API. |
@@ -39,7 +39,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 | # | Requirement |
 |---|-------------|
 | F1 | **Log every chat message** into a queryable database. **Never delete log rows.** Deletions, timeouts, bans and clears are recorded as events and flagged on the affected messages. |
-| F2 | **Fill log gaps** caused by crashes, updates or disconnects from a third-party history service (recent-messages) |
+| F2 | **Fill log gaps** caused by crashes, updates or disconnects from a third-party history service (logs.ivr.fi) |
 | F3 | **Command language** with pipes and chain operators (`\|`, `&&`, `\|\|`, grouping, `>`/`>>` variable writes) and sentinel commands (`true`, `false`, `default`, `fail`). A pipe stops on failure, and `\|\|` handles failures. Details are in the language proposal. |
 | F4 | **Commands return three things:** an exit code (0 = success), a formatted message (shown when it's the final result) and structured data (usable by later commands, e.g. `{_1[celsius]}`) |
 | F5 | **Permission tiers:** Twitch built-ins (broadcaster, lead mod, mod, VIP, sub), custom roles (e.g. ambassador) at any rank including above moderator, and **global bot owners and bot admins** above everything |
@@ -68,7 +68,7 @@ A multi-channel Twitch chat bot written in Python, self-hosted on a homelab in a
 |---------|--------|
 | Scale | 1–20 channels. About 50 messages/s peak, with a much lower average. |
 | Latency | Replies go out within 1 s, not counting rate-limit waits or the optional moderation hold. Logging never blocks commands. |
-| Log durability | Every message received is stored, except messages still in the batch window (≤1 s) at the moment of a crash. Gaps are recorded explicitly and filled from recent-messages where possible. |
+| Log durability | Every message received is stored, except messages still in the batch window (≤1 s) at the moment of a crash. Gaps are recorded explicitly and filled from logs.ivr.fi where possible. |
 | Safety | All chat input is untrusted. Pipelines have bounded time, size and depth. Published commands run with the **invoker's** permissions. |
 | Footprint | Under 250 MB RAM |
 | Network | Outbound-only connections to Twitch. The bot listens on localhost; the web site and the paths it needs from the bot are published by a reverse proxy in front of both (§11), never by a port forward to the bot. |
@@ -86,7 +86,7 @@ flowchart TB
     classDef store fill:#1f3b4d,stroke:#5a9,color:#eee
 
     ES["Twitch EventSub<br/>WebSocket"]:::ext
-    RM["recent-messages<br/>.robotty.de"]:::ext
+    RM["logs.ivr.fi"]:::ext
 
     ES --> ADP["twitch/ adapter<br/>map · dedupe by message_id"]
     RM -.-> HIST["history/<br/>gap detect · IRC parse · backfill"]
@@ -213,7 +213,7 @@ messages(
   text text NOT NULL, message_type text, badges text, fragments text,   -- badges/fragments are JSON
   bits bigint DEFAULT 0, reply_parent_id text, reward_id text, source_channel_id text,
   is_self boolean DEFAULT false, is_command boolean DEFAULT false,
-  source text NOT NULL DEFAULT 'eventsub',     -- eventsub | recent-messages
+  source text NOT NULL DEFAULT 'eventsub',     -- eventsub | ivr-logs | recent-messages (before 2026-09-29)
   raw jsonb, raw_format text,                  -- the source (ADR-0024): eventsub | irc | legacy
   enrichment jsonb,                            -- what a backfilled line lacked, looked up
   sent_at bigint NOT NULL, received_at bigint NOT NULL,
@@ -263,10 +263,10 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 ### 3.3 Gaps and backfill (ADR-0008)
 
 - `log_sessions` records exactly when the bot was listening to each channel.
-- On startup — including the one after a stopped Twitch client is started again (ADR-0001) — the **HistoryProvider** fetches `recent-messages/:channel?after=<gap_from - 5s>` for every gap longer than 5 s. A reconnect TwitchIO handles inside one running client never ends the session, so there is no gap to fill for it.
-- It parses the raw IRC lines and inserts them with `source='recent-messages'`. Inserts are idempotent on the message ID.
-- A channel's open gaps are one `backfill_jobs` row, and one worker runs the jobs oldest first (ADR-0024 §5). The job fills every gap with one request from the oldest gap's start to the newest one's end (more, each older than the last, only when the 800-line cap cuts a page short), and a channel has at most one such job waiting, so startup, a reconnect and `!backfill gaps` join it. A gap older than the service's history is recorded `out_of_reach` and not queued again. A range asked for by hand is its own job, and is not queued again while it is queued or running; and a job a stop cut short is queued again at the next startup. The broadcaster queues more by hand (`!backfill gaps`, `!backfill 6h`, `!backfill queue`, `!backfill cancel <job>`), and so does the admin area (`GET`/`POST /channels/{login}/backfill`, `DELETE /channels/{login}/backfill/{job_id}`).
-- It records a `backfill_runs` row. The row is marked `complete=0` if the service hit its 800-message cap or reported `channel_not_joined`.
+- On startup — including the one after a stopped Twitch client is started again (ADR-0001) — the channel's gaps longer than 5 s are queued, and the **HistoryProvider** fetches `logs.ivr.fi/channelid/:id?from=<gap_from - 5s>&to=<gap_to>&raw=true` for each, paged by `offset`. A reconnect TwitchIO handles inside one running client never ends the session, so there is no gap to fill for it.
+- It parses the raw IRC lines and inserts them with `source='ivr-logs'`. Inserts are idempotent on the message ID.
+- A channel's open gaps are one `backfill_jobs` row, and one worker runs the jobs oldest first (ADR-0024 §5). The job fills the gaps oldest first, each with its own requests, and a channel has at most one such job waiting, so startup, a reconnect and `!backfill gaps` join it. The provider keeps to its own limits (one request every 10 s, 200 a day, backoff, then a pause until the next UTC day); a paused job goes back to the queue and resumes from the newest line it stored (`backfill_runs.reached_ms`). A range asked for by hand is its own job, and is not queued again while it is queued or running; and a job a stop cut short is queued again at the next startup. The broadcaster queues more by hand (`!backfill gaps`, `!backfill 6h`, `!backfill queue`, `!backfill cancel <job>`), and so does the admin area (`GET`/`POST /channels/{login}/backfill`, `DELETE /channels/{login}/backfill/{job_id}`).
+- It records a `backfill_runs` row. The row is marked `complete=0` if the fill was stopped (an error, a pause) or the service doesn't log the channel (`channel_not_logged`).
 - **Backfilled events never trigger commands, listeners or triggers.**
 - The service only starts collecting a channel after the first request for it, so the bot **keeps each channel warm** with periodic `limit=1` requests.
 - Per the service's guidelines, backfill is **opt-in per channel**, chosen at onboarding: `!join` says the log has started and points at `!backfill`, which names the service and what it would receive before anything is sent there, and only the broadcaster can turn it on.
@@ -792,7 +792,7 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   output is committed rather than built there. *Built and run from a clean tree on 2026-09-19: migrations
   apply, `/readyz` is ok with Twitch reported as disabled, and the language page serves both the grammar
   and the editor.*
-- **Self-hosted history, optional:** for independence from the public recent-messages service, run a `recent-messages2` container on a separate compose stack. It needs TimescaleDB. Don't restart it together with the bot during updates. Point `HISTORY_PROVIDER_URL` at it.
+- **Self-hosted history, optional:** for independence from the public logs.ivr.fi, run a [rustlog](https://github.com/boring-nick/rustlog) container on a separate compose stack. Don't restart it together with the bot during updates. Point `IVR_LOGS_URL` at it.
 - **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is queued as a backfill job (ADR-0024 §5). `scripts/coverage.py` (compose: `--profile tools run --rm coverage --wait 300`) says how each channel's last session ended and which gaps no complete backfill run covers, naming the job still to fill a gap and, with `--wait`, waiting for it — the deploy runbook in the README.
 - **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) runs `pg_dump` once per schema, writing a compressed custom-format archive that `pg_restore` can take apart, rotated to the last 7 of each. `pg_dump` snapshots inside one transaction, so it is safe to run while the bot writes. The `bot` schema is the critical one — it holds custom commands, variables, roles and the OAuth tokens. The dumps land on the same host as the database, which is not a backup until a copy leaves the machine; that part is still the operator's job.
 - **Metrics** (ADR-0015): counters in the Prometheus text format on `GET /metrics`, beside `/readyz` on the

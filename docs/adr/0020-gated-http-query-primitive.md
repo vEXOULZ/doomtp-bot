@@ -8,7 +8,7 @@
 
 ADR-0019 left `weather` and similar commands waiting for a way to read a web API from the language, and
 asked for this ADR before any code. Today the only outbound HTTP the bot makes is its own: Helix, the
-recent-messages service (ADR-0008) and Twitch sign-in. None of those takes a URL from a user.
+logs.ivr.fi history service (ADR-0008) and Twitch sign-in. None of those takes a URL from a user.
 
 A command that fetches a URL someone typed or stored is the riskiest thing the language could offer:
 
