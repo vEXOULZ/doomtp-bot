@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from doomtp_bot.chatlog import events
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core import metrics
 from doomtp_bot.core.events import ChatCleared, ChatMessage, ChatNotification, MessageDeleted
@@ -358,8 +359,8 @@ async def test_a_delete_names_the_author_by_id(dbs: Databases) -> None:
     logged = "@login=bob;target-msg-id=m-old;tmi-sent-ts=3100 :tmi.twitch.tv CLEARMSG #doomtp :x"
     unknown = "@login=carol;target-msg-id=m-gone;tmi-sent-ts=3200 :tmi.twitch.tv CLEARMSG #doomtp :x"
     await dbs.chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m-old', '100', '500', 'bob', 'old', 500, 500)"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m-old', '100', '500', 'bob', 'old', '{}', 'legacy', 500, 500)"
     )
     provider = FakeProvider(HistoryResponse((privmsg(2000, "m-new"), in_fill, logged, unknown)))
     service = await backfill_for(dbs, provider)
@@ -380,5 +381,9 @@ async def test_a_backfilled_timeout_keeps_its_length(dbs: Databases) -> None:
     service = await backfill_for(dbs, provider)
     await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000))
     await service.writer.stop()
-    async with await dbs.chatlog.execute("SELECT type, target_user_id, duration_s FROM mod_events") as cur:
-        assert [tuple(r.values()) for r in await cur.fetchall()] == [("user_clear", "400", 600)]
+    async with await dbs.chatlog.execute(
+        "SELECT type, target_user_id, raw, raw_format FROM mod_events"
+    ) as cur:
+        found = await cur.fetchall()
+    assert [(r["type"], r["target_user_id"]) for r in found] == [("user_clear", "400")]
+    assert events.moderation(found[0]["raw_format"], found[0]["raw"])["irc"]["ban-duration"] == "600"

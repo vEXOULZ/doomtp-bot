@@ -72,8 +72,8 @@ async def chatlog(app_and_keys: tuple[Any, ApiKeyService]) -> Connection:
     await _message(conn, "m-c", T + 10, text="the deleted one", deleted_at=T + 20)
     await _message(conn, "m-d", T + 30, user=("200", "friend"), text="cafe au lait")
     await conn.execute(
-        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, raw, raw_format, sent_at)"
-        " VALUES ('n-1', %s, '400', 'sub', '{}', %s, 'legacy', %s)",
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, raw, raw_format, sent_at)"
+        " VALUES ('n-1', %s, '400', 'sub', %s, 'legacy', %s)",
         # same instant as the messages: kind breaks the tie
         (CHANNEL_ID, json.dumps({"notice_type": "sub", "legacy": {"tier": "1000"}}), T),
     )
@@ -156,8 +156,8 @@ async def test_backfilled_rows_are_read_from_their_irc_lines(
         f" :tmi.twitch.tv USERNOTICE #{CHANNEL_LOGIN}"
     )
     await conn.execute(
-        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, raw, raw_format, source, sent_at)"
-        " VALUES ('n-irc', %s, '400', 'raid', '{}', %s, 'irc', 'ivr-logs', %s)",
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, raw, raw_format, source, sent_at)"
+        " VALUES ('n-irc', %s, '400', 'raid', %s, 'irc', 'ivr-logs', %s)",
         (CHANNEL_ID, json.dumps({"line": raid}), T + 1),
     )
     clear = f"@ban-duration=600;target-user-id=400;tmi-sent-ts={T + 2} :tmi.twitch.tv CLEARCHAT #{CHANNEL_LOGIN} :alice"

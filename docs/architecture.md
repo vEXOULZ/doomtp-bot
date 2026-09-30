@@ -209,12 +209,10 @@ milliseconds since the epoch throughout.
 ```sql
 messages(
   message_id text PRIMARY KEY, channel_id text NOT NULL,
-  user_id text NOT NULL, user_login text NOT NULL, display_name text,
-  text text NOT NULL, message_type text, badges text, fragments text,   -- badges/fragments are JSON
-  bits bigint DEFAULT 0, reply_parent_id text, reward_id text, source_channel_id text,
+  user_id text NOT NULL, user_login text NOT NULL, text text NOT NULL,
   is_self boolean DEFAULT false, is_command boolean DEFAULT false,
   source text NOT NULL DEFAULT 'eventsub',     -- eventsub | ivr-logs | recent-messages (before 2026-09-29)
-  raw jsonb, raw_format text,                  -- the source (ADR-0024): eventsub | irc | legacy
+  raw jsonb NOT NULL, raw_format text NOT NULL, -- the source (ADR-0024): eventsub | irc | legacy
   enrichment jsonb,                            -- what a backfilled line lacked, looked up
   sent_at bigint NOT NULL, received_at bigint NOT NULL,
   deleted_at bigint, cleared_at bigint, mod_event_id bigint,
@@ -222,12 +220,12 @@ messages(
 -- indexes: (channel_id, sent_at), (user_id, sent_at), GIN on tsv
 
 chat_notifications(id text PRIMARY KEY, channel_id text, user_id text, type text,
-                   payload text, source text, raw jsonb, raw_format text, enrichment jsonb, sent_at bigint)
+                   source text, raw jsonb, raw_format text, enrichment jsonb, sent_at bigint)
 mod_events(id bigint IDENTITY PRIMARY KEY, channel_id text, type text, message_id text,
-           target_user_id text, moderator_user_id text, duration_s integer, reason text,
-           source text, raw jsonb, raw_format text, enrichment jsonb, at bigint)
--- raw: the EventSub `event` object, {"line": <IRC line>}, or a legacy rebuild. The columns it repeats
--- (display name, badges, fragments, payload, ...) are dropped when the readers use it (ADR-0024 item 8).
+           target_user_id text, moderator_user_id text, source text, raw jsonb, raw_format text, enrichment jsonb, at bigint)
+-- raw: the EventSub `event` object, {"line": <IRC line>}, or a legacy rebuild. Everything else about an
+-- event (display name, badges, fragments, a notice's detail, a timeout's length) is read from it through
+-- chatlog/events.py; only what is filtered, sorted, joined or searched on is a column.
 users(user_id text PRIMARY KEY, login text, display_name text, first_seen bigint, last_seen bigint)
 user_names(user_id text, login text, display_name text, seen_from bigint, PRIMARY KEY (user_id, login))
 

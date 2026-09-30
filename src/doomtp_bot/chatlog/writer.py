@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import asdict
 from typing import Any
 
 import structlog
@@ -31,7 +30,7 @@ FLUSH_BATCH = 200
 QUEUE_MAX = 10_000
 
 Op = tuple[str, tuple[Any, ...]]
-_MESSAGE_SOURCE = 15  # where `source` sits in a "message" op's parameters
+_MESSAGE_SOURCE = 7  # where `source` sits in a "message" op's parameters
 
 
 def _raw(
@@ -87,10 +86,8 @@ class ChatLogWriter:
         await self._put(
             "message",
             (
-                msg.message_id, msg.channel_id, msg.user_id, msg.user_login, msg.display_name, msg.text,
-                msg.message_type, json.dumps([asdict(b) for b in msg.badges]), json.dumps(list(msg.fragments)),
-                msg.bits, msg.reply_parent_id, msg.reward_id, msg.source_channel_id, msg.is_self,
-                is_command, msg.source, *_raw(msg.raw_event, msg.raw_line, lambda: legacy.message(msg)),
+                msg.message_id, msg.channel_id, msg.user_id, msg.user_login, msg.text, msg.is_self, is_command,
+                msg.source, *_raw(msg.raw_event, msg.raw_line, lambda: legacy.message(msg)),
                 None if msg.enrichment is None else json.dumps(msg.enrichment), msg.sent_at, msg.received_at,
             ),
         )  # fmt: skip
@@ -99,7 +96,7 @@ class ChatLogWriter:
         raw = _raw(n.raw_event, n.raw_line, lambda: legacy.notification(n))
         await self._put(
             "notification",
-            (n.id, n.channel_id, n.user_id, n.type, json.dumps(n.payload), n.source, *raw, n.sent_at),
+            (n.id, n.channel_id, n.user_id, n.type, n.source, *raw, n.sent_at),
         )
 
     async def moderation(
@@ -149,7 +146,7 @@ class ChatLogWriter:
             reason=reason))  # fmt: skip
         await self._put(
             "mod_event",
-            (channel_id, kind, message_id, target, moderator, duration_s, reason, source, *raw, at),
+            (channel_id, kind, message_id, target, moderator, source, *raw, at),
         )
 
     async def command_run(
@@ -336,20 +333,19 @@ _SQL: dict[str, str] = {
         " ON CONFLICT DO NOTHING"
     ),
     "message": (
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, display_name, text, message_type,"
-        " badges, fragments, bits, reply_parent_id, reward_id, source_channel_id, is_self, is_command, source, raw,"
-        " raw_format, enrichment, sent_at, received_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, is_self, is_command, source,"
+        " raw, raw_format, enrichment, sent_at, received_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         # Backfill re-offers messages EventSub already logged; the first one wins (ADR-0008).
         " ON CONFLICT DO NOTHING"
     ),
     "notification": (
-        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, source, raw, raw_format, sent_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, source, raw, raw_format, sent_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING"
     ),
     "mod_event": (
-        "INSERT INTO mod_events (channel_id, type, message_id, target_user_id, moderator_user_id, duration_s, reason,"
-        " source, raw, raw_format, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        "INSERT INTO mod_events (channel_id, type, message_id, target_user_id, moderator_user_id, source, raw,"
+        " raw_format, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
     ),
     "flag_deleted": "UPDATE messages SET deleted_at = COALESCE(deleted_at, %s) WHERE message_id = %s",
     "flag_user_cleared": (

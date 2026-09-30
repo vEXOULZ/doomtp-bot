@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -50,9 +51,18 @@ class Harness:
         at = int((NOW_S - minutes_ago * 60) * 1000)
         columns = "".join(f", {name}" for name in flags)
         await self.dbs.chatlog.execute(
-            "INSERT INTO messages (message_id, channel_id, user_id, user_login, display_name, text,"
-            f" sent_at, received_at{columns}) VALUES (%s, %s, '1', %s, %s, %s, %s, %s{', %s' * len(flags)})",
-            (message_id, CHANNEL_ID, login, login.title(), text, at, at, *flags.values()),
+            "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format,"
+            f" sent_at, received_at{columns}) VALUES (%s, %s, '1', %s, %s, %s, 'legacy', %s, %s{', %s' * len(flags)})",
+            (
+                message_id,
+                CHANNEL_ID,
+                login,
+                text,
+                json.dumps({"chatter_user_name": login.title()}),
+                at,
+                at,
+                *flags.values(),
+            ),
         )
 
 
