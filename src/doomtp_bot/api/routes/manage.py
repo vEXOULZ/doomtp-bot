@@ -304,9 +304,10 @@ async def _customecho(request: Request, settings: ChannelSettings, caller: Calle
     return ctx, key, current
 
 
+# ADR-0019
 @router.get("/channels/{login}/customecho")
 async def list_customecho(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """The channel's own wording for readout commands, by command (ADR-0019)."""
+    """The channel's own wording for readout commands, by command."""
     settings = _channel(request, login)
     _, _, current = await _customecho(request, settings, caller)
     found = current if isinstance(current, dict) else {}
