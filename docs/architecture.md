@@ -267,7 +267,7 @@ All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
 - It records a `backfill_runs` row. The row is marked `complete=0` if the fill was stopped (an error, a pause) or the service doesn't log the channel (`channel_not_logged`).
 - **Backfilled events never trigger commands, listeners or triggers.**
 - The service only starts collecting a channel after the first request for it, so the bot **keeps each channel warm** with periodic `limit=1` requests.
-- Per the service's guidelines, backfill is **opt-in per channel**, chosen at onboarding: `!join` says the log has started and points at `!backfill`, which names the service and what it would receive before anything is sent there, and only the broadcaster can turn it on.
+- Backfill is **on for a new channel** (ADR-0008, amended 2026-09-30; it was opt-in): `!join` says the log has started and whether backfill is on, and points at `!backfill`, which names the service and what it receives. Only the broadcaster can turn it off or on again. A channel that rejoins keeps its choice.
 
 ---
 
@@ -605,7 +605,7 @@ A **race window** remains: a mod can act after the message has already been sent
     web admin's rejoin button, `"rejoin": true` on `POST /api/v1/channels` (409 without it), or the
     broadcaster inviting the bot again themselves (through `/auth/connect`, which `!join` in the bot's chat links to).
   - Never send unsolicited messages in basic-tier channels. Timers and alerts there require an explicit opt-in by a mod.
-- **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (opt-in), `log_enabled`, `quiet_errors`, `cc_edit_notice` (off by default) and the callback defaults.
+- **Per-channel settings:** `prefix`, `reply_hold_ms`, `publish_min_role`, `channel_var_write_role`, `history_backfill` (on for new channels), `log_enabled`, `quiet_errors`, `cc_edit_notice` (off by default) and the callback defaults.
 - **Prefix validation:** a prefix can't start with `/` or `.`, because Twitch clients treat those as chat commands. Its length is 1–3 characters and it can't contain whitespace.
 
 ---

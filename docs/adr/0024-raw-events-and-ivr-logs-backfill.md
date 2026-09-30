@@ -156,7 +156,7 @@ recent-messages is gone, see ADR-0008's amendment.)*
   page for it came back short. Its log has its own holes and opt-outs, which we cannot tell from a quiet
   channel, so `complete` means "the service had nothing more". `/log/coverage` reports the provider with
   each backfill run.
-- **Consent:** per channel, opt-in (ADR-0008 item 3), and the `!backfill` prompt names the service.
+- **Consent:** per channel, on for a new channel since 2026-09-30 (ADR-0008), and the `!backfill` prompt names the service.
 - **Config:** `IVR_LOGS_URL`, default `https://logs.ivr.fi`.
 
 ### 5. Backfill runs as queued jobs, which can also be started by hand
