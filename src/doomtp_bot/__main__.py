@@ -31,6 +31,7 @@ from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
+from doomtp_bot.history.enrich import Enricher, TwitchCdn
 from doomtp_bot.history.provider import IvrLogsProvider
 from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.log import configure_logging
@@ -129,7 +130,11 @@ async def run(settings: Settings) -> None:
     # `!explain` links its full report only where chat can open it (architecture §4.4).
     explain_reports = ReportStore(settings.public_base_url if settings.public_web_ui else None)
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
-    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
+    emote_cdn = TwitchCdn()
+    enricher = Enricher(dbs.chatlog, twitch, emote_cdn)  # what backfilled lines lack (ADR-0024 §3)
+    backfill = BackfillService(
+        conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher
+    )
     backfill_queue = BackfillQueue(backfill)  # `!backfill gaps` and the API queue jobs (ADR-0024 §5)
     services: dict[str, object] = {
         "policy": policy,
@@ -433,6 +438,7 @@ async def run(settings: Settings) -> None:
             await poller.stop()
         await backfill_queue.stop()
         await history.close()
+        await emote_cdn.close()
         twitch_start.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await twitch_start

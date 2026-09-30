@@ -43,6 +43,11 @@ Two admin-only routes over the `chatlog` schema, in `chatlog/timeline.py`:
   `outbound_msgs.twitch_message_id` → `run_ref`. The run's `trigger_id` on a reply is the message that
   asked for it. A moderation entry carries the target and moderator with their logins, duration and
   reason; a notification its type and payload.
+- **Entries are read from `raw`** through the one reader (ADR-0024 §2), whatever the row was stored as.
+  A message also has its `color` and `reply_parent_user`; a fragment keeps its `type`, `text`,
+  `mention` and `emote_id` and adds what Twitch or backfill's enrichment knows (the emote's set, owner
+  and format, a cheermote's tier), each looked-up value with its `source`. A chat notice's payload is
+  `system_message`, `text`, `chatter` and `detail`, where `detail` is EventSub's object for the notice.
 - **`GET /api/v1/channels/{login}/log/coverage?since=&until=`** — the log sessions that overlap the
   window and every **gap** in it, clipped to it: `between_sessions` (with the backfill run that covered
   it, if any), `before_log` (before the bot ever listened) or `not_listening` (after the last session

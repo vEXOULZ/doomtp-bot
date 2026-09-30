@@ -19,6 +19,7 @@ from doomtp_bot.core import metrics
 from doomtp_bot.core.events import Badge, ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
 from doomtp_bot.history import irc_convert
+from doomtp_bot.history.enrich import Enricher
 from doomtp_bot.history.irc_parse import IrcLine, badges, parse_line
 from doomtp_bot.history.provider import DEFAULT_LIMIT, PAUSED, HistoryProvider
 from doomtp_bot.storage.db import Connection, transaction
@@ -168,11 +169,13 @@ class BackfillService:
         writer: ChatLogWriter,
         provider: HistoryProvider,
         policy: PolicyService,
+        enricher: Enricher | None = None,
     ) -> None:
         self.conn = conn
         self.writer = writer
         self.provider = provider
         self.policy = policy
+        self.enricher = enricher
 
     def enabled_channels(self) -> list[tuple[str, str]]:
         """(channel_id, login) for channels that opted in (ADR-0008 consent)."""
@@ -214,6 +217,7 @@ class BackfillService:
             return FillResult(())
         channel_id, login = ordered[0].channel_id, ordered[0].channel_login
         resume = await self._resume_points(channel_id)
+        enriching = None if self.enricher is None else self.enricher.fill(channel_id)
         outcomes: list[BackfillOutcome] = []
         authors: dict[str, str] = {}  # message id → user id, for the deletes that name only a login
         fetched = inserted = requests = 0
@@ -250,6 +254,8 @@ class BackfillService:
                         continue
                     if isinstance(event, ChatMessage):
                         authors[event.message_id] = event.user_id
+                        if enriching is not None:  # what the line lacks (ADR-0024 §3)
+                            event = replace(event, enrichment=await enriching.message(event))
                     elif isinstance(event, MessageDeleted) and event.target_user_id is None:
                         author = authors.get(event.message_id) or await self._author(event.message_id)
                         event = replace(event, target_user_id=author)

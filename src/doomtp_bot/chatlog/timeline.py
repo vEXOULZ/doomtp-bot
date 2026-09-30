@@ -13,6 +13,10 @@ Pages are keyset pages: the cursor is the last entry's `(at, kind, id)`, so a pa
 however deep it is, and rows written while someone pages don't shift what they see. Each kind is read on
 its own index with the cursor's predicate and `limit + 1` rows, and the merge keeps the first `limit`.
 
+Each entry is built from the row's `raw`, read in EventSub's shape by `chatlog/events.py` whatever it was
+stored as (ADR-0024 §2), so a live message and a backfilled one look the same; only the columns a query
+filters, sorts or searches on are read as columns.
+
 Nothing here hides anything by default. The log keeps what moderators removed (architecture §3.1), and
 the caller decides: `hide_removed` leaves out deleted and cleared messages, as chat shows them.
 """
@@ -27,6 +31,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from doomtp_bot.chatlog import events
 from doomtp_bot.clock import now_ms
 from doomtp_bot.history.backfill import gaps_between
 from doomtp_bot.storage.db import Connection
@@ -99,9 +104,8 @@ class _Source:
 _SOURCES = {
     "message": _Source(
         "message",
-        "SELECT m.message_id, m.user_id, m.user_login, m.display_name, m.text, m.message_type, m.badges,"
-        " m.fragments, m.bits, m.reply_parent_id, m.reward_id, m.source_channel_id, m.is_self, m.is_command,"
-        " m.source, m.sent_at, m.received_at, m.deleted_at, m.cleared_at FROM messages m",
+        "SELECT m.message_id, m.user_id, m.user_login, m.text, m.is_self, m.is_command, m.source, m.raw,"
+        " m.raw_format, m.enrichment, m.sent_at, m.received_at, m.deleted_at, m.cleared_at FROM messages m",
         "m",
         "sent_at",
         "message_id",
@@ -109,8 +113,8 @@ _SOURCES = {
     ),
     "notification": _Source(
         "notification",
-        "SELECT n.id, n.user_id, u.login AS user_login, u.display_name, n.type, n.payload, n.source, n.sent_at"
-        " FROM chat_notifications n LEFT JOIN users u ON u.user_id = n.user_id",
+        "SELECT n.id, n.user_id, u.login AS user_login, u.display_name, n.type, n.source, n.raw, n.raw_format,"
+        " n.enrichment, n.sent_at FROM chat_notifications n LEFT JOIN users u ON u.user_id = n.user_id",
         "n",
         "sent_at",
         "id",
@@ -119,7 +123,7 @@ _SOURCES = {
     "moderation": _Source(
         "moderation",
         "SELECT e.id, e.type, e.message_id, e.target_user_id, t.login AS target_login,"
-        " e.moderator_user_id, mo.login AS moderator_login, e.duration_s, e.reason, e.source, e.at"
+        " e.moderator_user_id, mo.login AS moderator_login, e.source, e.raw, e.raw_format, e.at"
         " FROM mod_events e LEFT JOIN users t ON t.user_id = e.target_user_id"
         " LEFT JOIN users mo ON mo.user_id = e.moderator_user_id",
         "e",
@@ -184,28 +188,32 @@ async def _read_source(
         return [dict(row) for row in await cur.fetchall()]
 
 
-def _json(text: str | None) -> Any:
-    return None if text is None else json.loads(text)
-
-
 def _user(user_id: str | None, login: str | None, display_name: str | None = None) -> dict[str, Any] | None:
     return None if user_id is None else {"id": user_id, "login": login, "display_name": display_name}
 
 
 def _message(row: dict[str, Any]) -> dict[str, Any]:
+    event = events.message(row["raw_format"], row["raw"], row["enrichment"])
+    body = event.get("message") or {}
+    fragments = body.get("fragments") or [{"type": "text", "text": row["text"]}]
+    reply = event.get("reply") or {}
     return {
         "kind": "message",
         "id": row["message_id"],
         "at": row["sent_at"],
-        "user": _user(row["user_id"], row["user_login"], row["display_name"]),
+        "user": _user(row["user_id"], row["user_login"], event.get("chatter_user_name")),
         "text": row["text"],
-        "fragments": _json(row["fragments"]),
-        "badges": _json(row["badges"]),
-        "bits": row["bits"],
-        "message_type": row["message_type"],
-        "reply_parent_id": row["reply_parent_id"],
-        "reward_id": row["reward_id"],
-        "source_channel_id": row["source_channel_id"],
+        "fragments": [events.entry_fragment(f) for f in fragments],
+        "badges": event.get("badges") or [],
+        "color": event.get("color") or None,
+        "bits": (event.get("cheer") or {}).get("bits", 0),
+        "message_type": event.get("message_type") or "text",
+        "reply_parent_id": reply.get("parent_message_id"),
+        "reply_parent_user": _user(
+            reply.get("parent_user_id"), reply.get("parent_user_login"), reply.get("parent_user_name")
+        ),
+        "reward_id": event.get("channel_points_custom_reward_id"),
+        "source_channel_id": event.get("source_broadcaster_user_id"),
         "is_self": row["is_self"],
         "is_command": row["is_command"],
         "source": row["source"],
@@ -216,19 +224,72 @@ def _message(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _someone(event: dict[str, Any]) -> dict[str, Any] | None:
+    """The user of a follow, redemption or cheer, as the payload has always named them."""
+    if event.get("user_id") is None:
+        return None
+    return {"id": event["user_id"], "name": event.get("user_login"),
+            "display": event.get("user_name") or event.get("user_login")}  # fmt: skip
+
+
+def _payload(kind: str, event: dict[str, Any], at: int) -> dict[str, Any]:
+    """The notification's `payload` as `/log` has always given it (`twitch.mapping`), from its event."""
+    if "legacy" in event:
+        return dict(event["legacy"])
+    user = _someone(event)
+    who = "someone" if user is None else user["display"]
+    if kind == "follow":
+        return {"system_message": f"{who} followed", "text": "", "user": user, "followed_at": at}
+    if kind == "redemption":
+        reward = event.get("reward") or {}
+        text = event.get("user_input") or ""
+        return {
+            "system_message": f"{who} redeemed {reward.get('title', '')}",
+            "text": text,
+            "input": text,
+            "user": user,
+            "reward": {"id": reward.get("id"), "title": reward.get("title"), "cost": reward.get("cost")},
+            "status": event.get("status", ""),
+        }
+    if kind == "cheer":
+        bits = int(event.get("bits") or 0)
+        return {
+            "system_message": f"{who} cheered {bits} bits",
+            "text": event.get("message") or "",
+            "bits": bits,
+            "anonymous": bool(event.get("is_anonymous")),
+            "user": user,
+        }
+    anonymous = event.get("chatter_is_anonymous") or event.get("chatter_user_id") is None
+    return {
+        "system_message": event.get("system_message", ""),
+        "text": (event.get("message") or {}).get("text", ""),
+        "chatter": None
+        if anonymous
+        else {"id": event["chatter_user_id"], "login": event.get("chatter_user_login")},
+        "detail": event.get(event.get("notice_type") or kind),
+    }
+
+
 def _notification(row: dict[str, Any]) -> dict[str, Any]:
+    event = events.notification(row["raw_format"], row["raw"], row["enrichment"])
     return {
         "kind": "notification",
         "id": row["id"],
         "at": row["sent_at"],
         "user": _user(row["user_id"], row["user_login"], row["display_name"]),
         "type": row["type"],
-        "payload": _json(row["payload"]),
+        "payload": _payload(row["type"], event, row["sent_at"]),
         "source": row["source"],
     }
 
 
 def _moderation(row: dict[str, Any]) -> dict[str, Any]:
+    event = events.moderation(row["raw_format"], row["raw"])
+    duration = event.get("duration_s")
+    if duration is None:  # a backfilled timeout's length is IRC's `ban-duration`
+        ban = (event.get("irc") or {}).get("ban-duration", "")
+        duration = int(ban) if ban.isdigit() else None
     return {
         "kind": "moderation",
         "id": row["id"],
@@ -237,8 +298,8 @@ def _moderation(row: dict[str, Any]) -> dict[str, Any]:
         "message_id": row["message_id"],
         "target": _user(row["target_user_id"], row["target_login"]),
         "moderator": _user(row["moderator_user_id"], row["moderator_login"]),
-        "duration_s": row["duration_s"],
-        "reason": row["reason"],
+        "duration_s": duration,
+        "reason": event.get("reason"),
         "source": row["source"],
     }
 

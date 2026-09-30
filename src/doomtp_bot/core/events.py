@@ -43,6 +43,8 @@ class ChatMessage:
     #: for a live one, or the IRC line for a backfilled one.
     raw_event: dict[str, Any] | None = None
     raw_line: str | None = None
+    #: What backfill looked up that the line lacks (ADR-0024 §3, `history/enrich.py`).
+    enrichment: dict[str, Any] | None = None
 
     @property
     def reply_mentions(self) -> tuple[str, ...]:

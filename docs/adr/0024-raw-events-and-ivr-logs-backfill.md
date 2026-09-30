@@ -244,9 +244,20 @@ ivr.fi replaced it (ADR-0008's amendment).
    the other rows as `legacy`.
 2. [x] Capture the EventSub `event` JSON in the adapter and store it for live messages, notifications
    and moderation events.
-3. [ ] `chatlog/events.py`: the one reader from `eventsub`, `irc` and `legacy` to the EventSub shape,
-   with golden tests from real recent-messages and ivr.fi lines; `/log` built from it.
-4. [ ] Enrichment on backfill: the emote cache and lookups, mention resolution by time, cheermote tiers.
+3. [x] `chatlog/events.py`: the one reader from `eventsub`, `irc` and `legacy` to the EventSub shape,
+   with golden tests from real recent-messages and ivr.fi lines; `/log` built from it. *(2026-09-29:
+   `history/irc_convert.py` turns a PRIVMSG into `channel.chat.message`, a USERNOTICE into
+   `channel.chat.notification` (the notice's object by EventSub's field names, the `msg-param-*` tags it
+   has no field for under `irc` by their IRC names) and CLEARMSG/CLEARCHAT into the moderation events.
+   Golden tests use ivr.fi lines. `/log` reads every entry from `raw`, so a message entry now also has
+   `color` and `reply_parent_user`, and a chat notice's `detail` uses EventSub's names, e.g. `sub_tier`
+   and `is_prime`.)*
+4. [x] Enrichment on backfill: the emote cache and lookups, mention resolution by time, cheermote tiers.
+   *(2026-09-29: `history/enrich.py`. Emotes: the channel's EventSub rows, then Helix channel and global
+   emotes, then the CDN, cached in `emotes`; one the CDN can't answer for is asked again next fill.
+   Mentions: the reply's parent, then someone who spoke earlier in the fill, then `user_names` nearest
+   the time, then Helix for a valid login. Cheermotes in a message with bits: prefixes and tiers from
+   Helix. A failed lookup leaves the value out and never stops the fill. Notice text is not enriched.)*
 5. [x] `IvrLogsProvider` and the self-imposed limits. *(2026-09-29: the only provider; recent-messages
    removed. `backfill_runs.reached_ms` resumes a stopped fill, and old `out_of_reach` gaps are open
    again.)*
