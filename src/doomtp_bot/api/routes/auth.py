@@ -48,9 +48,10 @@ async def login(request: Request) -> Response:
     return RedirectResponse(auth.login_url(), status_code=302)
 
 
+# ADR-0007, the full tier
 @router.get("/connect")
 async def connect(request: Request) -> Response:
-    """The link a broadcaster follows to grant their own channel (ADR-0007 full tier)."""
+    """The link a broadcaster follows to grant their own channel, with its events."""
     auth = _auth(request)
     if auth is None:
         return _page(
