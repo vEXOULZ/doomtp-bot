@@ -497,6 +497,9 @@ async def test_backfill_jobs_are_queued_listed_and_cancelled(
 ) -> None:
     """ADR-0024 §5: the admin area can queue what chat can, and see what the worker did."""
     url = f"/api/v1/channels/{CHANNEL_LOGIN}/backfill"
+    await app_and_keys[0].state.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", False, Actor(None, "test"))
+    )
     off = await client.post(url, json={"from_ms": 1000, "to_ms": 5000}, headers=auth(write_key))
     assert off.status_code == 409 and off.json()["detail"] == "backfill is off for this channel"
 

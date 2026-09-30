@@ -76,8 +76,10 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         )
     if failed:
         return Result.failure(Code.FAIL, f"joined #{login}, but Twitch refused: {', '.join(failed)}")
+    joined = ctx.service("policy").channel_settings(channel_id)
+    backfill = "on" if joined is None or joined.history_backfill else "off"
     return Result.success(
-        f"joined #{login}. Backfill is off; {sign_of(ctx, channel_id)}backfill there explains it.",
+        f"joined #{login}. Backfill is {backfill}; {sign_of(ctx, channel_id)}backfill there explains it.",
         {"channel_id": channel_id, "login": login},
     )
 
@@ -138,9 +140,10 @@ async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         summary="Fill gaps in this channel's chat log from a history service",
         description=(
             "With backfill on, chat the bot missed while offline is fetched from a third-party history"
-            " service when it comes back. Off by default, since it names this channel to that service."
-            " The broadcaster can turn it on, or queue a job by hand: gaps fills every hole in the log, a"
-            " duration such as 6h fetches that much of the recent past. One job runs at a time."
+            " service when it comes back. On for a new channel, and the broadcaster can turn it off, since"
+            " it names this channel to that service. The broadcaster can also queue a job by hand: gaps"
+            " fills every hole in the log, a duration such as 6h fetches that much of the recent past. One"
+            " job runs at a time."
         ),
         params=(
             Param(
@@ -151,7 +154,7 @@ async def part_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
             Param("2", "job", description="The job to cancel"),
         ),
         examples=(
-            Example("{sign}backfill on", "backfill is on"),
+            Example("{sign}backfill off", "backfill is off"),
             Example("{sign}backfill 6h", "queued #12: the last 6h"),
             Example("{sign}backfill queue", "#12 running, the last 6h"),
             Example("{sign}backfill cancel 12", "cancelled #12"),

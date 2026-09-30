@@ -1,8 +1,16 @@
 # ADR-0008: Chat log gap backfill via logs.ivr.fi
 
-**Status:** Accepted (implemented; see Action Items) — 2026-09-18; amended 2026-09-29 (logs.ivr.fi replaces recent-messages)
+**Status:** Accepted (implemented; see Action Items) — 2026-09-18; amended 2026-09-29 (logs.ivr.fi replaces recent-messages) and 2026-09-30 (on by default for new channels)
 **Date:** 2026-09-16
 **Deciders:** Project owner
+
+## Amendment, 2026-09-30
+
+Backfill is now **on by default** for a channel joined from then on (bot migration 0010 sets the column
+default to `true`). The owner asked for it: a channel that never typed `!backfill on` kept every gap in
+its log. A channel already joined keeps its setting, and one that rejoins keeps its old choice.
+`!join` says whether backfill is on and points at `!backfill`, which still names the service. The
+broadcaster can turn it off at any time, and turning it off cancels the jobs still waiting.
 
 ## Amendment, 2026-09-29
 
@@ -51,7 +59,7 @@ Twitch has no chat history API. Whenever the bot is offline, whether from a cras
   - `USERNOTICE` becomes a `chat_notifications` row, with `msg-id` as the EventSub notice type and the payload in the live shape (`system_message`, `text`, `chatter`, and the `msg-param-*` tags in snake case as `detail`). An anonymous gifter names no one.
 - **Completeness:** a gap is `complete` once its last page came back short. A failure, a pause or a channel the service doesn't log (`channel_not_logged`) leaves it incomplete, with the error, and it stays open for the next job. The service's own holes and opt-outs can't be told from a quiet chat, so `complete` means "the service had nothing more", not "nothing was missed".
 - **Never act on history.** Backfilled events go to the log only, never to commands, listeners, triggers or variables.
-- **Consent:** `channels.history_backfill` is **opt-in** at onboarding. The prompt names the service and links it.
+- **Consent:** `channels.history_backfill` is **on** for a new channel (amended 2026-09-30; it was opt-in). `!join` says so, and `!backfill` names the service and lets the broadcaster turn it off.
 - **Config:** `IVR_LOGS_URL` (default `https://logs.ivr.fi`) lets another rustlog or justlog deployment stand in.
 
 ## Options Considered
