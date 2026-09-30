@@ -20,6 +20,7 @@ class Stand:
     url: str = ""
     logs_status: int = 200
     logs_body: str = LINE + "\n"
+    log_lines: list[str] | None = None  # set: answered as the service does, lines `offset` to `limit`
     channels_status: int = 200
     asked: list[tuple[str, dict[str, str]]] = field(default_factory=list)
 
@@ -36,6 +37,9 @@ async def stand() -> AsyncIterator[Stand]:
 
     async def logs(request: web.Request) -> web.Response:
         state.asked.append((request.path, dict(request.query)))
+        if state.log_lines is not None:
+            offset, end = int(request.query["offset"]), int(request.query["limit"])
+            return web.Response(text="".join(line + "\n" for line in state.log_lines[offset:end]))
         return web.Response(status=state.logs_status, text=state.logs_body)
 
     app = web.Application()
@@ -70,7 +74,7 @@ async def test_a_range_is_asked_for_by_channel_id_as_raw_lines(stand: Stand) -> 
                 "from": "2026-02-26T03:00:00.000Z",
                 "to": "2026-02-27T03:00:00.001Z",
                 "raw": "true",
-                "limit": "2",
+                "limit": "6",  # the service's `limit` is where the page ends
                 "offset": "4",
             },
         ),
@@ -148,3 +152,18 @@ async def test_a_service_that_cannot_be_reached_pauses(stand: Stand) -> None:
     response = await provider.fetch("100", from_ms=0, to_ms=1000, limit=10)
     await provider.close()
     assert response.error_code == PAUSED
+
+
+async def test_pages_follow_one_another_as_the_service_counts_them(stand: Stand) -> None:
+    """The service answers lines `offset` to `limit`. Asking for `limit=1000&offset=1000` got nothing, so a
+    backfill of 2657 lines stopped after the first 1000 as if the range had ended."""
+    stand.log_lines = [f"@id={i};tmi-sent-ts={i} :alice!alice@x PRIVMSG #doomtp :{i}" for i in range(25)]
+    provider = provider_for(stand)
+    got: list[str] = []
+    while True:
+        page = await provider.fetch("100", from_ms=0, to_ms=1000, limit=10, offset=len(got))
+        got += page.lines
+        if not page.hit_limit:
+            break
+    await provider.close()
+    assert got == stand.log_lines

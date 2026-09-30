@@ -21,7 +21,9 @@ Twitch has no chat history API. Whenever the bot is offline, whether from a cras
 
 - `GET https://logs.ivr.fi/channelid/{id}?from=<RFC 3339>&to=<RFC 3339>&raw=true&limit=N&offset=M` returns the channel's lines in that range as **raw IRC lines**, **oldest first**.
   - `from` is inclusive and `to` exclusive. Millisecond precision is accepted.
-  - `limit` and `offset` page through a range; a page shorter than `limit` is the last.
+  - `limit` and `offset` page through a range, but `limit` is where the page **ends**, not its length: the
+    service answers lines `offset` to `limit`, so `limit=1000&offset=1000` is an empty 200 (checked
+    2026-09-30). The provider sends `limit = offset + page`. A page shorter than that is the last.
   - `json=true` and `ndjson=true` give the same lines as objects; the IRC line is in each.
 - **404 `Not found`** means nothing in the range, an `offset` past its end, or a channel it doesn't log. So `GET /channels` (`{"channels": [{"name", "userID"}]}`) is checked first, to tell a channel it doesn't log from a quiet one.
 - Lines carry `tmi-sent-ts` and Twitch's own message `id` (the UUID EventSub gives), but no receive time.
