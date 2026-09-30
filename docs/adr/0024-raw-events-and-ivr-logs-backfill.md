@@ -1,6 +1,6 @@
 # ADR-0024: Keep every event as Twitch sent it, and backfill older gaps from logs.ivr.fi
 
-**Status:** Accepted — 2026-09-28; amended 2026-09-29 (the migration in §1; §5)
+**Status:** Accepted — 2026-09-28; amended 2026-09-29 (the migration in §1; §5, twice)
 **Date:** 2026-09-28
 **Deciders:** Project owner
 
@@ -159,17 +159,29 @@ never mixed into it. Each looked-up value records where it came from.
 Today a backfill runs only at startup, inline, for every open gap. With a rate-limited second provider
 a backfill can take minutes or days, so it becomes a **job in a queue**:
 
-- **`chatlog.backfill_jobs`**: the channel, the range (`from_ms`, `to_ms`), who asked (`startup`, a
-  chatter or an API caller), when, and the state: `queued`, `running`, `done`, `failed` or
-  `cancelled`, with what it fetched and stored, whether the range is `complete`, and any error.
+- **`chatlog.backfill_jobs`**: the channel, the kind (`gaps` or `range`), the range (`from_ms`, `to_ms`),
+  who asked (`startup`, a chatter or an API caller), when, and the state: `queued`, `running`, `done`,
+  `failed` or `cancelled`, with what it fetched and stored, whether the range is `complete`, and any error.
+- **One job per channel for its gaps.** The service takes a start and no end and answers oldest first, so
+  a job per gap asked for the same lines again and again, and a gap older than the service's history was
+  queued at every startup, for good. Instead:
+  - a **`gaps`** job looks up the channel's open gaps when it runs, and fills them all with one request
+    from the oldest; a page the 800-line cap cuts short is followed by the next (from its newest line, or
+    from the next gap when that starts later). Only lines inside a gap are stored. Its range only says
+    what was open when it was queued;
+  - a channel has **at most one `gaps` job waiting**: startup, a reconnect and `!backfill gaps` join it
+    (its range widens) instead of queueing another;
+  - a gap whose history starts after it did is recorded **`out_of_reach`** and no longer counts as open
+    (ADR-0008), so nothing requeues it. A gap cut short by the cap or an error stays open;
+  - a **`range`** job is one asked for by hand, and is filled the same way; the same range can be queued
+    or running only once.
 - **One worker** takes the oldest queued job, fills its range (recent-messages, then ivr.fi for what
   that could not reach, §4) and records a `backfill_runs` row per provider, as today. It wakes when a
   job is queued. A job still `running` when the bot stops goes back to `queued` at startup, and a job
   that has spent the day's ivr.fi budget goes back to `queued` until the next day.
-- **Startup** queues a job for each open gap instead of filling it inline. A range already queued or
-  running is not queued again.
+- **Startup** queues the channel's `gaps` job instead of filling gaps inline.
 - **By hand**, in the channel, by the broadcaster:
-  - `!backfill gaps` queues every open gap;
+  - `!backfill gaps` queues the channel's `gaps` job, or names the one already waiting;
   - `!backfill <duration>`, e.g. `!backfill 6h`, queues the range from that long ago until now;
   - `!backfill queue` lists the channel's queued and running jobs;
   - `!backfill cancel <id>` cancels a queued job.
@@ -177,7 +189,8 @@ a backfill can take minutes or days, so it becomes a **job in a queue**:
   `!backfill`, `!backfill on` and `!backfill off` keep their meaning.
 - **API** (`admin` area, like the setting itself): `GET /channels/{login}/backfill` lists the
   channel's jobs; `POST /channels/{login}/backfill` queues `{"from_ms", "to_ms"}` or `{"gaps": true}`;
-  `DELETE /channels/{login}/backfill/{job_id}` cancels a queued job. The admin page is a doomtp-web
+  `DELETE /channels/{login}/backfill/{job_id}` cancels a queued job. `{"gaps": true}` answers the
+  waiting `gaps` job when there is one, and no job when no gap is open. The admin page is a doomtp-web
   change on top of this.
 - **Consent** does not change: a channel with backfill off can queue nothing.
 - A range asked for by hand can overlap the live log; message ids keep a message from being stored

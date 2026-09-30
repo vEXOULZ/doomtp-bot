@@ -10,7 +10,7 @@ from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core import metrics
 from doomtp_bot.core.events import ChatCleared, ChatMessage, ChatNotification, MessageDeleted
 from doomtp_bot.core.events import UserMessagesCleared as UserCleared
-from doomtp_bot.history.backfill import BackfillService, Gap, find_gaps, to_events
+from doomtp_bot.history.backfill import OUT_OF_REACH, BackfillService, Gap, find_gaps, to_events
 from doomtp_bot.history.irc_parse import badges, parse_line, unescape_tag
 from doomtp_bot.history.provider import HistoryResponse
 from doomtp_bot.policy.repository import Actor
@@ -36,6 +36,13 @@ USERNOTICE = (
     "@msg-id=resub;msg-param-cumulative-months=12;system-msg=Alice\\ssubscribed\\sfor\\s12\\smonths;"
     "id=note-1;user-id=400;tmi-sent-ts=5000 :tmi.twitch.tv USERNOTICE #doomtp :thanks!"
 )
+
+
+def privmsg(at: int, message_id: str) -> str:
+    """A chat line received at `at`."""
+    return (
+        f"@id={message_id};user-id=400;rm-received-ts={at} :alice!alice@x PRIVMSG #doomtp :line {message_id}"
+    )
 
 
 # ── IRC parsing ────────────────────────────────────────────────────────────
@@ -197,6 +204,80 @@ async def test_a_gap_that_cannot_be_proven_covered_is_incomplete(
     assert metrics.BACKFILL_INCOMPLETE.value() - incomplete == 1
     async with await dbs.chatlog.execute("SELECT complete FROM backfill_runs") as cur:
         assert [r["complete"] for r in await cur.fetchall()] == [False]
+
+
+@dataclass
+class PagedProvider:
+    """Answers each `after_ms` with its own page."""
+
+    pages: dict[int, HistoryResponse]
+    calls: list[int | None] = field(default_factory=list)
+
+    async def fetch(
+        self, channel_login: str, *, after_ms: int | None = None, limit: int = 800
+    ) -> HistoryResponse:
+        self.calls.append(after_ms)
+        assert after_ms is not None
+        return self.pages[after_ms]
+
+
+async def service_with(dbs: Databases, provider: PagedProvider) -> BackfillService:
+    service = await backfill_for(dbs, FakeProvider())
+    service.provider = provider
+    return service
+
+
+async def test_one_request_fills_every_gap_it_reaches(dbs: Databases) -> None:
+    lines = (privmsg(1005, "a"), privmsg(3000, "b"), privmsg(50000, "between"), privmsg(80000, "c"))
+    provider = PagedProvider({0: HistoryResponse(lines=lines)})
+    service = await service_with(dbs, provider)
+    gaps = [Gap(CHANNEL_ID, CHANNEL_LOGIN, 70000, 90000), Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)]
+    result = await service.fill_many(gaps)
+    await service.writer.stop()
+
+    assert provider.calls == [0]  # from the oldest gap, less the grace
+    assert (result.fetched, result.inserted, result.complete) == (4, 3, True)
+    assert [(o.gap.from_ms, o.inserted, o.complete) for o in result.outcomes] == [
+        (1100, 2, True),
+        (70000, 1, True),
+    ]
+    async with await dbs.chatlog.execute("SELECT message_id FROM messages ORDER BY sent_at") as cur:
+        assert [r["message_id"] for r in await cur.fetchall()] == ["a", "b", "c"]  # not the chat between
+
+
+async def test_a_capped_page_carries_on_or_skips_to_the_next_gap(dbs: Databases) -> None:
+    provider = PagedProvider(
+        {
+            # Capped at 50000, inside the first gap: the next page carries on from there.
+            0: HistoryResponse(lines=(privmsg(1005, "a"), privmsg(50000, "b")), hit_limit=True),
+            # Capped at 61000, past the first gap: the second starts much later, so skip to it.
+            50000: HistoryResponse(lines=(privmsg(50000, "b"), privmsg(61000, "c")), hit_limit=True),
+            # History has nothing older than 95000 here: the second gap is out of reach.
+            195000: HistoryResponse(lines=(privmsg(205000, "d"),)),
+        }
+    )
+    service = await service_with(dbs, provider)
+    gaps = [Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 60000), Gap(CHANNEL_ID, CHANNEL_LOGIN, 200000, 300000)]
+    result = await service.fill_many(gaps)
+    await service.writer.stop()
+
+    assert provider.calls == [0, 50000, 195000]
+    assert [(o.gap.from_ms, o.inserted, o.complete, o.error) for o in result.outcomes] == [
+        (1100, 2, True, ""),  # a and b; c came after it
+        (200000, 1, False, OUT_OF_REACH),
+    ]
+    assert (result.fetched, result.inserted) == (4, 3)  # b once, though two pages had it
+
+
+async def test_a_page_that_brings_nothing_new_ends_the_fill(dbs: Databases) -> None:
+    capped = HistoryResponse(lines=(privmsg(1005, "a"),), hit_limit=True)
+    provider = PagedProvider({0: capped, 1005: capped})
+    service = await service_with(dbs, provider)
+    result = await service.fill_many([Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)])
+    await service.writer.stop()
+    assert provider.calls == [0, 1005]
+    ((outcome),) = result.outcomes
+    assert (outcome.complete, outcome.error) == (False, "")  # left open for the next job
 
 
 async def test_a_service_error_leaves_the_gap_open(dbs: Databases) -> None:

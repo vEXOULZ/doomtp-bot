@@ -273,7 +273,9 @@ async def queue_backfill(
         raise HTTPException(status_code=400, detail="send from_ms (and to_ms), or gaps: true")
     try:
         if body.gaps:
-            jobs = await queue.queue_gaps(settings.channel_id, caller.label)
+            # The channel's one job for its gaps; one already waiting is answered rather than refused.
+            job, _ = await queue.queue_gaps(settings.channel_id, caller.label)
+            jobs = [] if job is None else [job]
         else:
             assert body.from_ms is not None
             to_ms = now_ms() if body.to_ms is None else body.to_ms
