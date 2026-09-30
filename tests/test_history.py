@@ -134,12 +134,17 @@ async def test_short_interruptions_are_not_gaps(dbs: Databases) -> None:
 @dataclass
 class FakeProvider:
     response: HistoryResponse = field(default_factory=HistoryResponse)
-    calls: list[tuple[str, int | None, int]] = field(default_factory=list)
+    calls: list[tuple[str, int | None, int | None, int]] = field(default_factory=list)
 
     async def fetch(
-        self, channel_login: str, *, after_ms: int | None = None, limit: int = 800
+        self,
+        channel_login: str,
+        *,
+        after_ms: int | None = None,
+        before_ms: int | None = None,
+        limit: int = 800,
     ) -> HistoryResponse:
-        self.calls.append((channel_login, after_ms, limit))
+        self.calls.append((channel_login, after_ms, before_ms, limit))
         return self.response
 
 
@@ -164,7 +169,8 @@ async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None
 
     assert metrics.BACKFILL_INSERTED.value() - inserted == 3
     assert metrics.MESSAGES_LOGGED.value(source="recent-messages") - logged == 1  # one PRIVMSG among them
-    assert provider.calls == [(CHANNEL_LOGIN, 0, 800)]  # asked from 5s before the gap, clamped at 0
+    # From 5s before the gap (clamped at 0) to its end; both bounds are exclusive.
+    assert provider.calls == [(CHANNEL_LOGIN, 0, 6001, 800)]
     assert (outcome.fetched, outcome.inserted, outcome.complete) == (3, 3, True)
     async with await dbs.chatlog.execute(
         "SELECT message_id, source, raw_format, raw->>'line' AS line FROM messages"
@@ -207,76 +213,112 @@ async def test_a_gap_that_cannot_be_proven_covered_is_incomplete(
 
 
 @dataclass
-class PagedProvider:
-    """Answers each `after_ms` with its own page."""
+class ServiceLike:
+    """Answers the way recent-messages does: lines strictly between `after` and `before`, oldest first, and
+    when more match than the cap, the newest of them."""
 
-    pages: dict[int, HistoryResponse]
-    calls: list[int | None] = field(default_factory=list)
+    lines: list[tuple[int, str]]
+    cap: int = 800
+    calls: list[tuple[int | None, int | None]] = field(default_factory=list)
 
     async def fetch(
-        self, channel_login: str, *, after_ms: int | None = None, limit: int = 800
+        self,
+        channel_login: str,
+        *,
+        after_ms: int | None = None,
+        before_ms: int | None = None,
+        limit: int = 800,
     ) -> HistoryResponse:
-        self.calls.append(after_ms)
-        assert after_ms is not None
-        return self.pages[after_ms]
+        self.calls.append((after_ms, before_ms))
+        cap = min(limit, self.cap)
+        found = [
+            line
+            for at, line in sorted(self.lines)
+            if (after_ms is None or at > after_ms) and (before_ms is None or at < before_ms)
+        ][-cap:]
+        return HistoryResponse(tuple(found), hit_limit=len(found) >= cap)
 
 
-async def service_with(dbs: Databases, provider: PagedProvider) -> BackfillService:
+def chat(*at: int) -> list[tuple[int, str]]:
+    return [(t, privmsg(t, f"m{t}")) for t in at]
+
+
+async def service_with(dbs: Databases, provider: ServiceLike) -> BackfillService:
     service = await backfill_for(dbs, FakeProvider())
     service.provider = provider
     return service
 
 
-async def test_one_request_fills_every_gap_it_reaches(dbs: Databases) -> None:
-    lines = (privmsg(1005, "a"), privmsg(3000, "b"), privmsg(50000, "between"), privmsg(80000, "c"))
-    provider = PagedProvider({0: HistoryResponse(lines=lines)})
+async def stored(dbs: Databases) -> list[str]:
+    async with await dbs.chatlog.execute("SELECT message_id FROM messages ORDER BY sent_at") as cur:
+        return [r["message_id"] for r in await cur.fetchall()]
+
+
+async def test_a_range_older_than_the_newest_800_lines_is_filled(dbs: Databases) -> None:
+    """The service keeps the newest lines when more match: asked with a start alone, a range from months ago
+    got only this week's chat, none of it its own."""
+    provider = ServiceLike(chat(10000, 12000, 14000, *range(100000, 101000)))
+    service = await service_with(dbs, provider)
+    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 10000, 20000))
+    await service.writer.stop()
+
+    assert provider.calls == [(5000, 20001)]
+    assert (outcome.inserted, outcome.complete) == (3, True)
+    assert await stored(dbs) == ["m10000", "m12000", "m14000"]
+
+
+async def test_one_request_fills_every_gap_it_spans(dbs: Databases) -> None:
+    provider = ServiceLike(chat(1005, 3000, 50000, 80000, 95000))
     service = await service_with(dbs, provider)
     gaps = [Gap(CHANNEL_ID, CHANNEL_LOGIN, 70000, 90000), Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)]
     result = await service.fill_many(gaps)
     await service.writer.stop()
 
-    assert provider.calls == [0]  # from the oldest gap, less the grace
+    assert provider.calls == [(0, 90001)]  # from the oldest gap, less the grace, to the newest one's end
     assert (result.fetched, result.inserted, result.complete) == (4, 3, True)
     assert [(o.gap.from_ms, o.inserted, o.complete) for o in result.outcomes] == [
         (1100, 2, True),
         (70000, 1, True),
     ]
-    async with await dbs.chatlog.execute("SELECT message_id FROM messages ORDER BY sent_at") as cur:
-        assert [r["message_id"] for r in await cur.fetchall()] == ["a", "b", "c"]  # not the chat between
+    assert await stored(dbs) == ["m1005", "m3000", "m80000"]  # not the chat between them
 
 
-async def test_a_capped_page_carries_on_or_skips_to_the_next_gap(dbs: Databases) -> None:
-    provider = PagedProvider(
-        {
-            # Capped at 50000, inside the first gap: the next page carries on from there.
-            0: HistoryResponse(lines=(privmsg(1005, "a"), privmsg(50000, "b")), hit_limit=True),
-            # Capped at 61000, past the first gap: the second starts much later, so skip to it.
-            50000: HistoryResponse(lines=(privmsg(50000, "b"), privmsg(61000, "c")), hit_limit=True),
-            # History has nothing older than 95000 here: the second gap is out of reach.
-            195000: HistoryResponse(lines=(privmsg(205000, "d"),)),
-        }
-    )
+async def test_capped_pages_go_back_in_time_and_skip_the_chat_between_gaps(dbs: Databases) -> None:
+    provider = ServiceLike(chat(1005, 30000, 50000, 61000, 62000, 210000, 220000, 230000), cap=2)
     service = await service_with(dbs, provider)
     gaps = [Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 60000), Gap(CHANNEL_ID, CHANNEL_LOGIN, 200000, 300000)]
     result = await service.fill_many(gaps)
     await service.writer.stop()
 
-    assert provider.calls == [0, 50000, 195000]
-    assert [(o.gap.from_ms, o.inserted, o.complete, o.error) for o in result.outcomes] == [
-        (1100, 2, True, ""),  # a and b; c came after it
-        (200000, 1, False, OUT_OF_REACH),
+    assert provider.calls == [
+        (0, 300001),  # 220000 and 230000
+        (0, 220001),  # 210000, and 220000 again: lines at the cut may not all have fit
+        (0, 210001),  # 62000 reaches back past the second gap
+        (0, 60001),  # the end of the first gap, not 62001: 61000 is the live log's
+        (0, 30001),  # 1005 reaches back past the first gap
     ]
-    assert (result.fetched, result.inserted) == (4, 3)  # b once, though two pages had it
+    assert [(o.gap.from_ms, o.inserted, o.complete) for o in result.outcomes] == [
+        (1100, 3, True),
+        (200000, 3, True),
+    ]
+    assert (result.fetched, result.inserted) == (7, 6)  # 220000 and 30000 once, though two pages had each
+    assert await stored(dbs) == ["m1005", "m30000", "m50000", "m210000", "m220000", "m230000"]
 
 
-async def test_a_page_that_brings_nothing_new_ends_the_fill(dbs: Databases) -> None:
-    capped = HistoryResponse(lines=(privmsg(1005, "a"),), hit_limit=True)
-    provider = PagedProvider({0: capped, 1005: capped})
+async def test_history_that_starts_after_the_gap_is_out_of_reach(dbs: Databases) -> None:
+    provider = ServiceLike(chat(205000))
     service = await service_with(dbs, provider)
-    result = await service.fill_many([Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)])
+    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 200000, 300000))
     await service.writer.stop()
-    assert provider.calls == [0, 1005]
-    ((outcome),) = result.outcomes
+    assert (outcome.inserted, outcome.complete, outcome.error) == (1, False, OUT_OF_REACH)
+
+
+async def test_a_page_that_brings_nothing_older_ends_the_fill(dbs: Databases) -> None:
+    provider = FakeProvider(HistoryResponse(lines=(privmsg(1005, "a"),), hit_limit=True))
+    service = await backfill_for(dbs, provider)
+    outcome = await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 900, 6000))
+    await service.writer.stop()
+    assert [c[1:3] for c in provider.calls] == [(0, 6001), (0, 1006)]
     assert (outcome.complete, outcome.error) == (False, "")  # left open for the next job
 
 

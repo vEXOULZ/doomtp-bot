@@ -31,7 +31,12 @@ class HistoryResponse:
 
 
 class HistoryProvider(Protocol):
-    async def fetch(self, channel_login: str, *, after_ms: int | None, limit: int) -> HistoryResponse: ...
+    async def fetch(
+        self, channel_login: str, *, after_ms: int | None, before_ms: int | None = None, limit: int
+    ) -> HistoryResponse:
+        """Lines received strictly between `after_ms` and `before_ms`, oldest first. When more than `limit`
+        match, the newest `limit` of them."""
+        ...
 
 
 @dataclass
@@ -54,12 +59,19 @@ class RecentMessagesProvider:
             await self._session.close()
 
     async def fetch(
-        self, channel_login: str, *, after_ms: int | None = None, limit: int = DEFAULT_LIMIT
+        self,
+        channel_login: str,
+        *,
+        after_ms: int | None = None,
+        before_ms: int | None = None,
+        limit: int = DEFAULT_LIMIT,
     ) -> HistoryResponse:
         url = f"{self.base_url.rstrip('/')}/recent-messages/{channel_login.lower()}"
         params: dict[str, str] = {"limit": str(limit)}
         if after_ms is not None:
             params["after"] = str(after_ms)
+        if before_ms is not None:
+            params["before"] = str(before_ms)
         session = await self._get_session()
         try:
             async with session.get(url, params=params) as response:

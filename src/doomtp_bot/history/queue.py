@@ -1,8 +1,8 @@
 """Backfill as queued jobs (ADR-0024 §5).
 
 A `gaps` job fills every open gap of one channel, found when it runs, with as few requests as the service
-allows (`BackfillService.fill_many`): the service takes only a start, so one request from the oldest gap
-reaches the later ones too. A channel has at most one waiting, so startup, a reconnect and `!backfill gaps`
+allows (`BackfillService.fill_many`): one request spans all of them, from the oldest gap's start to the
+newest one's end. A channel has at most one waiting, so startup, a reconnect and `!backfill gaps`
 join it. A `range` job fills one range asked for by hand (`!backfill 6h`, the API). One worker takes the
 oldest queued job, so jobs never run side by side and a rate-limited provider sees one caller.
 

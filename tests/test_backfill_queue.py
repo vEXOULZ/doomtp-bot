@@ -35,7 +35,7 @@ async def test_a_range_is_queued_once_run_and_recorded(dbs: Databases) -> None:
     (done,) = await queue.drain()
     await queue.service.writer.stop()
     assert (done.id, done.state, done.fetched, done.inserted, done.complete) == (job.id, "done", 1, 1, True)
-    assert provider.calls == [(CHANNEL_LOGIN, 0, 800)]
+    assert provider.calls == [(CHANNEL_LOGIN, 0, 6001, 800)]
     assert await queue.run_next() is None
     # Finished, the same range can be asked for again.
     assert await queue.queue_range(CHANNEL_ID, 1100, 6000, "chat:1") is not None
@@ -87,7 +87,10 @@ async def test_startup_queues_one_job_for_the_gaps_and_the_job_a_stop_cut_short(
     await queue.drain()
     await queue.service.writer.stop()
     # Both gaps from one request: history from 1005 reaches back past the first one.
-    assert provider.calls == [(CHANNEL_LOGIN, 0, 800)] * 2  # the range, then the gaps
+    assert provider.calls == [
+        (CHANNEL_LOGIN, 0, 201, 800),
+        (CHANNEL_LOGIN, 0, 90001, 800),
+    ]  # the range, the gaps
     assert await queue.queue_startup() == []  # the gaps are filled now
     assert await queue.queue_gaps(CHANNEL_ID, "chat:1") == (None, False)
 
@@ -162,11 +165,16 @@ class HeldProvider(FakeProvider):
         self.answer = asyncio.Event()
 
     async def fetch(
-        self, channel_login: str, *, after_ms: int | None = None, limit: int = 800
+        self,
+        channel_login: str,
+        *,
+        after_ms: int | None = None,
+        before_ms: int | None = None,
+        limit: int = 800,
     ) -> HistoryResponse:
         self.asked.set()
         await self.answer.wait()
-        return await super().fetch(channel_login, after_ms=after_ms, limit=limit)
+        return await super().fetch(channel_login, after_ms=after_ms, before_ms=before_ms, limit=limit)
 
 
 async def test_stopping_lets_the_running_job_finish(dbs: Databases) -> None:
