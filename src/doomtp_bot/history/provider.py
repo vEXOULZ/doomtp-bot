@@ -121,7 +121,9 @@ class IvrLogsProvider:
                     "from": _rfc3339(from_ms),
                     "to": _rfc3339(to_ms),
                     "raw": "true",
-                    "limit": str(limit),
+                    # The service's `limit` is where the page ends, not its length: it answers lines
+                    # `offset` to `limit`, so `limit=1000&offset=1000` is an empty page (ADR-0008).
+                    "limit": str(offset + limit),
                     "offset": str(offset),
                 }
                 status, body = await self._get(f"/channelid/{channel_id}", params)
