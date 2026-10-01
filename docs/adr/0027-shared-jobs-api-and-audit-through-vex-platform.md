@@ -98,6 +98,21 @@ The jobs and audit routers come from vex-platform and are mounted under `/api/v2
 access rules as v1 (ADR-0017, ADR-0026). Their errors are problem+json, scoped to v2 so v1 keeps
 `{detail}`. v1 stays until its clients (the web editor, the archive's log reader) have moved.
 
+- **Jobs are an admin's.** `/api/v2/jobs` shows every kind and every channel, and its pause, resume and
+  retry act on any run, so it takes the admin area. Moderators keep the v1 backfill routes of the channels
+  they manage. `POST /api/v2/jobs` is off (no kind may be queued through it): a backfill is queued by
+  the v1 routes and `!backfill`, which check consent and the range first.
+- **The audit is scoped.** Any signed-in caller with the personal area can read `/api/v2/audit`; an admin
+  sees every row, a moderator the rows scoped to the channels they manage, anyone else none.
+- **Refusals are audited.** A write refused once the caller is known (403) or failing with a 5xx is a
+  `request.denied` or `request.failed` row, with the caller as actor. A request refused before that (no
+  key, a bad CSRF token) has no actor and isn't recorded.
+- **Every response has an `X-Request-ID`**, and `/api/v2/openapi.json` and `/api/v2/docs` describe just
+  v2, behind the personal area. The app-wide `/docs` stays.
+- **A known gap:** vex-platform v0.2.0 gives a run's scope only to its `job.enqueue` and `job.merge` rows;
+  `job.cancel` and the rest have no scope, so a moderator doesn't see them. A later vex-platform release
+  keeps the scope on the run.
+
 ### Metrics
 
 The Prometheus counters on `/metrics` (ADR-0015) stay. The backfill counters are incremented from the
@@ -118,7 +133,7 @@ runtime's hooks instead of from the queue.
 2. [x] `write_audit()`/`read_audit()` over `public.audit_log`, copy `bot.audit_log` at startup, and add
    `public.audit_log` to the backup.
 3. [x] The `chat_backfill` job kind replaces `BackfillQueue`'s worker.
-4. [ ] `/api/v2` jobs and audit routes, with problem+json.
+4. [x] `/api/v2` jobs and audit routes, with problem+json.
 5. [ ] The backfill counters come from the runtime's hooks.
 6. [ ] With the owner's confirmation, once the clients have moved: remove the v1 job routes and `BackfillQueue`,
    stop writing `bot.audit_log` and `chatlog.backfill_jobs`, then drop them.
