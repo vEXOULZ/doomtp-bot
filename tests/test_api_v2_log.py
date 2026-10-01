@@ -129,6 +129,55 @@ async def test_coverage_names_its_gaps_in_iso_times(
     assert [s["end_reason"] for s in body["sessions"]] == ["update", None]
     assert body["sessions"][1]["ended_at"] is None
 
+    await conn.execute(
+        "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, inserted, complete, provider, job_id, at)"
+        " VALUES (%s, %s, %s, 3, TRUE, 'ivr', 7, %s)",
+        (CHANNEL_ID, T + 60_000, T + 90_000, T + 100_000),
+    )
+    body = (await client.get(f"{LOG}/coverage", params=params, headers=auth(write_key))).json()
+    assert body["gaps"][1]["backfill"]["job_id"] == 7
+
     backwards = {"since": iso(T), "until": iso(T)}
     refused = await client.get(f"{LOG}/coverage", params=backwards, headers=auth(write_key))
     assert (refused.status_code, refused.json()["code"]) == (422, "invalid")
+
+
+class BadgesTwitch:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.fail = False
+
+    async def fetch_badges(self, channel_id: str) -> dict[str, list[dict[str, Any]]]:
+        self.calls.append(channel_id)
+        if self.fail:
+            raise RuntimeError("helix is down")
+        version = {"id": "1", "image_url_1x": "a", "image_url_2x": "b", "image_url_4x": "c", "title": "Sub"}
+        return {"channel": [{"set_id": "subscriber", "versions": [version]}], "global": []}
+
+
+async def test_badges_are_twitchs_cached_for_whoever_reads_the_log(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    app = app_and_keys[0]
+    twitch = app.state.twitch = BadgesTwitch()
+    url = f"/api/v2/channels/{CHANNEL_LOGIN}/badges"
+    first = await client.get(url)  # the fixture's log is public
+    assert first.status_code == 200
+    assert first.json()["channel"][0]["set_id"] == "subscriber" and first.json()["global"] == []
+    twitch.fail = True
+    assert (await client.get(url, headers=auth(write_key))).json() == first.json()
+    assert twitch.calls == [CHANNEL_ID]  # the second came from the cache
+
+    await app.state.policy.mutate(
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "public_log", False, Actor(None, "test"))
+    )
+    assert (await client.get(url)).status_code == 401
+
+
+async def test_badges_are_unavailable_when_twitch_fails_with_nothing_cached(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    app_and_keys[0].state.twitch = twitch = BadgesTwitch()
+    twitch.fail = True
+    refused = await client.get(f"/api/v2/channels/{CHANNEL_LOGIN}/badges", headers=auth(write_key))
+    assert (refused.status_code, refused.json()["code"]) == (503, "unavailable")
