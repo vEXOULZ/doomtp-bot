@@ -103,7 +103,10 @@ access rules as v1 (ADR-0017, ADR-0026). Their errors are problem+json, scoped t
   they manage. `POST /api/v2/jobs` is off (no kind may be queued through it): a backfill is queued by
   the v1 routes and `!backfill`, which check consent and the range first.
 - **The audit is scoped.** Any signed-in caller with the personal area can read `/api/v2/audit`; an admin
-  sees every row, a moderator the rows scoped to the channels they manage, anyone else none.
+  sees every row, a moderator the rows scoped to the channels they manage, and everyone their own rows
+  (vex-platform v0.4.0). `?actor=` takes `me` or a Twitch login, resolved to the user's id so rows
+  recorded by id alone still match. Each row comes back with `scope_name`, the channel's login, and a
+  missing `actor_login` is looked up, as v1's audit does.
 - **Refusals are audited.** A write refused once the caller is known (403) or failing with a 5xx is a
   `request.denied` or `request.failed` row, with the caller as actor. A request refused before that (no
   key, a bad CSRF token) has no actor and isn't recorded.

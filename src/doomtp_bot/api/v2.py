@@ -10,7 +10,9 @@ identified, or one that failed, is audited (`request.denied`, `request.failed`).
                           followed (`/jobs/{id}/events`), paused, resumed, retried and cancelled.
     /api/v2/job-kinds
     /api/v2/audit         the shared audit log: an admin sees every row, a moderator the rows of the
-                          channels they manage (as GET /api/v1/audit), anyone else none
+                          channels they manage (as GET /api/v1/audit), and everyone their own;
+                          `actor=me` or `actor=<login>` (found through Twitch), and each row's
+                          `scope_name` (the channel's login) and missing `actor_login` filled in
     /api/v2/channels/{login}/log, /log/coverage
                           the chat log as one timeline, as v1's (`v2_log.py`): the channel's moderators,
                           or anyone while its log is public
@@ -34,6 +36,7 @@ from vex_platform.jobs import JobRuntime
 from vex_platform.jobs.router import jobs_router
 
 from doomtp_bot.api.access import Area, Caller, authenticate, check_area, platform_actor
+from doomtp_bot.api.routes.data import _login_of
 from doomtp_bot.api.v2_log import log_router
 from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
 
@@ -69,6 +72,27 @@ async def visible_scopes(request: Request) -> Sequence[str] | None:
     return [c.channel_id for c in policy.channels() if caller.manages(c.login)]
 
 
+async def find_actor(request: Request, login: str) -> tuple[str, str] | None:
+    """`?actor=<login>` as the Twitch user it names, so their rows from before the bot stored logins match
+    too. None when Twitch doesn't know them (or can't say): the login then matches `actor_login`."""
+    twitch = getattr(request.app.state, "twitch", None)
+    try:
+        user = await twitch.resolve_user(login) if twitch is not None else None
+    except Exception:  # Twitch being down must not take the list with it
+        user = None
+    return None if user is None else ("user", user["id"])
+
+
+async def audit_labels(request: Request, rows: list[dict[str, Any]]) -> None:
+    """Each row's channel login as `scope_name`, and a user's login where the row has none (the bot
+    records ids), as GET /api/v1/audit's `channel_login` and `actor_login`."""
+    known = {c.channel_id: c.login for c in request.app.state.policy.channels()}
+    for row in rows:
+        row["scope_name"] = known.get(row["scope"] or "")
+        if row["actor_kind"] == "user" and not row["actor_login"]:
+            row["actor_login"] = await _login_of(request, row["actor_id"], known)
+
+
 def mount(app: FastAPI, jobs: JobRuntime) -> None:
     """Add /api/v2 to `app`, over the runtime's runs and, through its pool, the shared audit table."""
     install_error_handlers(app, PREFIX)
@@ -85,7 +109,14 @@ def mount(app: FastAPI, jobs: JobRuntime) -> None:
     v2 = APIRouter(prefix=PREFIX)
     v2.include_router(jobs_router(jobs, admin, enqueue_kinds=frozenset()))
     v2.include_router(
-        audit_router(jobs.pool.connection, personal, table=AUDIT_TABLE, visible_scopes=visible_scopes)
+        audit_router(
+            jobs.pool.connection,
+            personal,
+            table=AUDIT_TABLE,
+            visible_scopes=visible_scopes,
+            find_actor=find_actor,
+            labels=audit_labels,
+        )  # fmt: skip
     )
     v2.include_router(log_router())
     schema = APIRouter()  # v2 alone, for its own OpenAPI

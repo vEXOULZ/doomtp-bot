@@ -6,8 +6,12 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from vex_platform.actor import Actor
+from vex_platform.audit import psycopg as audit_pg
+from vex_platform.audit.model import AuditEntry
 
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
 from doomtp_bot.history.jobs import KIND
 from tests.test_api_data import (  # noqa: F401  (fixtures)
     CHANNEL_ID,
@@ -17,7 +21,7 @@ from tests.test_api_data import (  # noqa: F401  (fixtures)
     client,
     write_key,
 )
-from tests.test_api_moderator import MOD_ID, OTHER_ID, mod  # noqa: F401  (fixtures)
+from tests.test_api_moderator import MOD_ID, OTHER_ID, OTHER_LOGIN, mod  # noqa: F401  (fixtures)
 
 V2 = "/api/v2"
 
@@ -100,13 +104,49 @@ async def test_a_moderator_reads_their_channels_audit_but_not_the_jobs(
     await runtime.cancel(1)
 
     rows = (await client.get(f"{V2}/audit")).json()["items"]
-    # Their channel's rows only, the cancel too: not another channel's, nor a global one, nor the refusal
-    # (no channel).
+    # Their channel's rows, the cancel too, and their own refusal (no channel): not another channel's, nor
+    # a global one.
     assert [(r["action"], r["scope"]) for r in rows] == [
         ("job.cancel", CHANNEL_ID),
+        ("request.denied", None),
         ("job.enqueue", CHANNEL_ID),
     ]
     assert (await client.get(f"{V2}/openapi.json")).status_code == 200
+
+
+async def test_audit_finds_actors_and_names_channels_and_logins(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str, mod: dict[str, str]
+) -> None:
+    """`actor=me` or a login (found through Twitch), and v1's `channel_login` and `actor_login` as
+    `scope_name` and a filled-in `actor_login`."""
+    pool = app_and_keys[0].state.backfill.runtime.pool
+    target = "command:v2-audit-test"  # committed on the runtime's pool: deleted again below
+
+    async def rows(headers: dict[str, str], **params: str) -> list[tuple[Any, ...]]:
+        response = await client.get(f"{V2}/audit", params={"target": target, **params}, headers=headers)
+        assert response.status_code == 200, response.text
+        return [(r["actor_id"], r["actor_login"], r["scope_name"]) for r in response.json()["items"]]
+
+    async with pool.connection() as conn:
+        for actor, scope in [
+            (Actor("user", "200", None, "chat"), CHANNEL_ID),  # friend, recorded by id only
+            (Actor("user", "400", "alice", "web"), OTHER_ID),
+            (Actor("user", MOD_ID, "mod", "web"), OTHER_ID),
+        ]:
+            await audit_pg.record(conn, AuditEntry("cc.edit", actor, target, scope=scope), table=AUDIT_TABLE)
+    try:
+        admin = auth(write_key)
+        assert await rows(admin, actor="friend") == [("200", "friend", CHANNEL_LOGIN)]
+        assert await rows(admin, actor="ALICE") == [("400", "alice", OTHER_LOGIN)]
+        assert await rows(admin, actor="nobody") == []
+        assert await rows(admin, actor="me") == []  # the key wrote none of them
+        # The moderator: their channel's row and their own, not alice's in the other channel.
+        assert await rows({}) == [(MOD_ID, "mod", OTHER_LOGIN), ("200", "friend", CHANNEL_LOGIN)]
+        assert await rows({}, actor="me") == [(MOD_ID, "mod", OTHER_LOGIN)]
+        assert await rows({}, actor="alice") == []
+    finally:
+        async with pool.connection() as conn:
+            await conn.execute(f"DELETE FROM {AUDIT_TABLE} WHERE target = %s", (target,))
 
 
 async def test_a_refused_write_is_audited_as_the_caller(
