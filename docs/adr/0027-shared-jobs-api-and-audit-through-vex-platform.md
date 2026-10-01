@@ -109,9 +109,9 @@ access rules as v1 (ADR-0017, ADR-0026). Their errors are problem+json, scoped t
   key, a bad CSRF token) has no actor and isn't recorded.
 - **Every response has an `X-Request-ID`**, and `/api/v2/openapi.json` and `/api/v2/docs` describe just
   v2, behind the personal area. The app-wide `/docs` stays.
-- **A known gap:** vex-platform v0.2.0 gives a run's scope only to its `job.enqueue` and `job.merge` rows;
-  `job.cancel` and the rest have no scope, so a moderator doesn't see them. A later vex-platform release
-  keeps the scope on the run.
+- **A run keeps its channel.** vex-platform v0.2.0 gave a run's scope only to its `job.enqueue` and
+  `job.merge` rows, so a moderator never saw a cancel. v0.3.0 keeps it in `job_runs.scope` (bot revision
+  0012) and gives it to every row about the run. Runs queued before 0012 keep a NULL scope.
 
 ### Metrics
 
