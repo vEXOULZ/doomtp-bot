@@ -82,6 +82,9 @@ BACKFILL_INSERTED = Counter(
 BACKFILL_INCOMPLETE = Counter(
     "backfill_incomplete_total", "Backfill runs that could not cover their whole gap."
 )
+BACKFILL_JOBS = Counter(
+    "backfill_jobs_total", "What happened to chat_backfill jobs, from the job runtime's hooks.", ("event",)
+)
 RUNS = Counter("runs_total", "Command runs finished, by exit code.", ("code",))
 RUNS_CANCELLED = Counter("runs_cancelled_total", "Runs whose writes were discarded, by why.", ("reason",))
 COOLDOWN_REJECTIONS = Counter(

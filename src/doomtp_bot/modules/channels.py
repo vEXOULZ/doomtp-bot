@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from vex_platform.actor import Actor as JobActor
+
 from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelBanned
-from doomtp_bot.history.queue import GAPS, OPEN_STATES, BackfillJob, BackfillQueue, BackfillRefused
+from doomtp_bot.history.jobs import GAPS, OPEN_STATES, BackfillJob, BackfillJobs, BackfillRefused
 from doomtp_bot.modules._common import actor, rank, sign_of, user_arg
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, BROADCASTER_RANK
 from doomtp_bot.runtime.context import Args, CommandContext
@@ -177,7 +179,7 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
             f" {ctx.channel.prefix}backfill on|off, or gaps, 6h, queue, cancel.",
             {"enabled": settings.history_backfill, "provider": where},
         )
-    queue: BackfillQueue | None = ctx.exec.services.get("backfill")
+    queue: BackfillJobs | None = ctx.exec.services.get("backfill")
     if action == "queue":
         if queue is None:
             return Result.failure(Code.FAIL, "the backfill queue isn't running")
@@ -196,9 +198,14 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
     if queue is None:
         return Result.failure(Code.FAIL, "the backfill queue isn't running")
     requested_by = f"chat:{ctx.invoker.id if ctx.invoker else '?'}"
+    by = (
+        JobActor("user", ctx.invoker.id, ctx.invoker.login, "chat")
+        if ctx.invoker
+        else JobActor("system", via="chat")
+    )
     try:
         if action == "gaps":
-            gaps_job, created = await queue.queue_gaps(ctx.channel.id, requested_by)
+            gaps_job, created = await queue.queue_gaps(ctx.channel.id, requested_by, actor=by)
             if gaps_job is None:
                 return Result.success("no gaps to fill", {"jobs": []})
             verb = "queued" if created else "already queued as"
@@ -208,9 +215,11 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
             job_id = args.get("job") or ""
             if not job_id.isdigit():
                 raise CommandError(f"usage: {ctx.channel.prefix}backfill cancel <job>")
-            cancelled = await queue.cancel(ctx.channel.id, int(job_id))
+            cancelled = await queue.cancel(ctx.channel.id, int(job_id), actor=by)
             if cancelled is None:
-                return Result.failure(Code.FAIL, f"#{job_id} isn't queued here")
+                return Result.failure(Code.FAIL, f"#{job_id} isn't queued or running here")
+            if cancelled.state != "cancelled":  # still running: it stops before its next request
+                return Result.success(f"cancelling #{job_id}", {"job": cancelled.to_json()})
             return Result.success(f"cancelled #{job_id}", {"job": cancelled.to_json()})
         try:
             seconds = int(await convert(action, "duration"))
@@ -219,7 +228,7 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
         if seconds <= 0:
             raise CommandError("the duration must be more than 0")
         now = now_ms()
-        job = await queue.queue_range(ctx.channel.id, now - seconds * 1000, now, requested_by)
+        job = await queue.queue_range(ctx.channel.id, now - seconds * 1000, now, requested_by, actor=by)
     except BackfillRefused as exc:
         return Result.failure(Code.FAIL, str(exc))
     if job is None:

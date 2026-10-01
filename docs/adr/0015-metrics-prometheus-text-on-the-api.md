@@ -111,6 +111,7 @@ sensitive than `/readyz`'s (no channel names at all).
 | `messages_logged_total` | `source` (`eventsub`, `ivr-logs`) | `ChatLogWriter`, per row Postgres inserted |
 | `backfill_inserted_total` | — | `BackfillService.fill` |
 | `backfill_incomplete_total` | — | `BackfillService.fill`, per run marked incomplete |
+| `backfill_jobs_total` | `event` (`started`, `paused`, `retrying`, `requeued`, `succeeded`, `failed`, `cancelled`) | the job runtime's hooks, for `chat_backfill` runs (ADR-0027) |
 | `runs_total` | `code` | `Runtime.run`, per finished run (not `!explain`'s dry runs) |
 | `runs_cancelled_total` | `reason` (`moderated`, `timeout`) | `Runtime.run`, when a run's writes are discarded |
 | `cooldown_rejections_total` | `tier` | the executor, when a command it reached is on cooldown (code 128) |

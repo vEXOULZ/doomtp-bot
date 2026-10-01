@@ -15,11 +15,15 @@ from __future__ import annotations
 import asyncio
 import itertools
 import os
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import psycopg
 import pytest
+from vex_platform.jobs import JobRuntime, Registry
 
+from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
+from doomtp_bot.history.backfill import BackfillService
+from doomtp_bot.history.jobs import BackfillJobs, register
 from doomtp_bot.storage.db import Databases, configure_event_loop
 
 # Before pytest-asyncio builds a loop: on Windows the default one is a loop psycopg refuses to use.
@@ -162,3 +166,56 @@ def empty_database() -> Iterator[str]:
     finally:
         with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
             admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+MakeBackfillJobs = Callable[..., Awaitable[BackfillJobs]]
+
+
+async def _empty_jobs(dsn: str) -> None:
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        await conn.execute(
+            "TRUNCATE jobs.job_runs, jobs.job_run_events, jobs.procrastinate_jobs, jobs.procrastinate_workers"
+            " RESTART IDENTITY CASCADE"
+        )
+        # DELETE, not TRUNCATE: a test's own open transaction may hold the table (`dbs`). The rows the
+        # runtime and /api/v2's refusals wrote on their own connections, so committed.
+        await conn.execute(
+            f"DELETE FROM {AUDIT_TABLE} WHERE job_run_id IS NOT NULL OR action IN ('request.denied', 'request.failed')"
+        )
+
+
+@pytest.fixture
+async def make_backfill_jobs(database_url: str) -> AsyncIterator[MakeBackfillJobs]:
+    """`await make_backfill_jobs(service, start=False)`: `BackfillJobs` over a job runtime of its own (ADR-0027).
+
+    The runtime keeps its own pool, so what it writes is committed, unlike the `dbs` fixture's: the job
+    tables, and the audit rows its actions wrote, are emptied before and after the test. Ids start at 1.
+    `start` runs the worker; without it runs are only queued.
+    """
+    await _empty_jobs(database_url)
+    made: list[JobRuntime] = []
+
+    async def make(service: BackfillService, *, start: bool = False) -> BackfillJobs:
+        registry = Registry()
+        register(registry, service)
+        runtime = JobRuntime(
+            registry,
+            database_url,
+            audit_table=AUDIT_TABLE,
+            concurrency=1,
+            max_concurrency=1,
+            poll_interval=0.1,
+            shutdown_timeout=2.0,
+        )
+        await runtime.open()
+        made.append(runtime)
+        if start:
+            await runtime.start()
+        return BackfillJobs(service, runtime)
+
+    try:
+        yield make
+    finally:
+        for runtime in made:
+            await runtime.close()
+        await _empty_jobs(database_url)

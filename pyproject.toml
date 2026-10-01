@@ -1,6 +1,6 @@
 [project]
 name = "doomtp-bot"
-version = "0.6.2"
+version = "0.7.0"
 description = "Multi-channel Twitch chat bot with a composable command language"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,9 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "structlog>=24.1",
+    # Shared job runtime, /api/v2 conventions and audit log with twitch-archive (ADR-0027). A tarball, since
+    # the image has no git.
+    "vex-platform @ https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.4.0.tar.gz",
     # Moderators write regexes that run on every chat line; `re` can't be stopped once it backtracks.
     "regex>=2024.11.6",
     # Windows has no system timezone database, and cron schedules run in the channel's own timezone.
@@ -40,6 +43,10 @@ doomtp-bot = "doomtp_bot.__main__:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# vex-platform is a tarball URL, not a PyPI release (ADR-0027).
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doomtp_bot"]

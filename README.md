@@ -470,7 +470,8 @@ which the scripts and a bare `docker compose` both read, so a rollback keeps the
 The pages, public and admin, are [doomtp-web](https://github.com/vEXOULZ/doomtp-web): a separate Vue site
 over this bot's JSON API, served from the same hostname (ADR-0016; step 8 above). The bot serves the API,
 `/auth/*`, `/static/*` (the expression editor and the railroad diagrams the site loads) and Swagger at
-`/docs`, and no pages of its own. Anything the site needs that the API doesn't return is added to the API
+`/docs`, and no pages of its own. `/api/v2` (ADR-0027) holds the jobs and audit routes shared with the
+archive, and the chat log in v2's shape, with Swagger of its own at `/api/v2/docs`. Anything the site needs that the API doesn't return is added to the API
 here.
 
 To work on the site without Twitch, run `scripts/dev_api.py` here. It serves the same API with made-up
@@ -488,15 +489,16 @@ came through a proxy the bot doesn't trust is never local, since its address is 
 ## Backups
 
 The `bot` schema holds the OAuth refresh tokens and every channel's configuration; the `chatlog` schema
-holds the message history. One script dumps both, using `pg_dump`, which takes its snapshot inside a
-single transaction and is therefore safe to run while the bot is writing:
+holds the message history; `public.audit_log` holds who changed what (ADR-0027). One script dumps all
+three, using `pg_dump`, which takes its snapshot inside a single transaction and is therefore safe to run
+while the bot is writing:
 
 ```bash
 docker compose --profile tools run --rm backup
 ```
 
-Each run writes `<schema>-<timestamp>.dump` into `data/backups/` and keeps the newest 7 of each
-(`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
+Each run writes `bot-`, `chatlog-` and `audit-<timestamp>.dump` into `data/backups/` and keeps the newest
+7 of each (`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
 grows without bound do not have to share a retention policy. For a nightly copy, add it to the host's
 crontab (`crontab -e`):
 
