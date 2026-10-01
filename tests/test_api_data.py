@@ -107,6 +107,11 @@ async def app_and_keys(
     await http_hosts.reload()
     variable_access = VariableAccessPolicy(policy, dbs.bot)
     await variable_access.reload()
+    backfill = await make_backfill_jobs(
+        BackfillService(
+            conn=dbs.chatlog, writer=ChatLogWriter(dbs.chatlog), provider=FakeProvider(), policy=policy
+        )
+    )
     app = create_app(
         health,
         None,
@@ -127,16 +132,10 @@ async def app_and_keys(
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,
             "http_hosts": http_hosts,
-            "backfill": await make_backfill_jobs(
-                BackfillService(
-                    conn=dbs.chatlog,
-                    writer=ChatLogWriter(dbs.chatlog),
-                    provider=FakeProvider(),
-                    policy=policy,
-                )
-            ),
+            "backfill": backfill,
         },
         admin_password=PASSWORD,
+        jobs=backfill.runtime,
     )
     app.state.customcmds_service = customcmds
     app.state.chatlog = dbs.chatlog

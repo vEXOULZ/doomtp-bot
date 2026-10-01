@@ -436,6 +436,7 @@ async def run(settings: Settings) -> None:
         },
         admin_password=settings.admin_password_value(),
         admin_password_networks=settings.admin_password_networks,
+        jobs=jobs,
     )
     server = uvicorn.Server(
         uvicorn.Config(

@@ -16,9 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import Depends, HTTPException, Request
+from vex_platform.actor import VIAS, Via
+from vex_platform.actor import Actor as PlatformActor
 
 from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, Session
 from doomtp_bot.policy.repository import Actor
@@ -89,6 +91,16 @@ class Caller:
         badges = frozenset({role}) if role is not None else frozenset[str]()
         chatter = policy.build_chatter(settings.channel_id, self.user_id, self.login or "", badges=badges)
         return int(chatter.rank)
+
+
+def platform_actor(caller: Caller) -> PlatformActor:
+    """The caller as vex-platform names actors, for the job runtime and the shared audit table (ADR-0027)."""
+    via = cast(Via, caller.actor.via if caller.actor.via in VIAS else "api")
+    if caller.user_id is not None:
+        return PlatformActor("user", caller.user_id, caller.login, via)
+    if caller.label.startswith("key:"):
+        return PlatformActor("api_key", caller.label.removeprefix("key:"), via=via)
+    return PlatformActor("user", None, caller.label, via)  # the admin password's session
 
 
 def caller_for_session(session: Session) -> Caller:

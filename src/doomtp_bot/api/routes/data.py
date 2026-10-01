@@ -19,12 +19,10 @@ Writes are audited as the caller: `via="api"`, or `via="web"` with the user's id
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from vex_platform.actor import VIAS, Via
-from vex_platform.actor import Actor as JobActor
 
 from doomtp_bot.api.access import (
     ADMIN_READ,
@@ -43,6 +41,7 @@ from doomtp_bot.api.access import (
     check_area,
     check_setting_role,
     current_session,
+    platform_actor,
 )
 from doomtp_bot.api.routes.session import client_address
 from doomtp_bot.audit.log import read_audit
@@ -256,16 +255,6 @@ def _backfill(request: Request) -> BackfillJobs:
     return _state(request, "backfill")  # type: ignore[no-any-return]
 
 
-def _job_actor(caller: Caller) -> JobActor:
-    """Who queued or cancelled a job, as the runtime records it (ADR-0027)."""
-    via = cast(Via, caller.actor.via if caller.actor.via in VIAS else "api")
-    if caller.user_id is not None:
-        return JobActor("user", caller.user_id, caller.login, via)
-    if caller.label.startswith("key:"):
-        return JobActor("api_key", caller.label.removeprefix("key:"), via=via)
-    return JobActor("user", None, caller.label, via)  # the admin password's session
-
-
 @router.get("/channels/{login}/backfill")
 async def list_backfill_jobs(
     request: Request, login: str, limit: int = Query(20, ge=1, le=100), caller: Caller = READ
@@ -287,13 +276,13 @@ async def queue_backfill(
     try:
         if body.gaps:
             # The channel's one job for its gaps; one already waiting is answered rather than refused.
-            job, _ = await queue.queue_gaps(settings.channel_id, caller.label, actor=_job_actor(caller))
+            job, _ = await queue.queue_gaps(settings.channel_id, caller.label, actor=platform_actor(caller))
             jobs = [] if job is None else [job]
         else:
             assert body.from_ms is not None
             to_ms = now_ms() if body.to_ms is None else body.to_ms
             job = await queue.queue_range(
-                settings.channel_id, body.from_ms, to_ms, caller.label, actor=_job_actor(caller)
+                settings.channel_id, body.from_ms, to_ms, caller.label, actor=platform_actor(caller)
             )
             if job is None:
                 raise HTTPException(status_code=409, detail="that range is already queued")
@@ -310,7 +299,7 @@ async def cancel_backfill(
     """A queued job is cancelled at once; a running one stops before its next request, and is answered
     still `running` if that takes more than a moment."""
     settings = _channel(request, login)
-    job = await _backfill(request).cancel(settings.channel_id, job_id, actor=_job_actor(caller))
+    job = await _backfill(request).cancel(settings.channel_id, job_id, actor=platform_actor(caller))
     if job is None:
         raise HTTPException(
             status_code=409, detail=f"job {job_id} isn't queued or running in {settings.login}"

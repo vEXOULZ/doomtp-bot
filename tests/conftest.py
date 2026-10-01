@@ -177,8 +177,11 @@ async def _empty_jobs(dsn: str) -> None:
             "TRUNCATE jobs.job_runs, jobs.job_run_events, jobs.procrastinate_jobs, jobs.procrastinate_workers"
             " RESTART IDENTITY CASCADE"
         )
-        # DELETE, not TRUNCATE: a test's own open transaction may hold the table (`dbs`).
-        await conn.execute(f"DELETE FROM {AUDIT_TABLE} WHERE job_run_id IS NOT NULL")
+        # DELETE, not TRUNCATE: a test's own open transaction may hold the table (`dbs`). The rows the
+        # runtime and /api/v2's refusals wrote on their own connections, so committed.
+        await conn.execute(
+            f"DELETE FROM {AUDIT_TABLE} WHERE job_run_id IS NOT NULL OR action IN ('request.denied', 'request.failed')"
+        )
 
 
 @pytest.fixture
