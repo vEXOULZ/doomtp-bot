@@ -70,9 +70,8 @@ async def test_an_admin_follows_and_cancels_a_backfill_run(client: httpx.AsyncCl
 
     audit = await client.get(f"{V2}/audit", params={"action": "job."}, headers=auth(write_key))
     rows = [(r["action"], r["job_run_id"], r["actor_kind"], r["scope"]) for r in audit.json()["items"]]
-    # Only the enqueue names the channel: vex-platform v0.2.0 doesn't keep a run's scope for later rows.
     assert rows == [
-        ("job.cancel", first["id"], "api_key", None),
+        ("job.cancel", first["id"], "api_key", CHANNEL_ID),
         ("job.enqueue", second["id"], "api_key", CHANNEL_ID),
         ("job.enqueue", first["id"], "api_key", CHANNEL_ID),
     ]
@@ -98,10 +97,15 @@ async def test_a_moderator_reads_their_channels_audit_but_not_the_jobs(
     denied = await client.post(f"{V2}/jobs/1/cancel", headers=mod)
     assert denied.status_code == 403 and denied.json()["code"] == "forbidden"
     assert (await runtime.get(1)).state == "queued"
+    await runtime.cancel(1)
 
     rows = (await client.get(f"{V2}/audit")).json()["items"]
-    # Their channel's rows only: not another channel's, nor a global one, nor the refusal (no channel).
-    assert [(r["action"], r["scope"]) for r in rows] == [("job.enqueue", CHANNEL_ID)]
+    # Their channel's rows only, the cancel too: not another channel's, nor a global one, nor the refusal
+    # (no channel).
+    assert [(r["action"], r["scope"]) for r in rows] == [
+        ("job.cancel", CHANNEL_ID),
+        ("job.enqueue", CHANNEL_ID),
+    ]
     assert (await client.get(f"{V2}/openapi.json")).status_code == 200
 
 
