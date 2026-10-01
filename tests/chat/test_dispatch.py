@@ -20,7 +20,6 @@ from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.history.backfill import BackfillService
-from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.moderation.index import ModerationIndex
 from doomtp_bot.modules import builtin_registry
@@ -33,6 +32,7 @@ from doomtp_bot.runtime.registry import command
 from doomtp_bot.runtime.result import Result
 from doomtp_bot.runtime.spec import CommandSpec
 from doomtp_bot.storage.db import Databases
+from tests.conftest import MakeBackfillJobs
 from tests.fakes import policy_with_channels
 from tests.runtime.helpers import ping
 from tests.test_history import FakeProvider
@@ -119,7 +119,7 @@ class Harness:
 
 
 @pytest.fixture
-async def h(dbs: Databases) -> AsyncIterator[Harness]:
+async def h(dbs: Databases, make_backfill_jobs: MakeBackfillJobs) -> AsyncIterator[Harness]:
     gate.clear()
     policy = await policy_with_channels(dbs.bot, bot_owner_ids=frozenset({"1"}))
     writer = ChatLogWriter(dbs.chatlog, flush_interval=0.01)
@@ -140,7 +140,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
             "customcmds": commands,
             "connect_url": CONNECT_URL,
             "history": SimpleNamespace(base_url="https://history.example/api"),
-            "backfill": BackfillQueue(
+            "backfill": await make_backfill_jobs(
                 BackfillService(conn=dbs.chatlog, writer=writer, provider=FakeProvider(), policy=policy)
             ),
         },
@@ -288,7 +288,7 @@ async def test_a_403_on_a_send_leaves_the_channel_and_flags_it(h: Harness) -> No
     ]
     assert await h.rows("SELECT dropped_reason FROM outbound_msgs") == [(BANNED,)]
     async with await h.dbs.bot.execute(
-        "SELECT actor_user_id, via, after FROM audit_log WHERE action = 'channel.set.status'"
+        "SELECT actor_id AS actor_user_id, via, after FROM public.audit_log WHERE action = 'channel.set.status'"
         " ORDER BY id DESC LIMIT 1"
     ) as cur:
         row = await cur.fetchone()
@@ -453,7 +453,7 @@ async def test_the_broadcaster_queues_and_cancels_backfill_jobs(h: Harness) -> N
     assert await reply("bob", "!backfill queue") == "#1 queued, the last 6h; #2 queued, the last 1h"
     assert await reply("bob", "!backfill cancel 1") == "only the broadcaster can change backfill"
     assert await reply("doomtp", "!backfill cancel 1") == "cancelled #1"
-    assert await reply("doomtp", "!backfill cancel 1") == "#1 isn't queued here"
+    assert await reply("doomtp", "!backfill cancel 1") == "#1 isn't queued or running here"
     assert await reply("doomtp", "!backfill queue") == "#2 queued, the last 1h"
     assert (await reply("doomtp", "!backfill soon")).endswith(
         "expected on, off, gaps, queue, cancel <job>, or a duration like 6h"

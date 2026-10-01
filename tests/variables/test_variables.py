@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -312,7 +311,7 @@ async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
     assert await h.value("channel.chatter", CHANNEL_ID, "400", name="points") is MISSING
     await h.reply("alice", "!var set chatter.location here")
     assert await h.reply("alice", "!var del chatter.location") == "deleted chatter.location"
-    async with await h.dbs.bot.execute("SELECT action, target FROM audit_log ORDER BY id") as cur:
+    async with await h.dbs.bot.execute("SELECT action, target FROM public.audit_log ORDER BY id") as cur:
         audited = [(r["action"], r["target"]) for r in await cur.fetchall()]
     assert ("variable.delete", "channel.chatter.points@400") in audited  # admin reset of another user's row
     assert all(not t.startswith("chatter.") for _, t in audited)  # own chatter writes aren't audited
@@ -332,8 +331,7 @@ async def test_channel_writes_audited_with_values(h: Harness) -> None:
     await h.reply("mod", "!var set channel.deaths 3")
     await h.reply("mod", "!var incr channel.deaths")
     async with await h.dbs.bot.execute(
-        "SELECT action, before, after FROM audit_log WHERE target = 'channel.deaths'"
+        "SELECT action, before, after FROM public.audit_log WHERE target = 'channel.deaths'"
     ) as cur:
         rows = [(r["action"], r["before"], r["after"]) for r in await cur.fetchall()]
-    assert rows == [("variable.set", None, "3"), ("variable.incr", "3", "4")]
-    assert json.loads(rows[1][2]) == 4
+    assert rows == [("variable.set", None, 3), ("variable.incr", 3, 4)]

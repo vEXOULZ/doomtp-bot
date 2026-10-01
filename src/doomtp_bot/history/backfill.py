@@ -7,7 +7,7 @@ listeners, triggers or variables** — they go to the log only, marked `source='
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final
 
@@ -32,6 +32,7 @@ log = structlog.get_logger(__name__)
 GAP_GRACE_MS = 5_000  # ADR-0008: ask from 5s before the gap, so nothing falls between the cracks
 MIN_GAP_MS = 5_000  # shorter interruptions aren't worth a request
 PROVIDER: Final = "ivr-logs"  # `backfill_runs.provider`, and the `source` of what it brings in
+STOPPED: Final = "stopped"  # the fill was asked to stop: a cancel, or the bot shutting down
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,10 @@ class FillResult:
     @property
     def complete(self) -> bool:
         return all(o.complete for o in self.outcomes)
+
+    @property
+    def stopped(self) -> bool:
+        return self.error == STOPPED
 
 
 def gaps_between(sessions: Sequence[tuple[int, int | None]]) -> list[tuple[int, int]]:
@@ -190,8 +195,8 @@ class BackfillService:
         return next((login for cid, login in self.enabled_channels() if cid == channel_id), None)
 
     async def open_gaps(self, channel_id: str, channel_login: str) -> list[Gap]:
-        """Coverage gaps no run has filled completely. `BackfillQueue` fills them in one job per channel
-        (ADR-0024 §5)."""
+        """Coverage gaps no run has filled completely. A `chat_backfill` job fills them, one per channel
+        (ADR-0024 §5, ADR-0027)."""
         filled = await self._filled_gaps(channel_id)
         return [
             gap
@@ -203,7 +208,13 @@ class BackfillService:
         (outcome,) = (await self.fill_many([gap])).outcomes
         return outcome
 
-    async def fill_many(self, gaps: Sequence[Gap]) -> FillResult:
+    async def fill_many(
+        self,
+        gaps: Sequence[Gap],
+        *,
+        progress: Callable[[int, int], None] | None = None,
+        should_stop: Callable[[], Awaitable[bool]] | None = None,
+    ) -> FillResult:
         """Fill one channel's gaps, oldest first (ADR-0008, ADR-0024 §5).
 
         Each gap is asked for on its own, from 5s before it starts to its end, and paged through oldest
@@ -211,6 +222,9 @@ class BackfillService:
         complete once a page comes back short. When the provider stops a fill (a failure, or its daily
         budget), the gap is recorded incomplete with the newest line stored, and the next fill resumes
         there rather than asking for the same lines again. The gaps after it wait for that fill too.
+
+        `progress(done, total)` is told each time a gap is done with. `should_stop()` is asked before each
+        request: once it says so, the fill stops as a failure would, with error `STOPPED` (ADR-0027).
         """
         ordered = sorted(gaps, key=lambda g: g.from_ms)
         if not ordered:
@@ -223,10 +237,14 @@ class BackfillService:
         fetched = inserted = requests = 0
         error = ""
         retry_at: int | None = None
+        if progress is not None:
+            progress(0, len(ordered))
         for gap in ordered:
             reached = resume.get((gap.from_ms, gap.to_ms))
             if error:
                 outcomes.append(BackfillOutcome(gap, complete=False, error=error, reached_ms=reached))
+                if progress is not None:
+                    progress(len(outcomes), len(ordered))
                 continue
             start = max(gap.from_ms - GAP_GRACE_MS, 0)
             if reached is not None:
@@ -234,6 +252,9 @@ class BackfillService:
             count = stored = offset = 0
             complete = False
             while True:
+                if should_stop is not None and await should_stop():
+                    error = STOPPED
+                    break
                 response = await self.provider.fetch(
                     channel_id, from_ms=start, to_ms=gap.to_ms + 1, limit=DEFAULT_LIMIT, offset=offset
                 )
@@ -269,6 +290,8 @@ class BackfillService:
             fetched += count
             inserted += stored
             outcomes.append(BackfillOutcome(gap, count, stored, complete, "" if complete else error, reached))
+            if progress is not None:
+                progress(len(outcomes), len(ordered))
 
         for outcome in outcomes:
             await self._record(outcome)

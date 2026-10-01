@@ -90,7 +90,7 @@ class Harness:
         return report.send
 
     async def audit_actions(self) -> list[str]:
-        async with await self.dbs.bot.execute("SELECT action FROM audit_log ORDER BY id") as cur:
+        async with await self.dbs.bot.execute("SELECT action FROM public.audit_log ORDER BY id") as cur:
             return [r["action"] for r in await cur.fetchall()]
 
 

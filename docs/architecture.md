@@ -799,7 +799,7 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   start from zero at each start, which scrapers read as a reset. No label names a channel or a user.
   - `messages_logged_total{source}` — rows the log writer actually inserted, so a redelivered or
     re-backfilled message is not counted twice
-  - `backfill_inserted_total`, `backfill_incomplete_total`
+  - `backfill_inserted_total`, `backfill_incomplete_total`, `backfill_jobs_total`
   - `runs_total{code}` — every finished run except `!explain --run`'s
   - `runs_cancelled_total{reason}` — `moderated` or `timeout`: the runs whose variable writes were discarded
   - `cooldown_rejections_total{tier}`
