@@ -115,8 +115,12 @@ access rules as v1 (ADR-0017, ADR-0026). Their errors are problem+json, scoped t
 
 ### Metrics
 
-The Prometheus counters on `/metrics` (ADR-0015) stay. The backfill counters are incremented from the
-runtime's hooks instead of from the queue.
+The Prometheus counters on `/metrics` (ADR-0015) stay. `backfill_inserted_total` and
+`backfill_incomplete_total` count what a fill did, so `BackfillService` still increments them, whichever
+job ran it. What happens to the jobs themselves is new: `backfill_jobs_total{event}` is incremented from
+the runtime's hooks (`history.jobs.count`, which `BackfillJobs` adds) for each `chat_backfill` run that
+starts, pauses, is retried, is queued again by a shutdown, succeeds, fails or is cancelled. `BackfillQueue`
+never counted its jobs, so nothing is lost.
 
 ## Alternatives considered
 
@@ -134,6 +138,6 @@ runtime's hooks instead of from the queue.
    `public.audit_log` to the backup.
 3. [x] The `chat_backfill` job kind replaces `BackfillQueue`'s worker.
 4. [x] `/api/v2` jobs and audit routes, with problem+json.
-5. [ ] The backfill counters come from the runtime's hooks.
+5. [x] The backfill counters come from the runtime's hooks.
 6. [ ] With the owner's confirmation, once the clients have moved: remove the v1 job routes and `BackfillQueue`,
    stop writing `bot.audit_log` and `chatlog.backfill_jobs`, then drop them.

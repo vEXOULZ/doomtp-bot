@@ -45,6 +45,7 @@ from vex_platform.jobs import (
 )
 
 from doomtp_bot.clock import now_ms
+from doomtp_bot.core import metrics
 from doomtp_bot.history.backfill import BackfillService, Gap
 from doomtp_bot.history.provider import NOT_LOGGED
 from doomtp_bot.storage.db import fetch_all
@@ -132,6 +133,13 @@ def _widen(queued: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def count(event: str, run: JobRun) -> None:
+    """A runtime hook: count what happens to backfill jobs (started, paused, retrying, requeued, and how
+    each ended) on `/metrics` (ADR-0015)."""
+    if run.kind == KIND:
+        metrics.BACKFILL_JOBS.inc(event=event)
+
+
 def register(registry: Registry, service: BackfillService) -> JobKind:
     """Add the `chat_backfill` kind, whose one step fills with `service`."""
 
@@ -188,6 +196,8 @@ class BackfillJobs:
     def __init__(self, service: BackfillService, runtime: JobRuntime) -> None:
         self.service = service
         self.runtime = runtime
+        if count not in runtime.hooks:
+            runtime.hooks.append(count)
 
     # ── queueing ──
     async def queue_range(

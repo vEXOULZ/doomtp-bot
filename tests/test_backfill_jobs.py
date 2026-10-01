@@ -10,6 +10,7 @@ from vex_platform.actor import Actor as JobActor
 
 from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
 from doomtp_bot.clock import now_ms
+from doomtp_bot.core import metrics
 from doomtp_bot.history.backfill import STOPPED, Gap
 from doomtp_bot.history.jobs import GAPS, OFF, STARTUP, BackfillJob, BackfillJobs, BackfillRefused
 from doomtp_bot.history.provider import PAUSED, HistoryResponse
@@ -33,11 +34,22 @@ async def until(jobs: BackfillJobs, job_id: int, *states: str) -> BackfillJob:
     raise AssertionError(f"job {job_id} is {job.state}, not {states}")
 
 
+async def counted(event: str, before: float) -> float:
+    """How many more `event`s `backfill_jobs_total` has than `before`; the hook runs just after the state
+    is written, so it waits a moment for it."""
+    for _ in range(100):
+        if metrics.BACKFILL_JOBS.value(event=event) > before:
+            break
+        await asyncio.sleep(0.01)
+    return metrics.BACKFILL_JOBS.value(event=event) - before
+
+
 async def test_a_range_is_queued_once_run_and_recorded(
     dbs: Databases, make_backfill_jobs: MakeBackfillJobs
 ) -> None:
     provider = FakeProvider(HistoryResponse(lines=(PRIVMSG,)))
     jobs = await make_backfill_jobs(await backfill_for(dbs, provider))
+    started, succeeded = (metrics.BACKFILL_JOBS.value(event=e) for e in ("started", "succeeded"))
 
     job = await jobs.queue_range(CHANNEL_ID, 1100, 6000, "chat:1", actor=BROADCASTER)
     assert job is not None and (job.state, job.requested_by, job.kind) == ("queued", "chat:1", "range")
@@ -50,6 +62,7 @@ async def test_a_range_is_queued_once_run_and_recorded(
     assert done.started_at is not None and done.finished_at is not None
     assert provider.calls == [(CHANNEL_ID, 0, 6001, 1000, 0)]
     assert (await jobs.runtime.get(job.id)).actor == BROADCASTER
+    assert (await counted("started", started), await counted("succeeded", succeeded)) == (1, 1)
     # Finished, the same range can be asked for again.
     assert await jobs.queue_range(CHANNEL_ID, 1100, 6000, "chat:1") is not None
 
@@ -191,9 +204,11 @@ async def test_a_channel_the_service_doesnt_log_fails_without_retrying(
 ) -> None:
     provider = FakeProvider(HistoryResponse(error_code="channel_not_logged"))
     jobs = await make_backfill_jobs(await backfill_for(dbs, provider), start=True)
+    before = metrics.BACKFILL_JOBS.value(event="failed")
     job = await jobs.queue_range(CHANNEL_ID, 1100, 6000, "chat:1")
     assert job is not None
     failed = await until(jobs, job.id, "failed", "done")
+    assert await counted("failed", before) == 1
     assert failed.error is not None and "doesn't log" in failed.error
     assert (await jobs.runtime.get(job.id)).attempts == 1  # failed at once, not after a backoff
 
