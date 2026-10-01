@@ -641,6 +641,29 @@ class TwitchService:
         ]
         return found
 
+    async def fetch_badges(self, channel_id: str) -> dict[str, list[dict[str, Any]]]:
+        """The channel's chat badge sets and the global ones from Helix, as Helix shapes them
+        (`{set_id, versions: [{id, image_url_1x, image_url_2x, image_url_4x, title}]}`), for the web's chat
+        log to draw a chatter's badges. Raises if a request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+
+        def sets(badges: Sequence[Any]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "set_id": b.set_id,
+                    "versions": [
+                        {"id": v.id, "image_url_1x": v.image_url_1x, "image_url_2x": v.image_url_2x,
+                         "image_url_4x": v.image_url_4x, "title": v.title}
+                        for v in b.versions
+                    ],
+                }
+                for b in badges
+            ]  # fmt: skip
+
+        channel = await self.client.create_partialuser(channel_id).fetch_badges()
+        return {"channel": sets(channel), "global": sets(await self.client.fetch_badges())}
+
     async def fetch_cheermotes(self, channel_id: str) -> dict[str, list[int]]:
         """The cheermote prefixes usable in the channel, lower case, each with its tiers' minimum bits in
         ascending order. Raises if the request fails."""

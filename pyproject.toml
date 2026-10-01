@@ -18,7 +18,7 @@ dependencies = [
     "structlog>=24.1",
     # Shared job runtime, /api/v2 conventions and audit log with twitch-archive (ADR-0027). A tarball, since
     # the image has no git.
-    "vex-platform @ https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.4.0.tar.gz",
+    "vex-platform @ https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.5.0.tar.gz",
     # Moderators write regexes that run on every chat line; `re` can't be stopped once it backtracks.
     "regex>=2024.11.6",
     # Windows has no system timezone database, and cron schedules run in the channel's own timezone.

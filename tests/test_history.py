@@ -273,6 +273,16 @@ async def test_a_service_error_leaves_the_gaps_open(dbs: Databases) -> None:
         assert [r["error"] for r in await cur.fetchall()] == ["channel_not_logged"] * 2
 
 
+async def test_a_run_names_the_job_that_filled_it(dbs: Databases) -> None:
+    provider = FakeProvider(HistoryResponse((privmsg(2000, "a"),)))
+    service = await backfill_for(dbs, provider)
+    await service.fill_many([Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000)], job_id=42)
+    await service.fill_many([Gap(CHANNEL_ID, CHANNEL_LOGIN, 9000, 10000)])
+    await service.writer.stop()
+    async with await dbs.chatlog.execute("SELECT job_id FROM backfill_runs ORDER BY gap_from") as cur:
+        assert [r["job_id"] for r in await cur.fetchall()] == [42, None]
+
+
 async def test_a_paused_fill_resumes_where_it_stopped(dbs: Databases) -> None:
     paused = HistoryResponse(error_code=PAUSED, retry_at_ms=86_400_000)
     first_page = HistoryResponse((privmsg(2000, "a"), privmsg(3000, "b")), hit_limit=True)

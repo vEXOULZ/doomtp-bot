@@ -214,6 +214,7 @@ class BackfillService:
         *,
         progress: Callable[[int, int], None] | None = None,
         should_stop: Callable[[], Awaitable[bool]] | None = None,
+        job_id: int | None = None,
     ) -> FillResult:
         """Fill one channel's gaps, oldest first (ADR-0008, ADR-0024 §5).
 
@@ -225,6 +226,7 @@ class BackfillService:
 
         `progress(done, total)` is told each time a gap is done with. `should_stop()` is asked before each
         request: once it says so, the fill stops as a failure would, with error `STOPPED` (ADR-0027).
+        `job_id` is the job run filling, kept on each `backfill_runs` row so a coverage gap links to it.
         """
         ordered = sorted(gaps, key=lambda g: g.from_ms)
         if not ordered:
@@ -294,7 +296,7 @@ class BackfillService:
                 progress(len(outcomes), len(ordered))
 
         for outcome in outcomes:
-            await self._record(outcome)
+            await self._record(outcome, job_id)
         metrics.BACKFILL_INSERTED.inc(inserted)
         log.info(
             "history.backfilled",
@@ -343,14 +345,14 @@ class BackfillService:
         ) as cur:
             return {(int(r["gap_from"]), int(r["gap_to"])): int(r["reached"]) for r in await cur.fetchall()}
 
-    async def _record(self, outcome: BackfillOutcome) -> None:
+    async def _record(self, outcome: BackfillOutcome, job_id: int | None = None) -> None:
         if not outcome.complete:
             metrics.BACKFILL_INCOMPLETE.inc()
         async with transaction(self.conn):
             await self.conn.execute(
                 "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, fetched, inserted, complete,"
-                " error, provider, reached_ms, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " error, provider, reached_ms, job_id, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (outcome.gap.channel_id, outcome.gap.from_ms, outcome.gap.to_ms, outcome.fetched,
                  outcome.inserted, outcome.complete, outcome.error or None, PROVIDER, outcome.reached_ms,
-                 now_ms()),
+                 job_id, now_ms()),
             )  # fmt: skip

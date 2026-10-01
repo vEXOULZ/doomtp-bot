@@ -355,7 +355,7 @@ async def test_published_packs_are_public(client: httpx.AsyncClient, app: Any) -
 async def test_a_channel_page_summary_is_public(client: httpx.AsyncClient) -> None:
     channel = (await client.get(f"/api/v1/site/channels/{CHANNEL_LOGIN}")).json()
     assert channel == {"login": CHANNEL_LOGIN, "prefix": channel["prefix"], "tier": channel["tier"],
-                       "status": "joined", "active": True}  # fmt: skip
+                       "status": "joined", "active": True, "channel_id": CHANNEL_ID}  # fmt: skip
     assert (await client.get("/api/v1/site/channels/nobody")).status_code == 404
 
 
