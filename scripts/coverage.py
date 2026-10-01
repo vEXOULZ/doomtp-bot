@@ -5,9 +5,10 @@ Run it after a deploy, when the bot is back up and has queued its backfill:
     python scripts/coverage.py --database-url postgresql://doomtp@postgres/doomtp
     docker compose --profile tools run --rm coverage --wait 300
 
-It reads both schemas and prints, per channel, how the last session ended and every gap
+It reads the bot and chatlog schemas and prints, per channel, how the last session ended and every gap
 between sessions that no complete backfill run covers. A gap a backfill job is still waiting to fill
-(ADR-0024 §5) is open too, and says so; `--wait` checks again until no gap is waiting or the time is up.
+(ADR-0024 §5; a `chat_backfill` run in `jobs.job_runs` since ADR-0027) is open too, and says so; `--wait`
+checks again until no gap is waiting or the time is up.
 Exit code 1 means a gap is still open in a channel that asked for backfill — the deploy runbook in the
 README says what to do about it.
 """
@@ -69,9 +70,10 @@ def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap:
         " WHERE channel_id = %s AND gap_from = %s AND gap_to = %s ORDER BY at DESC LIMIT 1",
         (channel_id, *gap),
     ).fetchone()
-    job = chatlog.execute(
-        "SELECT id, state FROM backfill_jobs WHERE channel_id = %s AND from_ms <= %s AND to_ms >= %s"
-        " AND state IN ('queued', 'running') ORDER BY id LIMIT 1",
+    job = chatlog.execute(  # the runtime keeps the runs in its own schema (ADR-0027)
+        "SELECT id, state FROM jobs.job_runs WHERE kind = 'chat_backfill' AND payload->>'channel_id' = %s"
+        " AND (payload->>'from_ms')::bigint <= %s AND (payload->>'to_ms')::bigint >= %s"
+        " AND state IN ('queued', 'running', 'paused') ORDER BY id LIMIT 1",
         (channel_id, *gap),
     ).fetchone()
     if job is not None and not (row is not None and row["complete"] and not row["error"]):
