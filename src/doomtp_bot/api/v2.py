@@ -16,6 +16,9 @@ identified, or one that failed, is audited (`request.denied`, `request.failed`).
     /api/v2/channels/{login}/log, /log/coverage
                           the chat log as one timeline, as v1's (`v2_log.py`): the channel's moderators,
                           or anyone while its log is public
+    /api/v2/channels/{login}/badges
+                          Twitch's global and channel chat badges, cached for an hour, to whoever may
+                          read the log
     /api/v2/docs          OpenAPI for these routes, for anyone signed in
 """
 

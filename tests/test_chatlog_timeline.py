@@ -315,6 +315,7 @@ async def test_coverage_names_every_hole_and_what_filled_it(
         "inserted": 10,
         "error": None,
         "provider": "ivr-logs",
+        "job_id": None,
     }
     assert whole["gaps"][2]["backfill"] is None and whole["complete"] is False
     assert len(whole["sessions"]) == 3

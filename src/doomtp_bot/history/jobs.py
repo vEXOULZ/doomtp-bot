@@ -161,6 +161,7 @@ def register(registry: Registry, service: BackfillService) -> JobKind:
                 gaps,
                 progress=lambda done, total: ctx.progress(done, total, "items"),  # gaps
                 should_stop=ctx.should_stop,
+                job_id=ctx.run_id,
             )
             p["fetched"] = p.get("fetched", 0) + result.fetched
             p["inserted"] = p.get("inserted", 0) + result.inserted

@@ -402,7 +402,8 @@ async def read(
 async def coverage(conn: Connection, channel_id: str, since: int, until: int | None = None) -> dict[str, Any]:
     """When the bot was listening to `channel_id` between `since` and `until` (now by default), and the holes.
 
-    A hole between two sessions is filled if a complete backfill run covered it (ADR-0008); one before the
+    A hole between two sessions is filled if a complete backfill run covered it (ADR-0008); its `backfill` is
+    the latest run's, with the `job_id` of the job that ran it (None for older rows). One before the
     log begins or after the bot stopped listening has nothing to fill it. `complete` says whether the
     log has every message of the window that Twitch let it see.
     """
@@ -431,7 +432,7 @@ async def coverage(conn: Connection, channel_id: str, since: int, until: int | N
         backfill = None
         if reason == "between_sessions":
             async with await conn.execute(
-                "SELECT complete, inserted, error, provider FROM backfill_runs"
+                "SELECT complete, inserted, error, provider, job_id FROM backfill_runs"
                 " WHERE channel_id = %s AND gap_from = %s AND gap_to = %s ORDER BY at DESC LIMIT 1",
                 (channel_id, start, end),
             ) as cur:
