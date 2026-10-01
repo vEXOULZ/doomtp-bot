@@ -471,7 +471,7 @@ The pages, public and admin, are [doomtp-web](https://github.com/vEXOULZ/doomtp-
 over this bot's JSON API, served from the same hostname (ADR-0016; step 8 above). The bot serves the API,
 `/auth/*`, `/static/*` (the expression editor and the railroad diagrams the site loads) and Swagger at
 `/docs`, and no pages of its own. `/api/v2` (ADR-0027) holds the jobs and audit routes shared with the
-archive, with Swagger of its own at `/api/v2/docs`. Anything the site needs that the API doesn't return is added to the API
+archive, and the chat log in v2's shape, with Swagger of its own at `/api/v2/docs`. Anything the site needs that the API doesn't return is added to the API
 here.
 
 To work on the site without Twitch, run `scripts/dev_api.py` here. It serves the same API with made-up

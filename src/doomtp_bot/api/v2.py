@@ -11,6 +11,9 @@ identified, or one that failed, is audited (`request.denied`, `request.failed`).
     /api/v2/job-kinds
     /api/v2/audit         the shared audit log: an admin sees every row, a moderator the rows of the
                           channels they manage (as GET /api/v1/audit), anyone else none
+    /api/v2/channels/{login}/log, /log/coverage
+                          the chat log as one timeline, as v1's (`v2_log.py`): the channel's moderators,
+                          or anyone while its log is public
     /api/v2/docs          OpenAPI for these routes, for anyone signed in
 """
 
@@ -31,6 +34,7 @@ from vex_platform.jobs import JobRuntime
 from vex_platform.jobs.router import jobs_router
 
 from doomtp_bot.api.access import Area, Caller, authenticate, check_area, platform_actor
+from doomtp_bot.api.v2_log import log_router
 from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
 
 PREFIX = "/api/v2"
@@ -83,6 +87,7 @@ def mount(app: FastAPI, jobs: JobRuntime) -> None:
     v2.include_router(
         audit_router(jobs.pool.connection, personal, table=AUDIT_TABLE, visible_scopes=visible_scopes)
     )
+    v2.include_router(log_router())
     schema = APIRouter()  # v2 alone, for its own OpenAPI
     schema.include_router(v2)
     docs = APIRouter(prefix=PREFIX, dependencies=[Depends(personal)], include_in_schema=False)

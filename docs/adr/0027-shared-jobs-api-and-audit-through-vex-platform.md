@@ -112,6 +112,10 @@ access rules as v1 (ADR-0017, ADR-0026). Their errors are problem+json, scoped t
 - **A run keeps its channel.** vex-platform v0.2.0 gave a run's scope only to its `job.enqueue` and
   `job.merge` rows, so a moderator never saw a cancel. v0.3.0 keeps it in `job_runs.scope` (bot revision
   0012) and gives it to every row about the run. Runs queued before 0012 keep a NULL scope.
+- **The chat log is in v2 too.** `/api/v2/channels/{login}/log` and `/log/coverage` read what v1's do,
+  under v1's rule (the channel's moderators, or anyone while its log is public), in v2's shape: ISO 8601
+  times in and out, `{items, next_cursor}`, and a gap's `start`/`end` for `from`/`to`. The archive's
+  `bot_chat` step moves to them.
 
 ### Metrics
 
@@ -139,5 +143,6 @@ never counted its jobs, so nothing is lost.
 3. [x] The `chat_backfill` job kind replaces `BackfillQueue`'s worker.
 4. [x] `/api/v2` jobs and audit routes, with problem+json.
 5. [x] The backfill counters come from the runtime's hooks.
-6. [ ] With the owner's confirmation, once the clients have moved: remove the v1 job routes and `BackfillQueue`,
+6. [ ] Move the clients to v2: the archive's log reader, and doomtp-web's audit screens.
+7. [ ] With the owner's confirmation, once the clients have moved: remove the v1 job routes and `BackfillQueue`,
    stop writing `bot.audit_log` and `chatlog.backfill_jobs`, then drop them.
