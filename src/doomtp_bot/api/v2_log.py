@@ -4,13 +4,18 @@ The same reads as `GET /api/v1/channels/{login}/log` and `/log/coverage`, under 
 channel's moderators, or anyone while its log is public (ADR-0026). What changes is the shape: times are
 ISO 8601 UTC instead of epoch ms (`since` and `until` too), a page is `{items, next_cursor}`, a coverage
 gap is `start`/`end` instead of `from`/`to`, and errors are problem details.
+
+`/channels/{login}/badges` is the channel's and Twitch's global chat badges, under the same rule: the log's
+entries name a chatter's badges by set and version only, and the images need a Twitch token to look up.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Annotated, Any, Literal
 
+import structlog
 from fastapi import APIRouter, Query, Request
 from pydantic import Field
 from vex_platform.api import ApiError, ApiModel, Page, UtcDatetime
@@ -20,7 +25,10 @@ from doomtp_bot.api.routes.data import LOG_READ, _is_public
 from doomtp_bot.chatlog import queries, timeline
 from doomtp_bot.policy.snapshot import ChannelSettings
 
+log = structlog.get_logger(__name__)
+
 DEFAULT_LIMIT, MAX_LIMIT = 50, 500
+BADGES_TTL_S = 3600.0  # badge sets rarely change; one Helix call per channel an hour at most
 
 
 class _Model(ApiModel):  # type: ignore[misc]  # vex-platform ships no type information
@@ -105,6 +113,9 @@ class GapBackfill(_Model):
     inserted: int | None
     error: str | None
     provider: str | None
+    job_id: int | None = Field(
+        None, description="The chat_backfill job that ran this fill: /api/v2/jobs/{id}"
+    )
 
 
 class Gap(_Model):
@@ -112,6 +123,24 @@ class Gap(_Model):
     end: UtcDatetime
     reason: Literal["before_log", "between_sessions", "not_listening"]
     backfill: GapBackfill | None
+
+
+class BadgeVersion(_Model):
+    id: str
+    image_url_1x: str
+    image_url_2x: str
+    image_url_4x: str
+    title: str | None = None
+
+
+class BadgeSet(_Model):
+    set_id: str
+    versions: list[BadgeVersion]
+
+
+class Badges(_Model):
+    channel: list[BadgeSet]
+    global_: list[BadgeSet] = Field(alias="global")
 
 
 class Coverage(_Model):
@@ -162,6 +191,9 @@ def _chatlog(request: Request) -> Any:
 
 def log_router() -> APIRouter:
     router = APIRouter(tags=["log"])
+    badges: dict[
+        str, tuple[float, dict[str, Any]]
+    ] = {}  # channel id → (fetched at, monotonic; Helix's answer)
 
     @router.get("/channels/{login}/log", response_model=Page[Entry])
     async def channel_log(
@@ -243,5 +275,26 @@ def log_router() -> APIRouter:
             ],
             "complete": found["complete"],
         }
+
+    @router.get("/channels/{login}/badges", response_model=Badges)
+    async def channel_badges(request: Request, login: str, caller: Caller = LOG_READ) -> dict[str, Any]:
+        """The channel's chat badge sets, then Twitch's global ones, as Helix gives them: a log entry's
+        `badges` name a set and a version of these. Cached for an hour."""
+        settings = _channel(request, login)
+        cached = badges.get(settings.channel_id)
+        if cached is not None and time.monotonic() - cached[0] < BADGES_TTL_S:
+            return cached[1]
+        twitch = getattr(request.app.state, "twitch", None)
+        if twitch is None:
+            raise ApiError(503, "unavailable", "Twitch isn't connected")
+        try:
+            found: dict[str, Any] = await twitch.fetch_badges(settings.channel_id)
+        except Exception as exc:
+            log.warning("api.badges_failed", channel=settings.login, error=str(exc))
+            if cached is not None:
+                return cached[1]  # an hour stale beats no badges
+            raise ApiError(503, "unavailable", "Twitch didn't answer for the badges") from exc
+        badges[settings.channel_id] = (time.monotonic(), found)
+        return found
 
     return router
