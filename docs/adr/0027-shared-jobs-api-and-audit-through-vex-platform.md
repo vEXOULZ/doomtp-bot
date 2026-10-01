@@ -56,7 +56,7 @@ so none of their callers change. The shim maps the old fields onto the new ones:
 | `bot.audit_log` | `public.audit_log` |
 |---|---|
 | `actor_user_id` | `actor_kind = 'user'`, `actor_id`; `system` when there is none |
-| `via` | `via`, unchanged |
+| `via` | `via`; `script` becomes `cli`, and a surface the table has no name for becomes `system` with the bot's name in `detail` |
 | `channel_id` | `scope` (`NULL` for a global change) |
 | `before`, `after` (text) | `before`, `after` (jsonb: the text parsed as JSON, or kept as a JSON string) |
 | `at` (ms) | `at` (timestamptz) |
@@ -102,7 +102,7 @@ runtime's hooks instead of from the queue.
 ## Action items
 
 1. [x] Depend on vex-platform v0.2.0. Bot revision 0011 creates the `jobs` schema and `public.audit_log`.
-2. [ ] `write_audit()`/`read_audit()` over `public.audit_log`, copy `bot.audit_log` at startup, and add
+2. [x] `write_audit()`/`read_audit()` over `public.audit_log`, copy `bot.audit_log` at startup, and add
    `public.audit_log` to the backup.
 3. [ ] The `chat_backfill` job kind replaces `BackfillQueue`'s worker.
 4. [ ] `/api/v2` jobs and audit routes, with problem+json.

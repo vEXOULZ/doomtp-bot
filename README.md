@@ -488,15 +488,16 @@ came through a proxy the bot doesn't trust is never local, since its address is 
 ## Backups
 
 The `bot` schema holds the OAuth refresh tokens and every channel's configuration; the `chatlog` schema
-holds the message history. One script dumps both, using `pg_dump`, which takes its snapshot inside a
-single transaction and is therefore safe to run while the bot is writing:
+holds the message history; `public.audit_log` holds who changed what (ADR-0027). One script dumps all
+three, using `pg_dump`, which takes its snapshot inside a single transaction and is therefore safe to run
+while the bot is writing:
 
 ```bash
 docker compose --profile tools run --rm backup
 ```
 
-Each run writes `<schema>-<timestamp>.dump` into `data/backups/` and keeps the newest 7 of each
-(`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
+Each run writes `bot-`, `chatlog-` and `audit-<timestamp>.dump` into `data/backups/` and keeps the newest
+7 of each (`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
 grows without bound do not have to share a retention policy. For a nightly copy, add it to the host's
 crontab (`crontab -e`):
 
