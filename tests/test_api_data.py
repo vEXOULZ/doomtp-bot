@@ -21,7 +21,6 @@ from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
-from doomtp_bot.history.queue import BackfillQueue
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.roles import GLOBAL
@@ -31,6 +30,7 @@ from doomtp_bot.triggers.service import TriggerService
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
 from doomtp_bot.webfetch.hosts import HostStore
+from tests.conftest import MakeBackfillJobs
 from tests.fakes import policy_with_channels
 from tests.test_history import FakeProvider
 
@@ -82,7 +82,9 @@ async def _ok_check() -> ComponentHealth:
 
 
 @pytest.fixture
-async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService]]:
+async def app_and_keys(
+    dbs: Databases, make_backfill_jobs: MakeBackfillJobs
+) -> AsyncIterator[tuple[Any, ApiKeyService]]:
     policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN))
     filters = FilterService(dbs.bot)
     await filters.reload()
@@ -125,7 +127,7 @@ async def app_and_keys(dbs: Databases) -> AsyncIterator[tuple[Any, ApiKeyService
             "chatlog_db": dbs.chatlog,
             "api_keys": keys,
             "http_hosts": http_hosts,
-            "backfill": BackfillQueue(
+            "backfill": await make_backfill_jobs(
                 BackfillService(
                     conn=dbs.chatlog,
                     writer=ChatLogWriter(dbs.chatlog),

@@ -1,4 +1,5 @@
-"""Backfill as queued jobs (ADR-0024 §5).
+"""Backfill as queued jobs (ADR-0024 §5), superseded by the `chat_backfill` job kind (`history/jobs.py`,
+ADR-0027). Nothing runs this queue any more; it stays until its table is retired.
 
 A `gaps` job fills every open gap of one channel, found when it runs (`BackfillService.fill_many`). A
 channel has at most one waiting, so startup, a reconnect and `!backfill gaps` join it. A `range` job fills
@@ -16,49 +17,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass, fields
-from typing import Any
 
 import structlog
 
 from doomtp_bot.clock import now_ms
 from doomtp_bot.history.backfill import BackfillService, Gap
+from doomtp_bot.history.jobs import GAPS, RANGE, STARTUP, BackfillJob, BackfillRefused
 from doomtp_bot.storage.db import fetch_all, fetch_one, transaction
 
 log = structlog.get_logger(__name__)
 
-STARTUP = "startup"
+__all__ = ["GAPS", "RANGE", "STARTUP", "BackfillJob", "BackfillQueue", "BackfillRefused"]
+
 OPEN_STATES = ("queued", "running")
-GAPS, RANGE = "gaps", "range"
-
-
-class BackfillRefused(Exception):
-    """The channel has backfill off, is not active, or the range makes no sense."""
-
-
-@dataclass(frozen=True, slots=True)
-class BackfillJob:
-    id: int
-    channel_id: str
-    from_ms: int
-    to_ms: int
-    requested_by: str
-    requested_at: int
-    state: str
-    started_at: int | None = None
-    finished_at: int | None = None
-    fetched: int = 0
-    inserted: int = 0
-    complete: bool | None = None
-    error: str | None = None
-    kind: str = RANGE
-
-    @classmethod
-    def of(cls, row: dict[str, Any]) -> BackfillJob:
-        return cls(**{f.name: row[f.name] for f in fields(cls)})
-
-    def to_json(self) -> dict[str, Any]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
 class BackfillQueue:

@@ -73,11 +73,24 @@ history, and what a backfill produced is the log it filled.
 
 ### Backfill runs as a job kind
 
-`chat_backfill` replaces `BackfillQueue`'s worker. Each gaps job gets a dedupe key per channel, so a
-second request merges into the queued one as it does today. Cancel is cooperative: the step stops at
-the next check of `ctx.should_stop()`. Cancelling a task outright could leave a savepoint half-done on
-a shared connection. Progress comes from `fill_many`. The consent check stays in the step, and
-`!backfill` and the v1 routes queue through the runtime.
+`chat_backfill` replaces `BackfillQueue`'s worker (`history/jobs.py`). Each gaps job gets a dedupe key per
+channel (`queued_key`), so a second request merges into the queued one as it does today, widening its
+range. The same range is never queued or running twice (`active_key`). Every run takes one lock, and the
+runtime runs one at a time, so the rate-limited provider still sees a single caller.
+
+- **Cancel** is cooperative: `fill_many` asks `ctx.should_stop()` before each request, and the step
+  stops there. Cancelling a task outright could leave a savepoint half-done on a shared connection. A
+  cancel from `!backfill cancel` or `DELETE /api/v1/.../backfill/{id}` now stops a running job too, not
+  only a queued one; the answer waits up to two seconds for it to stop.
+- **Progress** comes from `fill_many`, one item per gap.
+- **A provider pause** (its daily budget spent) holds the job in its step until the time the provider
+  gave, still answering a cancel; it isn't a failure. A failed fill is retried with the runtime's
+  backoff, from where it stopped; a channel the provider doesn't log fails at once.
+- **Consent** stays in the step: a job whose channel turned backfill off while it waited cancels itself.
+- `!backfill` and the v1 routes queue, list and cancel through the runtime, with the same replies. The
+  ids are run ids, and the lists show only runs queued since the switch.
+- **Jobs an older image left** queued or running in `chatlog.backfill_jobs` are queued again as runs at
+  each start, keyed by their old id (`legacy_id`), so they run once. The old table is only read.
 
 ### `/api/v2`
 
@@ -104,7 +117,7 @@ runtime's hooks instead of from the queue.
 1. [x] Depend on vex-platform v0.2.0. Bot revision 0011 creates the `jobs` schema and `public.audit_log`.
 2. [x] `write_audit()`/`read_audit()` over `public.audit_log`, copy `bot.audit_log` at startup, and add
    `public.audit_log` to the backup.
-3. [ ] The `chat_backfill` job kind replaces `BackfillQueue`'s worker.
+3. [x] The `chat_backfill` job kind replaces `BackfillQueue`'s worker.
 4. [ ] `/api/v2` jobs and audit routes, with problem+json.
 5. [ ] The backfill counters come from the runtime's hooks.
 6. [ ] With the owner's confirmation, once the clients have moved: remove the v1 job routes and `BackfillQueue`,
