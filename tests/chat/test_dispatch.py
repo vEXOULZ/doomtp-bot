@@ -288,7 +288,7 @@ async def test_a_403_on_a_send_leaves_the_channel_and_flags_it(h: Harness) -> No
     ]
     assert await h.rows("SELECT dropped_reason FROM outbound_msgs") == [(BANNED,)]
     async with await h.dbs.bot.execute(
-        "SELECT actor_user_id, via, after FROM audit_log WHERE action = 'channel.set.status'"
+        "SELECT actor_id AS actor_user_id, via, after FROM public.audit_log WHERE action = 'channel.set.status'"
         " ORDER BY id DESC LIMIT 1"
     ) as cur:
         row = await cur.fetchone()

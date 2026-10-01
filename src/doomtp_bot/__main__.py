@@ -12,6 +12,7 @@ import uvicorn
 from doomtp_bot import __version__
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.audit.log import copy_legacy_audit
 from doomtp_bot.chatlog.queries import latest_badges
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
@@ -72,6 +73,9 @@ class _NoSender:
 
 async def run(settings: Settings) -> None:
     dbs = await Databases.open(settings.database_dsn())
+    copied = await copy_legacy_audit(dbs.bot)  # what an image from before ADR-0027 wrote
+    if copied:
+        log.info("audit.legacy_copied", rows=copied)
     health = HealthRegistry()
 
     policy = PolicyService(dbs.bot, bot_owner_ids=settings.bot_owner_ids)
