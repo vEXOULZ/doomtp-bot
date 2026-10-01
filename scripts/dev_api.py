@@ -17,29 +17,42 @@ There is no Twitch sign-in either, so the signed-in views (ADR-0017, ADR-0026) c
   * anyone else is a plain user: newcomer, whose channel the bot isn't in yet, or friendlychannel, whose
     channel banned the bot.
 That route is added here, to this script's app, and exists nowhere else.
+
+The job runtime runs too, on the same database, so /api/v2/jobs has `chat_backfill` runs to show: one is
+queued for vexoulz at every start, and more come from the channel page's backfill panel. The history
+service is a stand-in that makes up a few lines for any range, a second and a half per request, so a run
+can be watched, paused and cancelled.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import time
 from typing import Any
 
 import psycopg
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
+from vex_platform.jobs import JobRuntime, Registry
 
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
 from doomtp_bot.api.routes.session import set_session_cookie
 from doomtp_bot.api.sessions import SESSION_COOKIE
+from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
+from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
+from doomtp_bot.history.backfill import BackfillService
+from doomtp_bot.history.jobs import BackfillJobs
+from doomtp_bot.history.jobs import register as register_backfill
+from doomtp_bot.history.provider import HistoryResponse
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.modules import builtin_registry
 from doomtp_bot.policy.repository import Actor
@@ -80,6 +93,26 @@ class StandInTwitch:
         return []
 
     async def unsubscribe_channel(self, channel_id: str) -> None: ...
+
+
+class MadeUpHistory:
+    """Stands in for the chat-history service: six lines from alice spread over any range, slowly."""
+
+    async def fetch(
+        self, channel_id: str, *, from_ms: int, to_ms: int, limit: int, offset: int = 0
+    ) -> HistoryResponse:
+        await asyncio.sleep(1.5)
+        if offset:
+            return HistoryResponse()
+        login = next(name for name, uid in USERS.items() if uid == channel_id)
+        step = max((to_ms - from_ms) // 7, 1)
+        return HistoryResponse(
+            tuple(
+                f"@id=dev-{channel_id}-{at};user-id={USERS['alice']};display-name=Alice;tmi-sent-ts={at}"
+                f" :alice!alice@alice.tmi.twitch.tv PRIVMSG #{login} :backfilled line {n}"
+                for n, at in enumerate(range(from_ms + step, to_ms, step)[:6], 1)
+            )
+        )
 
 
 class NoSessions:
@@ -223,6 +256,22 @@ async def main(args: argparse.Namespace) -> None:
     await seed(policy, customcmds, packs, triggers=triggers, filters=filters)
     await triggers.reload()
 
+    # The job runtime, as the bot's, over the made-up history service.
+    writer = ChatLogWriter(dbs.chatlog)
+    writer.start()
+    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=MadeUpHistory(), policy=policy)
+    job_registry = Registry()
+    register_backfill(job_registry, backfill)
+    jobs = JobRuntime(
+        job_registry, dsn, audit_table=AUDIT_TABLE, concurrency=1, max_concurrency=1, worker_name="dev-api"
+    )
+    await jobs.open()
+    backfill_queue = BackfillJobs(backfill, jobs)
+    await jobs.start()
+    hour = 3_600_000
+    now = int(time.time() * 1000)
+    await backfill_queue.queue_range(USERS["vexoulz"], now - 3 * hour, now - 2 * hour, "dev_api")
+
     reports = ReportStore(f"http://{args.host}:{args.port}", ttl_s=24 * 3600)
     info = policy.channel_info(USERS["vexoulz"], "vexoulz")
     report = await explain(
@@ -258,8 +307,10 @@ async def main(args: argparse.Namespace) -> None:
             "chatlog_db": dbs.chatlog,
             "api_keys": ApiKeyService(dbs.bot),
             "explain_reports": reports,
+            "backfill": backfill_queue,
         },
         admin_password=args.password,
+        jobs=jobs,
     )
     add_dev_login(app, moderators)
     base = f"http://{args.host}:{args.port}"
@@ -272,6 +323,8 @@ async def main(args: argparse.Namespace) -> None:
     try:
         await server.serve()
     finally:
+        await jobs.close()
+        await writer.stop()
         await dbs.close()
 
 
