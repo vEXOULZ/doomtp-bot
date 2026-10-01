@@ -38,11 +38,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0023](adr/0023-shared-sign-in-through-vexoulz-auth.md) | Shared sign-in through vexoulz-auth | 1/2 | Built; switched on once vexoulz-auth is deployed |
 | [0024](adr/0024-raw-events-and-ivr-logs-backfill.md) | Keep events as Twitch sent them; backfill older gaps from logs.ivr.fi | 5/9 | Events stored as Twitch sent them (chatlog 0002, the adapter's capture); backfill runs as queued jobs (chatlog 0003, `!backfill`, the API); logs.ivr.fi is the history provider (chatlog 0005); readers and enrichment to come |
 | [0025](adr/0025-chat-log-timeline-api.md) | The chat log as a paged timeline on the API | 1/3 | API built; the site's log viewer and the archive's enrichment are next |
+| [0027](adr/0027-shared-jobs-api-and-audit-through-vex-platform.md) | Shared jobs, API and audit through vex-platform | 1/6 | The dependency and its tables (bot 0011); the audit shim, the backfill job kind, `/api/v2` and the hooks are next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**131 of 139 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
-item 2 (switching the shared sign-in on once vexoulz-auth is deployed); the other six are the rest of ADR-0024
-and ADR-0025, both accepted on 2026-09-28. **All 9 architecture promises are closed**: six built,
+**132 of 145 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
+item 2 (switching the shared sign-in on once vexoulz-auth is deployed); six are the rest of ADR-0024 and ADR-0025,
+both accepted on 2026-09-28, and five the rest of ADR-0027, accepted on 2026-09-30. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 

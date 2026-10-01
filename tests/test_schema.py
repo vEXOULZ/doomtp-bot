@@ -12,22 +12,30 @@ from alembic import command
 from doomtp_bot.storage import schema
 from doomtp_bot.storage.db import Databases, check_schema, connect
 
+# The schemas the revisions write: the bot's two, and vex-platform's `jobs` and `public.audit_log` (ADR-0027).
+TOUCHED = ["bot", "chatlog", "jobs", "public"]
+
 
 def _catalog(dsn: str) -> dict[str, Any]:
-    """Everything a migration can change in `bot` and `chatlog`, apart from Alembic's own table."""
+    """Everything a migration can change in the schemas it touches, apart from Alembic's own table."""
     with psycopg.connect(dsn) as conn:
         columns = conn.execute(
             "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default,"
             " generation_expression FROM information_schema.columns"
-            " WHERE table_schema IN ('bot', 'chatlog') AND table_name <> 'alembic_version' ORDER BY 1, 2, 3"
+            " WHERE table_schema = ANY(%s) AND table_name <> 'alembic_version' ORDER BY 1, 2, 3",
+            [TOUCHED],
         ).fetchall()
         indexes = conn.execute(
             "SELECT schemaname, indexname, indexdef FROM pg_indexes"
-            " WHERE schemaname IN ('bot', 'chatlog') AND tablename <> 'alembic_version' ORDER BY 1, 2"
+            " WHERE schemaname = ANY(%s) AND tablename <> 'alembic_version' ORDER BY 1, 2",
+            [TOUCHED],
         ).fetchall()
         functions = conn.execute(
             "SELECT n.nspname, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
-            " WHERE n.nspname IN ('bot', 'chatlog') ORDER BY 1, 2"
+            " WHERE n.nspname = ANY(%s)"
+            # Not an extension's own (chatlog 0001 leaves `unaccent` installed in `public`).
+            " AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') ORDER BY 1, 2",
+            [TOUCHED],
         ).fetchall()
     return {"columns": columns, "indexes": indexes, "functions": functions}
 
@@ -81,11 +89,26 @@ def test_base_leaves_nothing_behind(empty_database: str) -> None:
     schema.downgrade(empty_database, {"bot": "base", "chatlog": "base"})
     with psycopg.connect(empty_database) as conn:
         tables = conn.execute(
-            "SELECT schemaname || '.' || tablename FROM pg_tables WHERE schemaname IN ('bot', 'chatlog')"
-            " ORDER BY 1"
+            "SELECT schemaname || '.' || tablename FROM pg_tables WHERE schemaname = ANY(%s) ORDER BY 1",
+            [TOUCHED],
         ).fetchall()
+        jobs = conn.execute("SELECT to_regnamespace('jobs')").fetchone()
     assert tables == [("bot.alembic_version",), ("chatlog.alembic_version",)]
+    assert jobs == (None,)
     assert schema.current(empty_database) == {"bot": None, "chatlog": None}
+
+
+def test_the_shared_audit_table_leaves_the_bots_own_in_place(empty_database: str) -> None:
+    """0011 puts vex-platform's `audit_log` in `public` (ADR-0027): on the bot's own connection, an
+    unqualified `audit_log` is still `bot.audit_log`."""
+    schema.upgrade(empty_database)
+    with psycopg.connect(empty_database) as conn:
+        conn.execute("SET search_path TO bot, public")
+        row = conn.execute(
+            "SELECT to_regclass('audit_log') = to_regclass('bot.audit_log'),"
+            " to_regclass('public.audit_log') IS NOT NULL, to_regclass('jobs.job_runs') IS NOT NULL"
+        ).fetchone()
+    assert row == (True, True, True)
 
 
 def test_legacy_revisions_keep_schema_migrations_in_step(empty_database: str) -> None:
