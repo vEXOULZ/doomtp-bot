@@ -74,6 +74,13 @@ def test_map_chat_message() -> None:
     assert mapping.chat_message(fake_chat_message(chatter=user("999", "doomtp_bot")), bot_id="999").is_self
 
 
+def test_a_gif_fragment_keeps_its_url() -> None:
+    url = "https://media1.giphy.com/media/Xcif4OzprDr4PZ7jY0/giphy.gif"
+    gif = NS(type="gif", text="[Cat GIF]", mention=None, emote=None, cheermote=None, gif=NS(url=url))
+    event = mapping.chat_message(fake_chat_message(fragments=[gif]), bot_id=None)
+    assert event.fragments == ({"type": "gif", "text": "[Cat GIF]", "gif": {"url": url}},)
+
+
 def test_map_moderation_and_notification() -> None:
     deleted = mapping.message_deleted(
         NS(broadcaster=user("100", "c"), user=user("400", "a"), message_id="m1", timestamp=WHEN)

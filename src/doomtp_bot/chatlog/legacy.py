@@ -31,6 +31,7 @@ def _fragment(fragment: dict[str, Any]) -> dict[str, Any]:
     """`twitch.mapping._fragment`'s shape back to Twitch's."""
     mention = fragment.get("mention")
     cheermote = fragment.get("cheermote")
+    gif = fragment.get("gif")
     return {
         "type": fragment.get("type"),
         "text": fragment.get("text"),
@@ -41,6 +42,7 @@ def _fragment(fragment: dict[str, Any]) -> dict[str, Any]:
         "mention": None
         if mention is None
         else {"user_id": mention.get("id"), "user_login": mention.get("login")},
+        **({"gif": {"url": gif.get("url")}} if gif is not None else {}),
     }
 
 

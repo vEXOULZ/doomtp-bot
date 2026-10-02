@@ -339,6 +339,12 @@ def test_an_unenriched_emote_is_only_its_id() -> None:
     assert events.entry_fragment(fragments[1]) == {"type": "emote", "text": "vexoulSEETHE", "emote_id": EMOTE}
 
 
+def test_a_gif_keeps_its_id_and_url() -> None:
+    gif = {"id": "Xcif4OzprDr4PZ7jY0", "url": "https://media1.giphy.com/media/Xcif4OzprDr4PZ7jY0/giphy.gif"}
+    fragment = {"type": "gif", "text": "[Cat GIF by ViralHog]", **NO_ONE, "gif": gif}
+    assert events.entry_fragment(fragment) == {"type": "gif", "text": "[Cat GIF by ViralHog]", "gif": gif}
+
+
 def test_every_real_line_converts() -> None:
     """A smoke check that the converters take every kind of line the golden ones came from."""
     for raw in (REPLY, RAID, SUBGIFT, RESUB, CHARITY, MYSTERY, MILESTONE):
