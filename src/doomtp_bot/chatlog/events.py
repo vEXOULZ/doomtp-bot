@@ -121,7 +121,7 @@ def _split(text: str, mentions: dict[str, Any], cheermotes: dict[str, Any]) -> l
 def entry_fragment(fragment: dict[str, Any]) -> dict[str, Any]:
     """A Twitch-shaped fragment in the shape `/log` has always given (`twitch.mapping._fragment`), with
     what Twitch or enrichment says beyond it added: the emote's set, owner and format, the cheermote's
-    tier, and where a looked-up value came from."""
+    tier, the GIF's id and URL, and where a looked-up value came from."""
     data: dict[str, Any] = {"type": fragment.get("type"), "text": fragment.get("text")}
     mention = fragment.get("mention")
     if mention:
@@ -136,4 +136,7 @@ def entry_fragment(fragment: dict[str, Any]) -> dict[str, Any]:
     cheermote = fragment.get("cheermote")
     if cheermote:
         data["cheermote"] = {k: v for k, v in cheermote.items() if v is not None}
+    gif = fragment.get("gif")
+    if gif:
+        data["gif"] = {k: v for k, v in gif.items() if v is not None}
     return data

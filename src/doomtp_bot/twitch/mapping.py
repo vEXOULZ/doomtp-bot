@@ -28,6 +28,9 @@ def _fragment(fragment: Any) -> dict[str, Any]:
         data["emote_id"] = fragment.emote.id
     if getattr(fragment, "cheermote", None) is not None:
         data["cheermote"] = {"prefix": fragment.cheermote.prefix, "bits": fragment.cheermote.bits}
+    # twitchio keeps only the GIF's URL, as an Asset; its id is in the raw event.
+    if getattr(fragment, "gif", None) is not None:
+        data["gif"] = {"url": fragment.gif.url}
     return data
 
 

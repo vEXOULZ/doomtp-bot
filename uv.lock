@@ -296,7 +296,7 @@ wheels = [
 
 [[package]]
 name = "doomtp-bot"
-version = "0.8.0"
+version = "0.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -348,7 +348,7 @@ requires-dist = [
     { name = "types-regex", marker = "extra == 'dev'" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30" },
-    { name = "vex-platform", url = "https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.5.0.tar.gz" },
+    { name = "vex-platform", url = "https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.6.0.tar.gz" },
 ]
 provides-extras = ["dev"]
 
@@ -1645,8 +1645,8 @@ wheels = [
 
 [[package]]
 name = "vex-platform"
-version = "0.5.0"
-source = { url = "https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.5.0.tar.gz" }
+version = "0.6.0"
+source = { url = "https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.6.0.tar.gz" }
 dependencies = [
     { name = "fastapi" },
     { name = "procrastinate" },
@@ -1654,7 +1654,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "structlog" },
 ]
-sdist = { hash = "sha256:93ae64f1c7ef0874c30c8fd92fc259b7b86b6fba8a02c21ad56eba18c099fe15" }
+sdist = { hash = "sha256:398b66030018819387620d4312f39bd9db7a4f7656a12abf02e5f60b20d4ee59" }
 
 [package.metadata]
 requires-dist = [
