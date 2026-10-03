@@ -141,9 +141,7 @@ async def run(settings: Settings) -> None:
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
     emote_cdn = TwitchCdn()
     enricher = Enricher(dbs.chatlog, twitch, emote_cdn)  # what backfilled lines lack (ADR-0024 §3)
-    backfill = BackfillService(
-        conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher
-    )
+    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher)
     job_registry = Registry()
     register_backfill(job_registry, backfill)
     # Jobs keep their own pool, on the `jobs` schema (ADR-0027); a backfill still writes through `chatlog`.
@@ -199,9 +197,7 @@ async def run(settings: Settings) -> None:
         settings_ = policy.channel_settings(channel_id)
         elevated = settings_ is not None and settings_.tier in ("moderator", "full")
         if not elevated and twitch is not None and twitch.bot_id is not None:
-            elevated = (
-                policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
-            )
+            elevated = policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
         return (90, 30.0) if elevated else (20, 30.0)
 
     bot_badges = BotBadges()
@@ -231,9 +227,7 @@ async def run(settings: Settings) -> None:
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
-    timers = TimerScheduler(
-        triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams
-    )
+    timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
         runtime=runtime,
         policy=policy,
@@ -245,9 +239,7 @@ async def run(settings: Settings) -> None:
         trigger_runner=trigger_runner,
         activity=activity,
         streams=streams,
-        automod=(
-            AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None
-        ),
+        automod=(AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None),
         customcmds=customcmds,
         bot_badges=bot_badges,
     )
@@ -303,9 +295,7 @@ async def run(settings: Settings) -> None:
             capabilities = set(settings_of.capabilities) if settings_of else set()
             await use_broadcaster(stored.user_id, stored.login, stored, capabilities)
 
-    async def use_broadcaster(
-        channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]
-    ) -> None:
+    async def use_broadcaster(channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]) -> None:
         """Subscribe to a channel's own events with the broadcaster's token, and notice when it's gone."""
         if twitch is None:
             return
@@ -396,9 +386,7 @@ async def run(settings: Settings) -> None:
 
     async def chatlog_check() -> ComponentHealth:
         status = Status.OK if writer.queue_depth < 5_000 else Status.DEGRADED
-        return ComponentHealth(
-            status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms}
-        )
+        return ComponentHealth(status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms})
 
     async def twitch_check() -> ComponentHealth:
         if twitch is None:

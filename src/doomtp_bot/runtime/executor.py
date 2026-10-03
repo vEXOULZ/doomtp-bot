@@ -447,9 +447,7 @@ class Executor:
             return value
         return await self.expand(arg, ctx, scope, prev, expanded)
 
-    async def condition(
-        self, cond: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None
-    ) -> Any:
+    async def condition(self, cond: tuple[Part, ...], ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
         """`ifelse`'s condition: a lone placeholder's value, or the text. `ops.holds` decides."""
         return await self.argument(cond, ctx, scope, prev)
 
@@ -472,9 +470,7 @@ class Executor:
                 out.append(text)
         return "".join(out)
 
-    async def placeholder_value(
-        self, ph: Placeholder, ctx: ExecContext, scope: Scope, prev: Result | None
-    ) -> Any:
+    async def placeholder_value(self, ph: Placeholder, ctx: ExecContext, scope: Scope, prev: Result | None) -> Any:
         """A top-level placeholder: its value, its `??` text, or MissingValue."""
         value = await self.evaluate(ph, ctx, scope, prev)
         if is_missing(value):

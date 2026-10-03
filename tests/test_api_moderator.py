@@ -149,9 +149,7 @@ def test_every_private_route_says_who_may_use_it() -> None:
 async def mod(client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]) -> dict[str, str]:
     """Sign `client` in as a moderator of doomtp only, as a Twitch sign-in will, and return the CSRF header."""
     app = app_and_keys[0]
-    await app.state.policy.mutate(
-        lambda repo: repo.ensure_channel(OTHER_ID, OTHER_LOGIN, Actor(None, "test"))
-    )
+    await app.state.policy.mutate(lambda repo: repo.ensure_channel(OTHER_ID, OTHER_LOGIN, Actor(None, "test")))
     session = app.state.admin_auth.login(
         role="moderator", user_id=MOD_ID, user_login="mod", channels=frozenset({CHANNEL_LOGIN})
     )
@@ -213,25 +211,17 @@ async def test_a_moderator_reaches_what_chat_lets_them_and_no_more(
     assert (await client.patch(own, json={"public_log": False}, headers=mod)).json()["public_log"] is False
     # The broadcaster's: leaving, backfill, logging.
     left = await client.delete(own, headers=mod)
-    assert (
-        left.status_code == 403
-        and left.json()["detail"] == f"only the broadcaster can do this in {CHANNEL_LOGIN}"
-    )
+    assert left.status_code == 403 and left.json()["detail"] == f"only the broadcaster can do this in {CHANNEL_LOGIN}"
     assert (await client.post(f"{own}/backfill", json={"gaps": True}, headers=mod)).status_code == 403
     refused = await client.patch(own, json={"history_backfill": True}, headers=mod)
-    assert (
-        refused.status_code == 403
-        and refused.json()["detail"] == "only the broadcaster can change history_backfill"
-    )
+    assert refused.status_code == 403 and refused.json()["detail"] == "only the broadcaster can change history_backfill"
     # An admin's.
     assert (await client.post("/api/v1/channels", json={"login": "friend"}, headers=mod)).status_code == 403
     assert (await client.get("/api/v1/keys")).status_code == 403
     assert (await client.post("/api/v1/keys", json={"name": "mine"}, headers=mod)).status_code == 403
 
     explain = {"text": "ping", "context": "body", "as_user": "friend"}
-    assert (
-        await client.post("/api/v1/explain", json={**explain, "channel": CHANNEL_LOGIN})
-    ).status_code == 200
+    assert (await client.post("/api/v1/explain", json={**explain, "channel": CHANNEL_LOGIN})).status_code == 200
     assert (await client.post("/api/v1/explain", json={**explain, "channel": OTHER_LOGIN})).status_code == 403
 
 
@@ -255,9 +245,7 @@ async def test_a_broadcaster_manages_their_channel_as_in_chat(
     }
 
     own = f"/api/v1/channels/{CHANNEL_LOGIN}"
-    patched = await client.patch(
-        own, json={"log_enabled": False, "publish_min_role": "everyone"}, headers=csrf
-    )
+    patched = await client.patch(own, json={"log_enabled": False, "publish_min_role": "everyone"}, headers=csrf)
     assert patched.status_code == 200 and patched.json()["log_enabled"] is False
     assert (await client.post("/api/v1/channels", json={"login": "friend"}, headers=csrf)).status_code == 403
     assert (await client.delete(own, headers=csrf)).json()["status"] == "parted"
@@ -290,9 +278,7 @@ async def user(client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService
     return {"X-CSRF-Token": session.csrf}
 
 
-async def test_a_plain_user_adds_the_bot_to_their_own_channel(
-    client: httpx.AsyncClient, user: dict[str, str]
-) -> None:
+async def test_a_plain_user_adds_the_bot_to_their_own_channel(client: httpx.AsyncClient, user: dict[str, str]) -> None:
     before = (await client.get("/api/v1/session")).json()
     assert (before["role"], before["channels"], before["channel_roles"]) == ("user", [], {})
     assert before["own_channel"] == {"login": "friend", "joined": False, "status": None, "tier": None}
@@ -328,9 +314,7 @@ async def test_a_banned_channel_needs_an_admin_to_rejoin(
 
 
 async def test_the_password_has_no_channel_of_its_own(client: httpx.AsyncClient) -> None:
-    csrf = {
-        "X-CSRF-Token": (await client.post("/api/v1/session", json={"password": PASSWORD})).json()["csrf"]
-    }
+    csrf = {"X-CSRF-Token": (await client.post("/api/v1/session", json={"password": PASSWORD})).json()["csrf"]}
     session = (await client.get("/api/v1/session")).json()
     assert (session["channel_roles"], session["channel_ranks"], session["own_channel"]) == (None, None, None)
     assert (await client.post("/api/v1/me/channel", headers=csrf)).status_code == 400
@@ -397,10 +381,7 @@ async def test_only_an_admin_changes_a_bot_wide_ignore(
     url = f"/api/v1/channels/{CHANNEL_LOGIN}/ignored"
 
     refused = await client.post(url, json={"login": "friend", "everywhere": True}, headers=mod)
-    assert (
-        refused.status_code == 403
-        and refused.json()["detail"] == "only an admin can change a bot-wide ignore"
-    )
+    assert refused.status_code == 403 and refused.json()["detail"] == "only an admin can change a bot-wide ignore"
     assert not policy.is_ignored(OTHER_ID, "200")
     await policy.mutate(lambda repo: repo.set_ignored(GLOBAL, "200", "friend", True, Actor(None, "api")))
     lifted = await client.delete(f"{url}/200", params={"everywhere": True}, headers=mod)
@@ -420,13 +401,9 @@ async def test_a_password_session_changes_a_bot_wide_ignore(
     client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]
 ) -> None:
     policy = app_and_keys[0].state.policy
-    csrf = {
-        "X-CSRF-Token": (await client.post("/api/v1/session", json={"password": PASSWORD})).json()["csrf"]
-    }
+    csrf = {"X-CSRF-Token": (await client.post("/api/v1/session", json={"password": PASSWORD})).json()["csrf"]}
     url = f"/api/v1/channels/{CHANNEL_LOGIN}/ignored"
-    assert (
-        await client.post(url, json={"login": "friend", "everywhere": True}, headers=csrf)
-    ).status_code == 201
+    assert (await client.post(url, json={"login": "friend", "everywhere": True}, headers=csrf)).status_code == 201
     assert policy.is_ignored(OTHER_ID, "200")
     lifted = await client.delete(f"{url}/200", params={"everywhere": True}, headers=csrf)
     assert lifted.status_code == 200 and not policy.is_ignored(OTHER_ID, "200")

@@ -42,7 +42,7 @@ start from an empty database (`docker compose down -v` throws the dev volume awa
 
 ## Local development
 
-Requires Python 3.12+.
+Requires Python 3.13+.
 
 ```bash
 python -m venv .venv
@@ -111,6 +111,13 @@ See [.env.example](.env.example).
 
 ```bash
 cp .env.example .env
+```
+
+`compose.yaml` runs the published image, as a server does. To build from your tree instead, add
+`compose.dev.yaml` on top: put this line in `.env`, and every `docker compose` command below uses both.
+
+```
+COMPOSE_FILE=compose.yaml:compose.dev.yaml
 ```
 
 ```bash
@@ -261,15 +268,15 @@ docker compose version && docker run --rm hello-world
 ### 4. Put the files on the guest
 
 ```bash
-sudo mkdir -p /srv/doomtp-bot && sudo chown "$USER" /srv/doomtp-bot && git clone <repo-url> /srv/doomtp-bot
+sudo mkdir -p /opt/doomtp-bot && sudo chown "$USER" /opt/doomtp-bot && git clone <repo-url> /opt/doomtp-bot
 ```
 
-Everything from here happens in `/srv/doomtp-bot`.
+Everything from here happens in `/opt/doomtp-bot`.
 
 ### 5. Configure it
 
 ```bash
-cd /srv/doomtp-bot && cp .env.example .env && mkdir -p secrets data
+cd /opt/doomtp-bot && cp .env.example .env && mkdir -p secrets data
 ```
 
 Edit `.env`: `TWITCH_CLIENT_ID` and `TWITCH_BOT_ID` from the Twitch console, `BOT_OWNER_IDS` with your
@@ -305,7 +312,7 @@ init, so a change means `ALTER ROLE doomtp PASSWORD …` inside the running data
 ### 6. Start it
 
 ```bash
-docker compose -f compose.yaml -f compose.prod.yaml up -d
+docker compose up -d
 ```
 
 It pulls the image, starts Postgres, waits for it to report healthy, then creates both schemas and
@@ -362,7 +369,7 @@ Then point the bot at the public address. In `.env`:
 PUBLIC_BASE_URL=https://bot.example.com
 PUBLIC_WEB_UI=true
 WEB_SITE_URL=https://bot.example.com
-WEB_FORWARDED_ALLOW_IPS=172.18.0.1
+WEB_FORWARDED_ALLOW_IPS=172.18.0.1  # conventions:allow-infra
 ```
 
 `WEB_SITE_URL` is where the site's pages open. `!help` ends with a link to the channel's page there
@@ -381,7 +388,7 @@ On the **server's** Twitch app, add both redirect URLs for the new address:
 `https://bot.example.com/auth/admin/callback` (signing in to the web admin). Then restart:
 
 ```bash
-docker compose -f compose.yaml -f compose.prod.yaml up -d
+docker compose up -d
 ```
 
 The bot token you stored in step 7 stays valid; nothing needs signing in again. Open
@@ -415,7 +422,7 @@ A Proxmox backup of a running VM snapshots a disk, which is not the same as a co
 database that was mid-write — so run the job that is, from the guest's own crontab (`crontab -e`):
 
 ```bash
-15 4 * * * cd /srv/doomtp-bot && docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm backup >> data/backups/cron.log 2>&1
+15 4 * * * cd /opt/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
 ```
 
 Keep a copy off the guest. The snapshots sit on the same disk as the originals, so they survive mistakes,
@@ -427,11 +434,11 @@ not drive failures.
 |---|---|
 | Is it healthy? | `curl -s localhost:8080/readyz` |
 | How often does it happen? | `curl -s localhost:8080/metrics` — counters in Prometheus text (ADR-0015); point a scraper on the LAN at it |
-| What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
-| Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage --wait 300` |
+| What is it doing? | `docker compose logs -f doomtp-bot` |
+| Did the log lose anything? | `docker compose --profile tools run --rm coverage --wait 300` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
-| Upgrade the schema and install `core` and the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml run --rm migrate` |
-| Where does the schema stand? | `docker compose -f compose.yaml -f compose.prod.yaml run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
+| Upgrade the schema and install `core` and the starter commands | `docker compose run --rm migrate` |
+| Where does the schema stand? | `docker compose run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
 
 To **roll back**, run `deploy/rollback.sh ghcr.io/<owner>/doomtp-bot:vX.Y.Z` (or any `:<sha>` tag). It takes
 a backup, downgrades the schema to what that image expects using the image running now, points `BOT_IMAGE`
@@ -442,15 +449,15 @@ back to that data. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR
 An image from before ADR-0022 has no migrate step. After rolling back to one, start it with `up -d --no-deps
 doomtp-bot`, not a bare `up -d`, which would run the step and fail.
 
-Both scripts use `compose.yaml` and `compose.prod.yaml`. A server with an override file of its own lists
-all of them in `COMPOSE_FILE` in `.env` (`COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.local.yaml`),
+Both scripts use `compose.yaml`. A server with an override file of its own lists both in `COMPOSE_FILE`
+in `.env` (`COMPOSE_FILE=compose.yaml:compose.local.yaml`),
 which the scripts and a bare `docker compose` both read, so a rollback keeps the override.
 
 ### If something is wrong
 
 | Symptom | Cause |
 |---------|-------|
-| `up -d` tries to build | `BOT_IMAGE` is unset, or `compose.prod.yaml` was left off the command |
+| `up -d` tries to build | `COMPOSE_FILE` in `.env` names `compose.dev.yaml`, which is for development |
 | The bot logs `bot.schema_mismatch` and says to run `db upgrade` | It was started without the migrate step: `docker compose ... run --rm migrate`, then start it |
 | The bot logs `bot.schema_mismatch` and says a newer build wrote the schema | An older image was started on a newer schema: use `deploy/rollback.sh`, which downgrades first |
 | `migrate` fails and the bot isn't replaced | Working as intended: the old bot keeps running. `docker compose ... logs migrate` says why |
@@ -503,7 +510,7 @@ grows without bound do not have to share a retention policy. For a nightly copy,
 crontab (`crontab -e`):
 
 ```bash
-15 4 * * * cd /srv/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
+15 4 * * * cd /opt/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
 ```
 
 To restore, stop the bot, drop the schema and let `pg_restore` put it back:

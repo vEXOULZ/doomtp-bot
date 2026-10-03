@@ -42,9 +42,7 @@ async def test_errors_are_problem_details_under_v2_only(client: httpx.AsyncClien
     assert (body["status"], body["code"]) == (401, "unauthenticated")
     assert body["request_id"] == response.headers["x-request-id"]
     # v1 answers as it always did.
-    assert (await client.get("/api/v1/channels")).json() == {
-        "detail": "an API key or an admin session is required"
-    }
+    assert (await client.get("/api/v1/channels")).json() == {"detail": "an API key or an admin session is required"}
     assert (await client.get(f"{V2}/openapi.json")).status_code == 401
 
 
@@ -81,9 +79,7 @@ async def test_an_admin_follows_and_cancels_a_backfill_run(client: httpx.AsyncCl
     ]
 
 
-async def test_runs_are_queued_through_the_backfill_routes_not_v2(
-    client: httpx.AsyncClient, write_key: str
-) -> None:
+async def test_runs_are_queued_through_the_backfill_routes_not_v2(client: httpx.AsyncClient, write_key: str) -> None:
     """The backfill routes check consent and the range; `POST /jobs` would skip both."""
     body = {"kind": KIND, "subject": f"channel:{CHANNEL_ID}", "payload": {}}
     refused = await client.post(f"{V2}/jobs", json=body, headers=auth(write_key))

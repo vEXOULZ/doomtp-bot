@@ -308,9 +308,7 @@ class BackfillJobs:
     async def jobs(self, channel_id: str, *, limit: int = 20) -> list[BackfillJob]:
         """Queued, running and paused jobs first, oldest first; then the latest finished ones."""
         waiting = await self.runtime.find(KIND, subject(channel_id), states=OPEN_STATES)
-        finished = await self.runtime.list(
-            kind=KIND, subject=subject(channel_id), states=FINISHED, limit=limit
-        )
+        finished = await self.runtime.list(kind=KIND, subject=subject(channel_id), states=FINISHED, limit=limit)
         return [BackfillJob.of_run(run) for run in [*reversed(waiting), *finished][:limit]]
 
     async def cancel(self, channel_id: str, job_id: int, *, actor: Actor = SYSTEM) -> BackfillJob | None:

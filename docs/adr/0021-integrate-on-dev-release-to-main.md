@@ -17,7 +17,7 @@ production one at a time, a half-finished series is live between its merges, and
   against `dev`, which is the repository's default branch. `dev` has the same protection as `main`: pull
   requests only, the four CI checks green, up to date with its base.
 - **`main` is production.** It takes pull requests only from `dev` (a release), `release/*` or `hotfix/*`.
-  CI's `branch-name` job enforces this with `.githooks/check-pr-branches.sh`.
+  CI's `branch-name` job enforces this with `check-pr-branches.sh` (now `.conventions/githooks/`, from vEXOULZ/conventions).
 - **A release** is one pull request from `dev` into `main`, merged with a merge commit. The version is
   bumped on `dev` first, in a `release/x-y-z` pull request that changes `pyproject.toml` and
   `__version__`. After the merge, a `vX.Y.Z` tag on `main` names it:

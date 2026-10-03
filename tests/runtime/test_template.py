@@ -42,12 +42,8 @@ async def test_a_stored_template_is_rendered_where_it_is_read() -> None:
 
 
 async def test_a_template_missing_a_value_gives_way_to_the_fallback() -> None:
-    assert (
-        await said(READOUT, store_with(lurk="lurking with {channel.nothing}")) == "thanks for the lurk, Alice"
-    )
-    assert await said(READOUT, store_with(lurk="lurking with {channel.nothing ?? friends}")) == (
-        "lurking with friends"
-    )
+    assert await said(READOUT, store_with(lurk="lurking with {channel.nothing}")) == "thanks for the lurk, Alice"
+    assert await said(READOUT, store_with(lurk="lurking with {channel.nothing ?? friends}")) == ("lurking with friends")
 
 
 @pytest.mark.parametrize(

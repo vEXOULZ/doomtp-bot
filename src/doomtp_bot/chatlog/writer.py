@@ -33,9 +33,7 @@ Op = tuple[str, tuple[Any, ...]]
 _MESSAGE_SOURCE = 7  # where `source` sits in a "message" op's parameters
 
 
-def _raw(
-    event: dict[str, Any] | None, line: str | None, rebuilt: Callable[[], dict[str, Any]]
-) -> tuple[str, str]:
+def _raw(event: dict[str, Any] | None, line: str | None, rebuilt: Callable[[], dict[str, Any]]) -> tuple[str, str]:
     """`raw` and `raw_format` (ADR-0024): what Twitch sent, else the IRC line, else a legacy rebuild."""
     if event is not None:
         return json.dumps(event), "eventsub"
@@ -99,9 +97,7 @@ class ChatLogWriter:
             (n.id, n.channel_id, n.user_id, n.type, n.source, *raw, n.sent_at),
         )
 
-    async def moderation(
-        self, event: MessageDeleted | UserMessagesCleared | ChatCleared | ModerationAction
-    ) -> None:
+    async def moderation(self, event: MessageDeleted | UserMessagesCleared | ChatCleared | ModerationAction) -> None:
         match event:
             case MessageDeleted():
                 await self._mod_event(event.channel_id, "delete", event.source, event.at,
@@ -112,9 +108,7 @@ class ChatLogWriter:
                 await self._mod_event(event.channel_id, "user_clear", event.source, event.at,
                                       target=event.target_user_id, duration_s=event.duration_s,
                                       raw_event=event.raw_event, raw_line=event.raw_line)  # fmt: skip
-                await self._put(
-                    "flag_user_cleared", (event.at, event.channel_id, event.target_user_id, event.at)
-                )
+                await self._put("flag_user_cleared", (event.at, event.channel_id, event.target_user_id, event.at))
             case ChatCleared():
                 await self._mod_event(event.channel_id, "chat_clear", event.source, event.at,
                                       raw_event=event.raw_event, raw_line=event.raw_line)  # fmt: skip
@@ -247,9 +241,7 @@ class ChatLogWriter:
     # ── internals ───────────────────────────────────────────────────────────
     async def _put(self, kind: str, params: tuple[Any, ...]) -> None:
         if self._queue.full():
-            log.warning(
-                "chatlog.queue_full", depth=self._queue.qsize()
-            )  # blocks the producer rather than dropping
+            log.warning("chatlog.queue_full", depth=self._queue.qsize())  # blocks the producer rather than dropping
         await self._queue.put((kind, params))
 
     async def _run(self) -> None:

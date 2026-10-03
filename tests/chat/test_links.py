@@ -35,9 +35,7 @@ def test_bot_badges_follow_the_latest_message() -> None:
     assert badges.may_link("1")
     badges.saw("1", (Badge("subscriber", "3"),))  # the VIP was taken away
     assert not badges.may_link("1")
-    badges.load(
-        [("2", json.dumps([{"set_id": "moderator", "id": "1", "info": ""}])), ("3", None), ("4", "{bad")]
-    )
+    badges.load([("2", json.dumps([{"set_id": "moderator", "id": "1", "info": ""}])), ("3", None), ("4", "{bad")])
     assert badges.may_link("2") and not badges.may_link("3") and not badges.may_link("4")
 
 

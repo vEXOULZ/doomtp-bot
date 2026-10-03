@@ -68,9 +68,7 @@ def test_every_revision_goes_down_and_back_up(empty_database: str, name: str) ->
         seen[revision] = _catalog(empty_database)
     for previous, revision in zip(levels, levels[1:], strict=False):
         changed = seen[revision] != seen[previous]
-        assert changed != _data_only(name, revision), (
-            f"{revision} changed nothing, or data_only changed tables"
-        )
+        assert changed != _data_only(name, revision), f"{revision} changed nothing, or data_only changed tables"
     for previous in reversed(levels[:-1]):
         schema.downgrade(empty_database, {name: previous})
         assert _catalog(empty_database) == seen[previous], f"{name} down to {previous}"
@@ -207,9 +205,7 @@ def test_the_triggers_module_moves_to_automation_and_back(empty_database: str) -
 
     def rows() -> list[tuple[str, ...]]:
         with psycopg.connect(empty_database) as conn:
-            toggles = conn.execute(
-                "SELECT channel_id, module, enabled::text FROM bot.module_toggles ORDER BY 1, 2"
-            )
+            toggles = conn.execute("SELECT channel_id, module, enabled::text FROM bot.module_toggles ORDER BY 1, 2")
             scopes = conn.execute("SELECT channel_id, scope FROM bot.callbacks ORDER BY 1, 2")
             return [*toggles.fetchall(), *scopes.fetchall()]
 
@@ -228,8 +224,7 @@ def test_the_triggers_module_moves_to_automation_and_back(empty_database: str) -
 def _quote_rows(dsn: str) -> list[tuple[Any, ...]]:
     with psycopg.connect(dsn) as conn:
         return conn.execute(
-            "SELECT channel_id, number, text, game, added_at, deleted_at IS NOT NULL FROM bot.quotes"
-            " ORDER BY 1, 2"
+            "SELECT channel_id, number, text, game, added_at, deleted_at IS NOT NULL FROM bot.quotes ORDER BY 1, 2"
         ).fetchall()
 
 

@@ -148,9 +148,7 @@ class TwitchAuth:
         )
         return f"{AUTHORIZE_URL}?{query}"
 
-    async def complete(
-        self, code: str | None, state: str | None, error: str | None = None
-    ) -> AuthorizedAccount:
+    async def complete(self, code: str | None, state: str | None, error: str | None = None) -> AuthorizedAccount:
         if error:
             raise OAuthError(f"Twitch returned an error: {error}")
         found = self._states.pop(state or "", None)

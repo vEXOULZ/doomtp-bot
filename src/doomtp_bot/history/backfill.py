@@ -321,9 +321,7 @@ class BackfillService:
 
     async def _author(self, message_id: str) -> str | None:
         """Who sent a message the log already has, for a delete that came before this fill."""
-        async with await self.conn.execute(
-            "SELECT user_id FROM messages WHERE message_id = %s", (message_id,)
-        ) as cur:
+        async with await self.conn.execute("SELECT user_id FROM messages WHERE message_id = %s", (message_id,)) as cur:
             row = await cur.fetchone()
         return None if row is None else str(row["user_id"])
 

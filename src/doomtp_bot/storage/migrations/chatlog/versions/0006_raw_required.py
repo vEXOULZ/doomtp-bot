@@ -38,16 +38,12 @@ MOVED = {
 def upgrade() -> None:
     for table, columns in MOVED.items():
         drops = ", ".join(f"DROP COLUMN {column}" for column in columns)
-        op.execute(
-            f"ALTER TABLE {table} {drops}, ALTER COLUMN raw SET NOT NULL, ALTER COLUMN raw_format SET NOT NULL"
-        )
+        op.execute(f"ALTER TABLE {table} {drops}, ALTER COLUMN raw SET NOT NULL, ALTER COLUMN raw_format SET NOT NULL")
 
 
 def downgrade() -> None:
     for table in MOVED:
-        op.execute(
-            f"ALTER TABLE {table} ALTER COLUMN raw DROP NOT NULL, ALTER COLUMN raw_format DROP NOT NULL"
-        )
+        op.execute(f"ALTER TABLE {table} ALTER COLUMN raw DROP NOT NULL, ALTER COLUMN raw_format DROP NOT NULL")
     op.execute(
         "ALTER TABLE messages ADD COLUMN display_name text, ADD COLUMN message_type text,"
         " ADD COLUMN badges text, ADD COLUMN fragments text, ADD COLUMN bits bigint NOT NULL DEFAULT 0,"

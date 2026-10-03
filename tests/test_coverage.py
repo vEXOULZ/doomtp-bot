@@ -17,8 +17,7 @@ NOW = int(time.time() * 1000)
 
 async def _channel(dbs: Databases, channel_id: str, login: str, *, backfill: bool) -> None:
     await dbs.bot.execute(
-        "INSERT INTO channels (channel_id, login, history_backfill, added_at, updated_at)"
-        " VALUES (%s, %s, %s, %s, %s)",
+        "INSERT INTO channels (channel_id, login, history_backfill, added_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
         (channel_id, login, backfill, NOW, NOW),
     )
 

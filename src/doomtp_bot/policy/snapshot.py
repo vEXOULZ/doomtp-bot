@@ -65,9 +65,7 @@ class IgnoreEntry:
 class PolicySnapshot:
     channels: dict[str, ChannelSettings] = field(default_factory=dict)
     roles_by_id: dict[int, Role] = field(default_factory=dict)
-    roles_by_scope: dict[str, dict[str, Role]] = field(
-        default_factory=dict
-    )  # channel_id|GLOBAL → name → Role
+    roles_by_scope: dict[str, dict[str, Role]] = field(default_factory=dict)  # channel_id|GLOBAL → name → Role
     memberships: dict[str, tuple[Membership, ...]] = field(default_factory=dict)  # user_id → memberships
     global_admins: frozenset[str] = frozenset()
     module_toggles: dict[tuple[str, str], bool] = field(default_factory=dict)
@@ -80,9 +78,7 @@ class PolicySnapshot:
     ignore_entries: dict[str, dict[str, IgnoreEntry]] = field(default_factory=dict)  # scope → user_id → row
 
     def role_named(self, channel_id: str, name: str) -> Role | None:
-        return self.roles_by_scope.get(channel_id, {}).get(name) or self.roles_by_scope.get(GLOBAL, {}).get(
-            name
-        )
+        return self.roles_by_scope.get(channel_id, {}).get(name) or self.roles_by_scope.get(GLOBAL, {}).get(name)
 
     def channel_by_login(self, login: str) -> ChannelSettings | None:
         """A joined or parted channel by its login, as typed: any case, with or without a leading `#`."""
@@ -149,25 +145,19 @@ async def load_snapshot(conn: Connection) -> PolicySnapshot:
         for r in await cur.fetchall():
             snap.module_toggles[(r["channel_id"], r["module"])] = r["enabled"]
 
-    async with await conn.execute(
-        "SELECT channel_id, command, enabled, log_level FROM command_toggles"
-    ) as cur:
+    async with await conn.execute("SELECT channel_id, command, enabled, log_level FROM command_toggles") as cur:
         for r in await cur.fetchall():
             if r["enabled"] is not None:
                 snap.command_toggles[(r["channel_id"], r["command"])] = r["enabled"]
             if r["log_level"] is not None:
                 snap.command_log_levels[(r["channel_id"], r["command"])] = r["log_level"]
 
-    async with await conn.execute(
-        "SELECT channel_id, command, required_role, allowed_roles FROM command_rules"
-    ) as cur:
+    async with await conn.execute("SELECT channel_id, command, required_role, allowed_roles FROM command_rules") as cur:
         for r in await cur.fetchall():
             allowed = tuple(json.loads(r["allowed_roles"])) if r["allowed_roles"] else None
             snap.command_rules[(r["channel_id"], r["command"])] = CommandRule(r["required_role"], allowed)
 
-    async with await conn.execute(
-        "SELECT channel_id, command, role, tier_s, user_s FROM cooldown_rules"
-    ) as cur:
+    async with await conn.execute("SELECT channel_id, command, role, tier_s, user_s FROM cooldown_rules") as cur:
         for r in await cur.fetchall():
             snap.cooldown_rules.setdefault((r["channel_id"], r["command"]), {})[r["role"]] = Cooldown(
                 r["tier_s"], r["user_s"]

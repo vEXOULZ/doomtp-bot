@@ -223,9 +223,7 @@ class TriggerService:
 
     @staticmethod
     def _matches(conditions: dict[str, Any], payload: dict[str, Any]) -> bool:
-        if "reward_id" in conditions and str(payload.get("reward", {}).get("id")) != str(
-            conditions["reward_id"]
-        ):
+        if "reward_id" in conditions and str(payload.get("reward", {}).get("id")) != str(conditions["reward_id"]):
             return False
         for key, field in (("min_viewers", "viewers"), ("min_bits", "bits"), ("min_months", "months")):
             if key in conditions and int(payload.get(field) or 0) < int(conditions[key]):
@@ -259,9 +257,7 @@ class TriggerService:
                 parse_cron(str((schedule or {}).get("cron", "")))
             except CronError as exc:
                 raise TriggerError(str(exc)) from exc
-        self._check_expression(
-            channel_id, expr, Context.LISTENER if type_ == "listener" else Context.TRIGGER, prefix
-        )
+        self._check_expression(channel_id, expr, Context.LISTENER if type_ == "listener" else Context.TRIGGER, prefix)
         async with transaction(self.conn):
             trigger_id = await fetch_value(
                 self.conn,

@@ -35,13 +35,9 @@ def _fragment(fragment: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": fragment.get("type"),
         "text": fragment.get("text"),
-        "cheermote": None
-        if cheermote is None
-        else {"prefix": cheermote.get("prefix"), "bits": cheermote.get("bits")},
+        "cheermote": None if cheermote is None else {"prefix": cheermote.get("prefix"), "bits": cheermote.get("bits")},
         "emote": {"id": fragment["emote_id"]} if "emote_id" in fragment else None,
-        "mention": None
-        if mention is None
-        else {"user_id": mention.get("id"), "user_login": mention.get("login")},
+        "mention": None if mention is None else {"user_id": mention.get("id"), "user_login": mention.get("login")},
         **({"gif": {"url": gif.get("url")}} if gif is not None else {}),
     }
 

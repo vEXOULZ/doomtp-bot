@@ -385,11 +385,7 @@ def notification_event(line: IrcLine) -> dict[str, Any]:
     irc = _irc_only(line, MESSAGE_ONLY_TAGS)
     # What the detail didn't use, by its IRC name.
     irc.update(
-        {
-            key: value
-            for key, value in line.tags.items()
-            if key.startswith("msg-param-") and _snake(key) in params
-        }
+        {key: value for key, value in line.tags.items() if key.startswith("msg-param-") and _snake(key) in params}
     )
     nobody = {"chatter_user_id": None, "chatter_user_login": None, "chatter_user_name": None}
     return {

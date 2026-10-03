@@ -75,9 +75,7 @@ class CustomLoader(Protocol):
 
 
 class CallbackProvider(Protocol):
-    def callback_expr(
-        self, ctx: ExecContext, command: str | None, module: str | None, kind: str
-    ) -> str | None: ...
+    def callback_expr(self, ctx: ExecContext, command: str | None, module: str | None, kind: str) -> str | None: ...
 
 
 class Runtime:

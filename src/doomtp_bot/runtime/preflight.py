@@ -184,9 +184,7 @@ def preflight(
             return fail(
                 inv.index,
                 inv.name,
-                error_result(
-                    "E_INPUT_NOT_ACCEPTED", f"{inv.name} does not accept piped input", command=inv.name
-                ),
+                error_result("E_INPUT_NOT_ACCEPTED", f"{inv.name} does not accept piped input", command=inv.name),
             )
         holder = inv.index if holder_index is None else holder_index
         failure = check_exprs(inv, exprs_of(inv), holder, here)
@@ -211,9 +209,7 @@ def preflight(
             )
         return None
 
-    def check_exprs(
-        inv: Invocation | None, exprs: list[Expr], index: int, here: ExecContext
-    ) -> Preflight | None:
+    def check_exprs(inv: Invocation | None, exprs: list[Expr], index: int, here: ExecContext) -> Preflight | None:
         for expr in exprs:
             found = check_expr(expr, index, here)
             if found is not None:
@@ -245,16 +241,12 @@ def preflight(
         target = resolved.custom
         assert target is not None
         if target.command_id in stack:
-            return fail(
-                inv.index, inv.name, error_result("E_CC_CYCLE", f"{inv.name} calls itself", command=inv.name)
-            )
+            return fail(inv.index, inv.name, error_result("E_CC_CYCLE", f"{inv.name} calls itself", command=inv.name))
         if len(stack) + 1 > MAX_CC_DEPTH and not target.system:  # a sentinel is never too deep
             return fail(
                 inv.index,
                 inv.name,
-                error_result(
-                    "E_CC_DEPTH", f"custom commands nested deeper than {MAX_CC_DEPTH}", max=MAX_CC_DEPTH
-                ),
+                error_result("E_CC_DEPTH", f"custom commands nested deeper than {MAX_CC_DEPTH}", max=MAX_CC_DEPTH),
             )
         body_ctx = dataclasses.replace(
             here,
@@ -292,9 +284,7 @@ def preflight(
                 return fail(
                     None,
                     None,
-                    error_result(
-                        "E_BAD_REFERENCE", "a store target can't run {!…}", reference=render_expr(target)
-                    ),
+                    error_result("E_BAD_REFERENCE", "a store target can't run {!…}", reference=render_expr(target)),
                 )
         after = max(inv.index for inv in invocations(store.inner)) + 1  # the path is read once inner ran
         failure = check_exprs(None, list(target.path), after, here)

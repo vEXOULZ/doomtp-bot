@@ -98,9 +98,7 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
         for c in registry.all()
         if c.spec.module not in HIDDEN_MODULES and policy.is_permitted(ctx.exec, c.spec)
     ]
-    custom = sorted(
-        n for n, spec in (await _custom_specs(ctx)).items() if policy.is_permitted(ctx.exec, spec)
-    )
+    custom = sorted(n for n, spec in (await _custom_specs(ctx)).items() if policy.is_permitted(ctx.exec, spec))
     text = "commands: " + ", ".join(builtins)
     if custom:
         text += "; custom: " + ", ".join(custom)

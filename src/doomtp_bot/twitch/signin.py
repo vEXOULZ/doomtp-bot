@@ -221,9 +221,7 @@ class TwitchSignIn:
             access = await self.access(grant)
         except (OAuthError, aiohttp.ClientError) as exc:
             raise SignInError("twitch", str(exc)) from exc
-        log.info(
-            "signin.completed", user=grant.login, role=access.role, channels=sorted(access.channels or ())
-        )
+        log.info("signin.completed", user=grant.login, role=access.role, channels=sorted(access.channels or ()))
         return grant, access, found[1]
 
     async def access(self, grant: Grant) -> Access:
@@ -300,9 +298,7 @@ class VexoulzAuthHttp:
             return resp.status, body
 
     async def token(self, code: str, redirect_uri: str) -> dict[str, Any]:
-        status, body = await self._call(
-            "POST", "/v1/token", json={"code": code, "redirect_uri": redirect_uri}
-        )
+        status, body = await self._call("POST", "/v1/token", json={"code": code, "redirect_uri": redirect_uri})
         if status != 200:
             raise OAuthError(f"vexoulz-auth refused the code ({status} {body.get('error')})")
         return body

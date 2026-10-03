@@ -134,9 +134,7 @@ async def test_the_script_installs_into_the_database_it_is_pointed_at(
     dsn, dbs = committed_database
     assert await run(_args(dsn, owner_id=OWNER["id"], owner_login=OWNER["name"])) == 0
     assert f"publish {PACK} globally" in capsys.readouterr().out
-    count = await fetch_value(
-        dbs.bot, "SELECT count(*) FROM custom_commands WHERE owner_user_id = %s", (OWNER["id"],)
-    )
+    count = await fetch_value(dbs.bot, "SELECT count(*) FROM custom_commands WHERE owner_user_id = %s", (OWNER["id"],))
     assert count == len(STARTER) + len(CORE_COMMANDS) + len(QUOTES)
 
 

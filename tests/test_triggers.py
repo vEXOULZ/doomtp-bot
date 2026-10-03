@@ -60,9 +60,7 @@ class Harness:
         """Run a typed command, e.g. !trigger add …"""
         user = USERS[who]
         channel = dataclasses.replace(self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!")
-        chatter = self.policy.build_chatter(
-            CHANNEL_ID, user[0], user[1], user[2], frozenset(BADGES.get(who, set()))
-        )
+        chatter = self.policy.build_chatter(CHANNEL_ID, user[0], user[1], user[2], frozenset(BADGES.get(who, set())))
         report = await self.runtime.run(text, self.runtime.make_context(channel=channel, invoker=chatter))
         assert report is not None
         return report.send
@@ -236,9 +234,7 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
     from doomtp_bot.core.events import ChatMessage, StreamStatusChanged
     from doomtp_bot.moderation.index import ModerationIndex
 
-    policy = await policy_with_channels(
-        dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, clock=TickingClock()
-    )
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, clock=TickingClock())
     triggers = TriggerService(dbs.bot)
     await triggers.add(
         channel_id=CHANNEL_ID,
@@ -310,9 +306,7 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
             received_at=1,
         )  # fmt: skip
     )
-    await dispatcher.handle(
-        ChatNotification("n1", CHANNEL_ID, "500", "raid", {"user": {"name": "raider"}}, sent_at=2)
-    )
+    await dispatcher.handle(ChatNotification("n1", CHANNEL_ID, "500", "raid", {"user": {"name": "raider"}}, sent_at=2))
     streams.streams[CHANNEL_ID] = {"title": "bot night"}  # what the poller just saw
     await dispatcher.handle(StreamStatusChanged(CHANNEL_ID, True, at=3))
     # A channel point redemption, once the broadcaster has connected (ADR-0007 item 5), plus one for a
@@ -469,9 +463,7 @@ async def test_trigger_log_level_defaults_to_output(h: Harness) -> None:
 async def test_trigger_commands_need_a_moderator(h: Harness) -> None:
     channel = dataclasses.replace(h.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!")
     viewer = h.policy.build_chatter(CHANNEL_ID, *USERS["alice"])
-    report = await h.runtime.run(
-        "!timer add 60s echo nope", h.runtime.make_context(channel=channel, invoker=viewer)
-    )
+    report = await h.runtime.run("!timer add 60s echo nope", h.runtime.make_context(channel=channel, invoker=viewer))
     assert report is not None and report.result.code == Code.DENIED and report.send is None
 
 
@@ -485,10 +477,7 @@ async def test_a_listener_is_named_and_managed_by_its_name(h: Harness) -> None:
         r"\bhello\b",
         "echo hi {$chatter.display}",
     )
-    assert (
-        await h.say("mod", "!listen list")
-        == rf"{trigger.id}:hello /\bhello\b/ → echo hi {{$chatter.display}}"
-    )
+    assert await h.say("mod", "!listen list") == rf"{trigger.id}:hello /\bhello\b/ → echo hi {{$chatter.display}}"
 
     assert await h.say("mod", "!listen off hello") == "hello is off"
     assert h.triggers.listeners_matching(CHANNEL_ID, "hello there") == []
@@ -513,8 +502,7 @@ async def test_a_listeners_regex_can_be_slashed_quoted_or_bare(h: Harness, typed
 async def test_listener_names_are_checked(h: Harness) -> None:
     await h.say("mod", "!listen add greet /hi/ echo hello")
     assert (
-        await h.say("mod", "!listen add greet /yo/ echo hey")
-        == "there's already a listener called greet: rm it first"
+        await h.say("mod", "!listen add greet /yo/ echo hey") == "there's already a listener called greet: rm it first"
     )
     reply = await h.say("mod", "!listen add 2fast /hi/ echo hello")
     assert reply is not None and reply.startswith("a listener's name is a letter")
@@ -545,9 +533,7 @@ async def test_an_event_is_added_listed_and_run(h: Harness) -> None:
     assert h.sender.sent == ["welcome raider with 42 raiders"]
 
 
-@pytest.mark.parametrize(
-    "typed", ["!event add listener echo hi", "!event add timer echo hi", "!event add raid"]
-)
+@pytest.mark.parametrize("typed", ["!event add listener echo hi", "!event add timer echo hi", "!event add raid"])
 async def test_event_takes_only_twitch_events(h: Harness, typed: str) -> None:
     reply = await h.say("mod", typed)
     assert reply is not None and reply.startswith("usage: event")

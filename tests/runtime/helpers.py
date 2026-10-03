@@ -55,9 +55,7 @@ async def weather(ctx: CommandContext, args: Args, stdin: Result | None) -> Resu
     location = args["location"]
     if location.lower() == "nowhere":
         return Result.failure(Code.NOT_FOUND, "location not found")
-    return Result.success(
-        f"{location}: 21.5°C", {"celsius": 21.5, "location": location, "tags": ["sun", "warm"]}
-    )
+    return Result.success(f"{location}: 21.5°C", {"celsius": 21.5, "location": location, "tags": ["sun", "warm"]})
 
 
 @command(CommandSpec(name="upper", module="test", summary="uppercase stdin", input=InputMode.REQUIRED))
@@ -150,12 +148,8 @@ async def run(
     seed: int = 7,
     **kwargs: Any,
 ) -> RunReport:
-    run_kwargs = {
-        k: kwargs.pop(k) for k in ("reply_parent_login", "scope_args", "publisher", "stdin") if k in kwargs
-    }
-    ctx = runtime.make_context(
-        channel=channel, invoker=invoker, context=context, rng=random.Random(seed), **kwargs
-    )
+    run_kwargs = {k: kwargs.pop(k) for k in ("reply_parent_login", "scope_args", "publisher", "stdin") if k in kwargs}
+    ctx = runtime.make_context(channel=channel, invoker=invoker, context=context, rng=random.Random(seed), **kwargs)
     report = await runtime.run(text, ctx, **run_kwargs)
     assert report is not None, f"{text!r} was not a command"
     return report

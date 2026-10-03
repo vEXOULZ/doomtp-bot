@@ -78,8 +78,7 @@ async def test_transactions_sharing_a_connection_do_not_interleave(dbs: Database
         async with transaction(dbs.bot):
             await execute(
                 dbs.bot,
-                "INSERT INTO global_admins (user_id, user_login, granted_by, granted_at)"
-                " VALUES (%s, %s, 'system', 0)",
+                "INSERT INTO global_admins (user_id, user_login, granted_by, granted_at) VALUES (%s, %s, 'system', 0)",
                 (str(i), f"user{i}"),
             )
             await asyncio.sleep(0)  # let the other writers run mid-transaction

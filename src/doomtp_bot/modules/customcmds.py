@@ -148,9 +148,7 @@ async def _edit(ctx: CommandContext, v: list[str], args: Args) -> Result:
         raise CommandError(f"usage: {USAGE}")
     updated = await _service(ctx).edit(command, body, channel_id=ctx.channel.id, prefix=ctx.channel.prefix)
     links, publications = await _service(ctx).usage_of(command.id)
-    where = (
-        f"{links} alias{'es' if links != 1 else ''}, {publications} channel{'s' if publications != 1 else ''}"
-    )
+    where = f"{links} alias{'es' if links != 1 else ''}, {publications} channel{'s' if publications != 1 else ''}"
     return Result.success(f"{command.name} is now v{updated.version}, live in {where}", updated.version)
 
 
@@ -158,9 +156,7 @@ async def _rm(ctx: CommandContext, v: list[str], args: Args) -> Result:
     need(v, 2, USAGE)
     command = await _own(ctx, v[1])
     links, publications = await _service(ctx).delete(command)
-    return Result.success(
-        f"deleted {command.name}; {links} alias(es) and {publications} channel(s) stopped working"
-    )
+    return Result.success(f"deleted {command.name}; {links} alias(es) and {publications} channel(s) stopped working")
 
 
 async def _list(ctx: CommandContext, v: list[str], args: Args) -> Result:
@@ -273,8 +269,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         reject_filtered(ctx, name, " ".join(v[3:]))
         created = await packs.create(owner_user_id=user_id, name=name, summary=" ".join(v[3:]))
         return Result.success(
-            f"created pack {created.name}. Add commands with "
-            f"{ctx.channel.prefix}cc pack add {created.name} <command…>"
+            f"created pack {created.name}. Add commands with {ctx.channel.prefix}cc pack add {created.name} <command…>"
         )
     pack = await packs.by_owner(user_id, name)
     if pack is None:
@@ -339,9 +334,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"{', '.join(changed) or 'nothing'} {verb} {pack.name}", changed)
 
 
-async def _pack_internal(
-    ctx: CommandContext, packs: PackService, pack: Pack, rest: list[str], user_id: str
-) -> Result:
+async def _pack_internal(ctx: CommandContext, packs: PackService, pack: Pack, rest: list[str], user_id: str) -> Result:
     """An internal member runs only from the bodies of its pack's other commands (ADR-0019)."""
     if len(rest) < 2 or rest[-1].lower() not in ("on", "off"):
         raise CommandError(f"usage: {ctx.channel.prefix}cc pack internal <pack> <command…> on|off")
@@ -452,10 +445,7 @@ async def _publish(ctx: CommandContext, v: list[str], args: Args) -> Result:
     name = v[3] if len(v) > 3 and v[2].lower() == "as" else command.name
     reject_filtered(ctx, name)
     await service.publish(channel_id=scope, name=name, command=command, published_by=user_id)
-    text = (
-        f'published "{command.name}" (by @{command.owner_login}) as '
-        f"{ctx.channel.prefix}{name} {_where(scope)}."
-    )
+    text = f'published "{command.name}" (by @{command.owner_login}) as {ctx.channel.prefix}{name} {_where(scope)}.'
     if command.owner_user_id != user_id:
         text += " " + EDIT_WARNING.format(owner=f"@{command.owner_login}")
     return Result.success(text + _grant_warning(ctx, [command], scope), {"name": name})
@@ -497,8 +487,7 @@ async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result
         owner_note = " " + EDIT_WARNING.format(owner="@" + ", @".join(sorted(owners)))
     return Result.success(
         f"published pack {pack.name} {_where(scope)} ({names}).{owner_note} "
-        f"⚠ Commands added to the pack later appear {_where(scope)} too."
-        + _grant_warning(ctx, list(members), scope),
+        f"⚠ Commands added to the pack later appear {_where(scope)} too." + _grant_warning(ctx, list(members), scope),
         {"pack": pack.name, "commands": [c.name for c in members]},
     )
 

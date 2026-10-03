@@ -40,9 +40,7 @@ class Harness:
         user = USERS[who]
         badges = frozenset({"moderator"}) if who == "mod" else frozenset()
         chatter = self.policy.build_chatter(CHANNEL_ID, user[0], user[1], user[2], badges)
-        ctx = self.runtime.make_context(
-            channel=channel, invoker=chatter, rng=random.Random(seed), clock=lambda: NOW_S
-        )
+        ctx = self.runtime.make_context(channel=channel, invoker=chatter, rng=random.Random(seed), clock=lambda: NOW_S)
         report = await self.runtime.run(text, ctx)
         assert report is not None
         return report
@@ -68,9 +66,7 @@ class Harness:
 
 @pytest.fixture
 async def h(dbs: Databases) -> AsyncIterator[Harness]:
-    policy = await policy_with_channels(
-        dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, clock=TickingClock()
-    )
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, clock=TickingClock())
     filters = FilterService(dbs.bot)
     await filters.reload()
     await filters.add(
@@ -105,9 +101,7 @@ async def test_logsearch_finds_the_newest_visible_message(h: Harness) -> None:
 
 
 async def test_logsearch_says_when_a_channel_is_not_logged(h: Harness) -> None:
-    await h.policy.mutate(
-        lambda r: r.set_channel_field(CHANNEL_ID, "log_enabled", False, Actor(None, "test"))
-    )
+    await h.policy.mutate(lambda r: r.set_channel_field(CHANNEL_ID, "log_enabled", False, Actor(None, "test")))
     assert (await h.run("mod", "!logsearch anything")).result.message == "this channel's chat isn't logged"
 
 

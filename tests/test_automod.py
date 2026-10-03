@@ -148,9 +148,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     await filters.add(
         channel_id=CHANNEL_ID, pattern="slur", kind="word", action="block", actor_user_id=None, via="chat"
     )
-    await filters.add(
-        channel_id=CHANNEL_ID, pattern="darn", kind="word", action="mask", actor_user_id=None, via="chat"
-    )
+    await filters.add(channel_id=CHANNEL_ID, pattern="darn", kind="word", action="mask", actor_user_id=None, via="chat")
     harness = Harness(policy, filters, twitch, dispatcher, runtime, writer)
     await harness.moderate_capability(True)
     try:

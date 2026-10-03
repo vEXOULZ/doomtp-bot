@@ -131,8 +131,7 @@ async def test_startup_needs_core_at_the_current_version(
     # Never signed in: the script has no account to install under yet, so the bot starts and says so.
     assert await require_core(h.packs) is False
     await h.dbs.bot.execute(
-        "INSERT INTO oauth_tokens (identity, user_id, login, access_token, updated_at)"
-        " VALUES ('bot', %s, %s, 'x', 0)",
+        "INSERT INTO oauth_tokens (identity, user_id, login, access_token, updated_at) VALUES ('bot', %s, %s, 'x', 0)",
         (OWNER["id"], OWNER["name"]),
     )
     with pytest.raises(CoreNotInstalled, match="not installed.*scripts/starter_pack.py"):

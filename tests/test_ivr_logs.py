@@ -61,9 +61,7 @@ def provider_for(stand: Stand, **limits: object) -> IvrLogsProvider:
 
 async def test_a_range_is_asked_for_by_channel_id_as_raw_lines(stand: Stand) -> None:
     provider = provider_for(stand)
-    response = await provider.fetch(
-        "100", from_ms=1_772_074_800_000, to_ms=1_772_161_200_001, limit=2, offset=4
-    )
+    response = await provider.fetch("100", from_ms=1_772_074_800_000, to_ms=1_772_161_200_001, limit=2, offset=4)
     await provider.close()
     assert response.ok and response.lines == (LINE,) and not response.hit_limit
     assert stand.asked == [

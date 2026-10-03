@@ -772,8 +772,8 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
     reaches it. To look at it from outside, tunnel in over SSH (§11).
   - `pgweb`: optional, read-only, for browsing the log by hand. It replaced Datasette, which could
     only read SQLite.
-  - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
-    (ADR-0013). The same file builds locally in development and pulls on a server.
+  - Every service runs `${BOT_IMAGE}`, the image CI published (ADR-0013), defaulting to `:main`.
+    `compose.dev.yaml` on top builds it from the tree instead, for local development.
 - **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
   `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
   publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to

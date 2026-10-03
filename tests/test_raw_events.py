@@ -77,9 +77,7 @@ def test_0002_keeps_irc_lines_and_rebuilds_the_rest_as_the_writer_would(empty_da
             "INSERT INTO chatlog.mod_events (channel_id, type, message_id, target_user_id, at)"
             " VALUES ('c1', 'delete', 'm1', 'u1', 5000)"
         )
-        conn.execute(
-            "INSERT INTO chatlog.backfill_runs (channel_id, gap_from, gap_to, at) VALUES ('c1', 1, 2, 3)"
-        )
+        conn.execute("INSERT INTO chatlog.backfill_runs (channel_id, gap_from, gap_to, at) VALUES ('c1', 1, 2, 3)")
 
     command.upgrade(config, "0002")
     with psycopg.connect(empty_database) as conn:

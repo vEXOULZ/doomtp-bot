@@ -169,9 +169,7 @@ def chat_notification(payload: Any) -> ChatNotification:
         payload={
             "system_message": payload.system_message,
             "text": payload.text,
-            "chatter": None
-            if payload.anonymous
-            else {"id": payload.chatter.id, "login": payload.chatter.name},
+            "chatter": None if payload.anonymous else {"id": payload.chatter.id, "login": payload.chatter.name},
             "detail": _plain(detail),
         },
         sent_at=_ms(payload.timestamp),
