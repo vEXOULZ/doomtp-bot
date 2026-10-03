@@ -113,9 +113,7 @@ class GapBackfill(_Model):
     inserted: int | None
     error: str | None
     provider: str | None
-    job_id: int | None = Field(
-        None, description="The chat_backfill job that ran this fill: /api/v2/jobs/{id}"
-    )
+    job_id: int | None = Field(None, description="The chat_backfill job that ran this fill: /api/v2/jobs/{id}")
 
 
 class Gap(_Model):
@@ -191,9 +189,7 @@ def _chatlog(request: Request) -> Any:
 
 def log_router() -> APIRouter:
     router = APIRouter(tags=["log"])
-    badges: dict[
-        str, tuple[float, dict[str, Any]]
-    ] = {}  # channel id → (fetched at, monotonic; Helix's answer)
+    badges: dict[str, tuple[float, dict[str, Any]]] = {}  # channel id → (fetched at, monotonic; Helix's answer)
 
     @router.get("/channels/{login}/log", response_model=Page[Entry])
     async def channel_log(
@@ -206,9 +202,7 @@ def log_router() -> APIRouter:
             list[timeline.Kind] | None,
             Query(description="message, notification or moderation; repeat for several"),
         ] = None,
-        user: Annotated[
-            str | None, Query(min_length=1, max_length=40, description="A login, old ones too")
-        ] = None,
+        user: Annotated[str | None, Query(min_length=1, max_length=40, description="A login, old ones too")] = None,
         q: Annotated[str | None, Query(min_length=1, max_length=queries.MAX_QUERY_CHARS)] = None,
         hide_removed: bool = False,
         cursor: Annotated[str | None, Query(max_length=512)] = None,

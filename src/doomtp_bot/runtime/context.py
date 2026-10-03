@@ -98,9 +98,7 @@ class ExecContext:
     denied: dict[str, Any] = field(default_factory=dict)
     bot: dict[str, Any] = field(default_factory=dict)
     resolve_user: UserResolver | None = None
-    run_as_rank: int | None = (
-        None  # triggers run at a fixed rank instead of the event user's (architecture §7)
-    )
+    run_as_rank: int | None = None  # triggers run at a fixed rank instead of the event user's (architecture §7)
     in_callback: bool = False  # callbacks never trigger other callbacks
     # `!explain --run`: evaluate, but commit no writes, no cooldowns, and send nothing (spec §9).
     dry_run: bool = False

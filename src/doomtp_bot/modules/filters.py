@@ -117,9 +117,7 @@ async def filter_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         raise CommandError(f"give the entry id from {ctx.channel.prefix}filter list")
     entry_id = int(values[1])
     if action == "rm":
-        removed = await service.remove(
-            channel_id=scope, entry_id=entry_id, actor_user_id=actor_id, via="chat"
-        )
+        removed = await service.remove(channel_id=scope, entry_id=entry_id, actor_user_id=actor_id, via="chat")
         if not removed:
             raise CommandError(f"no entry {entry_id} in this list")
         return Result.success(f"removed entry {entry_id}")

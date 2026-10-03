@@ -81,9 +81,7 @@ async def sign_in(client: httpx.AsyncClient, code: str, next_path: str | None = 
     return await client.get("/auth/admin/callback", params={"code": code, "state": state})
 
 
-async def test_login_goes_to_vexoulz_auth_with_the_scope(
-    client: httpx.AsyncClient, vexoulz: dict[str, Any]
-) -> None:
+async def test_login_goes_to_vexoulz_auth_with_the_scope(client: httpx.AsyncClient, vexoulz: dict[str, Any]) -> None:
     started = await client.get("/auth/admin/login")
     location = urlsplit(started.headers["location"])
     query = parse_qs(location.query)

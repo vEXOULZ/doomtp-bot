@@ -108,9 +108,7 @@ async def app_and_keys(
     variable_access = VariableAccessPolicy(policy, dbs.bot)
     await variable_access.reload()
     backfill = await make_backfill_jobs(
-        BackfillService(
-            conn=dbs.chatlog, writer=ChatLogWriter(dbs.chatlog), provider=FakeProvider(), policy=policy
-        )
+        BackfillService(conn=dbs.chatlog, writer=ChatLogWriter(dbs.chatlog), provider=FakeProvider(), policy=policy)
     )
     app = create_app(
         health,
@@ -144,9 +142,7 @@ async def app_and_keys(
 
 @pytest.fixture
 async def client(app_and_keys: tuple[Any, ApiKeyService]) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(
-        transport=ASGITransport(app=app_and_keys[0]), base_url="http://test"
-    ) as http:
+    async with httpx.AsyncClient(transport=ASGITransport(app=app_and_keys[0]), base_url="http://test") as http:
         yield http
 
 
@@ -168,20 +164,14 @@ async def test_without_credentials_nothing_private_is_readable(client: httpx.Asy
     assert (await client.get("/api/v1/channels", headers=auth("dtb_nonsense"))).status_code == 401
 
 
-async def test_a_read_key_cannot_write(
-    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]
-) -> None:
+async def test_a_read_key_cannot_write(client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]) -> None:
     _, secret = await app_and_keys[1].create(name="reader")
     assert (await client.get("/api/v1/channels", headers=auth(secret))).status_code == 200
-    refused = await client.patch(
-        f"/api/v1/channels/{CHANNEL_LOGIN}", json={"quiet_errors": True}, headers=auth(secret)
-    )
+    refused = await client.patch(f"/api/v1/channels/{CHANNEL_LOGIN}", json={"quiet_errors": True}, headers=auth(secret))
     assert refused.status_code == 403
 
 
-async def test_a_revoked_key_stops_working(
-    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]
-) -> None:
+async def test_a_revoked_key_stops_working(client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService]) -> None:
     keys = app_and_keys[1]
     key, secret = await keys.create(name="temporary")
     assert (await client.get("/api/v1/channels", headers=auth(secret))).status_code == 200
@@ -259,9 +249,7 @@ async def test_a_banned_channel_needs_rejoin(
 
     refused = await client.post("/api/v1/channels", json={"login": "friend"}, headers=auth(write_key))
     assert refused.status_code == 409 and "rejoin" in refused.json()["detail"]
-    back = await client.post(
-        "/api/v1/channels", json={"login": "friend", "rejoin": True}, headers=auth(write_key)
-    )
+    back = await client.post("/api/v1/channels", json={"login": "friend", "rejoin": True}, headers=auth(write_key))
     assert back.status_code == 201
     assert (await client.get("/api/v1/channels/friend", headers=auth(write_key))).json()["banned"] is False
 
@@ -315,9 +303,7 @@ async def test_filters_round_trip(client: httpx.AsyncClient, write_key: str) -> 
     )
     assert disabled.status_code == 200
 
-    removed = await client.delete(
-        f"/api/v1/channels/{CHANNEL_LOGIN}/filters/{entry_id}", headers=auth(write_key)
-    )
+    removed = await client.delete(f"/api/v1/channels/{CHANNEL_LOGIN}/filters/{entry_id}", headers=auth(write_key))
     assert removed.status_code == 200
     assert (
         await client.delete(f"/api/v1/channels/{CHANNEL_LOGIN}/filters/{entry_id}", headers=auth(write_key))
@@ -357,25 +343,17 @@ async def test_triggers_round_trip(client: httpx.AsyncClient, write_key: str) ->
     )
     assert bad_cron.status_code == 400
 
-    gone = await client.delete(
-        f"/api/v1/channels/{CHANNEL_LOGIN}/triggers/{trigger_id}", headers=auth(write_key)
-    )
+    gone = await client.delete(f"/api/v1/channels/{CHANNEL_LOGIN}/triggers/{trigger_id}", headers=auth(write_key))
     assert gone.status_code == 200
 
 
-async def test_filter_and_trigger_writes_are_audited_as_api(
-    client: httpx.AsyncClient, write_key: str
-) -> None:
+async def test_filter_and_trigger_writes_are_audited_as_api(client: httpx.AsyncClient, write_key: str) -> None:
     base = f"/api/v1/channels/{CHANNEL_LOGIN}"
-    entry_id = (
-        await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))
-    ).json()["id"]
+    entry_id = (await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))).json()["id"]
     await client.patch(f"{base}/filters/{entry_id}", json={"enabled": False}, headers=auth(write_key))
     await client.delete(f"{base}/filters/{entry_id}", headers=auth(write_key))
     trigger_id = (
-        await client.post(
-            f"{base}/triggers", json={"type": "raid", "expr": "echo hi"}, headers=auth(write_key)
-        )
+        await client.post(f"{base}/triggers", json={"type": "raid", "expr": "echo hi"}, headers=auth(write_key))
     ).json()["id"]
     await client.patch(f"{base}/triggers/{trigger_id}", json={"enabled": False}, headers=auth(write_key))
     await client.delete(f"{base}/triggers/{trigger_id}", headers=auth(write_key))
@@ -400,9 +378,7 @@ async def test_a_trigger_expression_is_checked_like_one_typed_in_chat(
     await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))
 
     def add(expr: str, type_: str = "raid", **extra: Any) -> Any:
-        return client.post(
-            f"{base}/triggers", json={"type": type_, "expr": expr, **extra}, headers=auth(write_key)
-        )
+        return client.post(f"{base}/triggers", json={"type": type_, "expr": expr, **extra}, headers=auth(write_key))
 
     unparsable = await add("echo {")
     assert unparsable.status_code == 400 and "placeholder" in unparsable.json()["detail"]
@@ -486,9 +462,7 @@ async def test_runs_messages_and_audit_are_readable(
     runs = await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/runs", headers=auth(write_key))
     assert [r["expr"] for r in runs.json()["runs"]] == ["!ping"]
 
-    await client.patch(
-        f"/api/v1/channels/{CHANNEL_LOGIN}", json={"quiet_errors": True}, headers=auth(write_key)
-    )
+    await client.patch(f"/api/v1/channels/{CHANNEL_LOGIN}", json={"quiet_errors": True}, headers=auth(write_key))
     entries = (await client.get("/api/v1/audit", headers=auth(write_key))).json()["entries"]
     assert entries[0]["action"] == "channel.set.quiet_errors" and entries[0]["via"] == "api"
 
@@ -555,9 +529,7 @@ async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient
         "overrides": [],
     }
 
-    changed = await client.patch(
-        "/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 4096}
-    )
+    changed = await client.patch("/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 4096})
     assert changed.json() == {"quota_bytes": 1048576, "value_cap_bytes": 4096, **counts}
     null = await client.patch("/api/v1/variable-limits/default", headers=headers, json={"quota_bytes": None})
     assert null.status_code == 422
@@ -590,21 +562,15 @@ async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient
     )
     assert reset.json()["override"] is None
     assert (await client.get("/api/v1/variable-limits", headers=headers)).json()["overrides"] == []
-    too_big = await client.patch(
-        "/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 2**21}
-    )
+    too_big = await client.patch("/api/v1/variable-limits/default", headers=headers, json={"value_cap_bytes": 2**21})
     assert too_big.status_code == 422
-    too_many = await client.patch(
-        "/api/v1/variable-limits/default", headers=headers, json={"list_items": 10_001}
-    )
+    too_many = await client.patch("/api/v1/variable-limits/default", headers=headers, json={"list_items": 10_001})
     assert too_many.status_code == 422
     unknown = await client.patch("/api/v1/variable-limits/viewer/alice", headers=headers, json={})
     assert unknown.status_code == 404
 
 
-async def test_http_hosts_take_a_secret_and_never_give_it_back(
-    client: httpx.AsyncClient, write_key: str
-) -> None:
+async def test_http_hosts_take_a_secret_and_never_give_it_back(client: httpx.AsyncClient, write_key: str) -> None:
     headers = auth(write_key)
     assert (await client.get("/api/v1/http-hosts", headers=headers)).json() == {
         "hosts": [],
@@ -638,9 +604,7 @@ async def test_http_hosts_take_a_secret_and_never_give_it_back(
     assert (await client.put("/api/v1/http-hosts/localhost", headers=headers, json={})).status_code == 422
     limits = await client.patch("/api/v1/http-limits", headers=headers, json={"host_per_minute": 5})
     assert limits.json() == {"channel_per_minute": 10, "host_per_minute": 5}
-    assert (
-        await client.patch("/api/v1/http-limits", headers=headers, json={"host_per_minute": -1})
-    ).status_code == 422
+    assert (await client.patch("/api/v1/http-limits", headers=headers, json={"host_per_minute": -1})).status_code == 422
 
     assert (await client.delete("/api/v1/http-hosts/api.example.com", headers=headers)).status_code == 200
     assert (await client.delete("/api/v1/http-hosts/api.example.com", headers=headers)).status_code == 404
@@ -761,7 +725,5 @@ async def test_ignored_users_say_who_ignored_them_and_can_be_changed(
     assert (await client.delete(f"{url}/400", headers=auth(reader))).status_code == 403
 
     audit = (await client.get("/api/v1/audit", headers=auth(write_key))).json()["entries"]
-    by_api = [
-        (e["action"], e["target"]) for e in audit if e["via"] == "api" and e["action"].startswith("ignore.")
-    ]
+    by_api = [(e["action"], e["target"]) for e in audit if e["via"] == "api" and e["action"].startswith("ignore.")]
     assert by_api == [("ignore.remove", CHANNEL_ID), ("ignore.remove", "200"), ("ignore.add", CHANNEL_ID)]

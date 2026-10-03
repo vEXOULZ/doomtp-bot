@@ -38,9 +38,7 @@ class Harness:
     def context(self, who: str) -> Any:
         channel = dataclasses.replace(self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!")
         user = USERS[who]
-        chatter = self.policy.build_chatter(
-            CHANNEL_ID, user[0], user[1], user[2], frozenset(BADGES.get(who, set()))
-        )
+        chatter = self.policy.build_chatter(CHANNEL_ID, user[0], user[1], user[2], frozenset(BADGES.get(who, set())))
         return self.runtime.make_context(channel=channel, invoker=chatter)
 
     async def explain(self, who: str, text: str, **kw: Any) -> Any:

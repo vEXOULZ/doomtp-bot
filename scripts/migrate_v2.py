@@ -146,12 +146,8 @@ async def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)"
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)")
     parser.add_argument("--dry-run", action="store_true", help="show every rewrite, change nothing")
     args = parser.parse_args(argv)
     configure_event_loop()

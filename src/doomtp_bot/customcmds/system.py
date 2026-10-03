@@ -81,8 +81,7 @@ async def require_core(packs: PackService) -> bool:
     if installed is None or installed < CORE_VERSION:
         found = "not installed" if installed is None else f"at version {installed}"
         raise CoreNotInstalled(
-            f"the core pack is {found}, and this bot needs version {CORE_VERSION}:"
-            " run python scripts/starter_pack.py"
+            f"the core pack is {found}, and this bot needs version {CORE_VERSION}: run python scripts/starter_pack.py"
         )
     return True
 

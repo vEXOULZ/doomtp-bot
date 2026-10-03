@@ -1,3 +1,20 @@
+# conventions:begin: synced from vEXOULZ/conventions; edit it there, then run `conventions sync`
+# Secrets and local settings. The templates (.env.example, secrets.example/) are the ones committed.
+.env
+.env.*
+!.env.example
+secrets/
+
+# Claude Code worktrees and the graphify knowledge graph, both local to a checkout
+.claude/worktrees/
+graphify-out/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -9,24 +26,11 @@ build/
 .mypy_cache/
 .ruff_cache/
 .coverage
+# conventions:end
 
-# Runtime state and secrets
+# Runtime state
 data/
-secrets/
-.env
-# Copies of it too (.env.backup, .env.local, ...); the template is the one meant to be committed.
-.env.*
-!.env.example
 
 # Web editor
 web-editor/node_modules/
 web-editor/dist/
-
-# OS / editors
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-
-# graphify knowledge graph (built in the main checkout, see CLAUDE.md)
-graphify-out/

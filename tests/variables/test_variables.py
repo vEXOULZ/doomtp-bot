@@ -110,12 +110,8 @@ async def test_store_commit_is_atomic_and_rolls_back(h: Harness) -> None:
 async def test_store_top_and_entries(h: Harness) -> None:
     ctx = h.ctx("mod")
     for user, points in (("400", 10), ("401", 30), ("402", 20)):
-        await h.store.commit(
-            [WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, user, name="points"), points)], ctx
-        )
-    await h.store.commit(
-        [WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, "403", name="points"), "lots")], ctx
-    )
+        await h.store.commit([WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, user, name="points"), points)], ctx)
+    await h.store.commit([WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, "403", name="points"), "lots")], ctx)
     assert await h.store.top("channel.chatter", CHANNEL_ID, "", "points", 2) == [("401", 30), ("402", 20)]
 
 
@@ -206,9 +202,7 @@ async def test_grants_do_not_follow_the_published_name(h: Harness) -> None:
     granted = _actor_ctx(h, "foreign_pub")
     assert h.access.can_write(granted, "channel.chatter", "points") is True
 
-    other = h.ctx(
-        "alice", Context.BODY, publisher=Publisher("998", "other", command_id="cc_2", publication="pts")
-    )
+    other = h.ctx("alice", Context.BODY, publisher=Publisher("998", "other", command_id="cc_2", publication="pts"))
     assert h.access.can_write(other, "channel.chatter", "points") is False
 
 
@@ -222,13 +216,9 @@ async def test_store_operator_denied_for_viewer_on_channel(h: Harness) -> None:
 
 
 async def test_foreign_command_cannot_touch_invokers_chatter_vars(h: Harness) -> None:
-    report = await h.run(
-        "alice", "echo evil -> chatter.location", Context.BODY, publisher=Publisher("999", "mallory")
-    )
+    report = await h.run("alice", "echo evil -> chatter.location", Context.BODY, publisher=Publisher("999", "mallory"))
     assert report.result.code == Code.DENIED
-    ok = await h.run(
-        "alice", "echo 3 -> publisher.chatter.save", Context.BODY, publisher=Publisher("999", "mallory")
-    )
+    ok = await h.run("alice", "echo 3 -> publisher.chatter.save", Context.BODY, publisher=Publisher("999", "mallory"))
     assert ok.result.ok and await h.value("publisher.chatter", "999", "400", name="save") == "3"
 
 
@@ -304,10 +294,7 @@ async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
     refused = await h.run("bob", "!var del channel.chatter.points @alice")
     assert (refused.result.code, refused.send) == (Code.DENIED, None)  # silent denial (spec §6.6)
     assert refused.result.message == "you can't delete channel.chatter.points for Alice"
-    assert (
-        await h.reply("mod", "!var del channel.chatter.points @alice")
-        == "deleted channel.chatter.points for Alice"
-    )
+    assert await h.reply("mod", "!var del channel.chatter.points @alice") == "deleted channel.chatter.points for Alice"
     assert await h.value("channel.chatter", CHANNEL_ID, "400", name="points") is MISSING
     await h.reply("alice", "!var set chatter.location here")
     assert await h.reply("alice", "!var del chatter.location") == "deleted chatter.location"

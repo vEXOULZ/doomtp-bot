@@ -33,9 +33,9 @@ NOBODY = Publisher(id="u9", login="someone", command_id="cc2", command_name="wea
     "address",
     [
         "127.0.0.1",
-        "10.0.0.5",
-        "172.16.0.1",
-        "192.168.1.1",
+        "10.0.0.5",  # conventions:allow-infra
+        "172.16.0.1",  # conventions:allow-infra
+        "192.168.1.1",  # conventions:allow-infra
         "169.254.169.254",  # cloud metadata
         "100.64.0.1",  # CGNAT
         "0.0.0.0",
@@ -46,8 +46,8 @@ NOBODY = Publisher(id="u9", login="someone", command_id="cc2", command_name="wea
         "fe80::1%eth0",
         "fc00::1",
         "::ffff:127.0.0.1",  # IPv4-mapped
-        "::ffff:10.0.0.1",
-        "64:ff9b::a00:1",  # NAT64 of 10.0.0.1
+        "::ffff:10.0.0.1",  # conventions:allow-infra
+        "64:ff9b::a00:1",  # NAT64 of 10.0.0.1  # conventions:allow-infra
         "2002:7f00:1::1",  # 6to4
         "2001:0:4136:e378::1",  # Teredo
         "not an address",
@@ -130,7 +130,7 @@ class FakeResolver(AbstractResolver):
     NAMES = {
         "api.test": ["127.0.0.1"],
         "other.test": ["127.0.0.1"],
-        "private.test": ["10.0.0.5"],
+        "private.test": ["10.0.0.5"],  # conventions:allow-infra
         "mixed.test": ["8.8.8.8", "127.0.0.1"],
         "inside.test": ["127.0.0.1"],
     }
@@ -226,7 +226,7 @@ async def test_redirects_are_checked_at_every_hop(site: Web) -> None:
     site.hits.clear()
     await fails(f, f"http://api.test:{site.port}/to-other", "E_HTTP_NOT_ALLOWED")  # not on the list
     await fails(f, f"http://api.test:{site.port}/to-literal", "E_HTTP_NOT_ALLOWED")  # an address
-    await fails(f, f"http://api.test:{site.port}/to-private", "E_HTTP_ADDRESS")  # a name for 10.0.0.5
+    await fails(f, f"http://api.test:{site.port}/to-private", "E_HTTP_ADDRESS")  # a name for a private address
     assert site.hits == ["/to-other", "/to-literal", "/to-private"]  # no hop was followed
     await fails(f, f"http://api.test:{site.port}/loop", "E_HTTP_NOT_ALLOWED")
     assert site.hits.count("/loop") == 4  # the first request and three redirects

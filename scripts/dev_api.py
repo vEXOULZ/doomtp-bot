@@ -98,9 +98,7 @@ class StandInTwitch:
 class MadeUpHistory:
     """Stands in for the chat-history service: six lines from alice spread over any range, slowly."""
 
-    async def fetch(
-        self, channel_id: str, *, from_ms: int, to_ms: int, limit: int, offset: int = 0
-    ) -> HistoryResponse:
+    async def fetch(self, channel_id: str, *, from_ms: int, to_ms: int, limit: int, offset: int = 0) -> HistoryResponse:
         await asyncio.sleep(1.5)
         if offset:
             return HistoryResponse()
@@ -131,9 +129,7 @@ async def fresh_database(server: str, name: str) -> str:
     return f"{server}/{name}"
 
 
-async def seed(
-    policy: PolicyService, customcmds: CustomCommandService, packs: PackService, **svc: Any
-) -> None:
+async def seed(policy: PolicyService, customcmds: CustomCommandService, packs: PackService, **svc: Any) -> None:
     """Two joined channels and one the bot was banned from, published commands and packs, a trigger,
     a filter and an ignored user."""
 
@@ -329,9 +325,7 @@ async def main(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", default=SERVER, help="Postgres server URL, without a database name")
     parser.add_argument("--database", default="doomtp_dev", help="dropped and recreated at every start")
     parser.add_argument("--host", default="127.0.0.1")

@@ -131,11 +131,7 @@ class ExplainReport:
             ),
             "failed_index": self.failed_index,
             "ran": self.ran,
-            "result": (
-                {"code": self.run_result.code, "message": self.run_result.message}
-                if self.run_result
-                else None
-            ),
+            "result": ({"code": self.run_result.code, "message": self.run_result.message} if self.run_result else None),
             "executed": self.executed,
             "would_send": self.would_send,
         }
@@ -194,9 +190,7 @@ async def explain(
             (i for i in report.invocations if i.index == pre.failed_index and i.reason.endswith(" off")), None
         )
         if switched_off is not None and report.failure is not None:  # chat says "unknown"; explain says why
-            report.failure = dataclasses.replace(
-                report.failure, message=f"{switched_off.name}: {switched_off.reason}"
-            )
+            report.failure = dataclasses.replace(report.failure, message=f"{switched_off.name}: {switched_off.reason}")
         return report
     if run:
         await _dry_run(runtime, text, ctx, report, context)
@@ -258,9 +252,7 @@ def _stores(node: Node, ctx: ExecContext) -> list[dict[str, Any]]:
     ]
 
 
-async def _dry_run(
-    runtime: Runtime, text: str, ctx: ExecContext, report: ExplainReport, context: Context
-) -> None:
+async def _dry_run(runtime: Runtime, text: str, ctx: ExecContext, report: ExplainReport, context: Context) -> None:
     """Run for real, then throw away everything it would have changed (spec §9)."""
     sub = runtime.make_context(
         channel=ctx.channel,

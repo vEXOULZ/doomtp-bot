@@ -88,9 +88,7 @@ async def test_a_dump_can_be_restored(tmp_path: Path, committed_database: tuple[
 
 
 @needs_pg_dump
-async def test_each_schema_is_dumped_separately(
-    tmp_path: Path, committed_database: tuple[str, Databases]
-) -> None:
+async def test_each_schema_is_dumped_separately(tmp_path: Path, committed_database: tuple[str, Databases]) -> None:
     """ADR-0003 split state from the log so their retention could differ; that survives the port. The audit
     log, in vex-platform's `public.audit_log` (ADR-0027), is a dump of its own."""
     dsn, _ = committed_database

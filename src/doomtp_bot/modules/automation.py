@@ -89,8 +89,7 @@ async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
     return Result.success(
         "; ".join(_describe(t) for t in found),
         [
-            {"id": t.id, "type": t.type, "enabled": t.enabled, "expr": t.expr}
-            | ({"name": t.name} if t.name else {})
+            {"id": t.id, "type": t.type, "enabled": t.enabled, "expr": t.expr} | ({"name": t.name} if t.name else {})
             for t in found
         ],
     )
@@ -182,9 +181,7 @@ def _warning(ctx: CommandContext, type_: str) -> str:
         log_level=LogLevel.INVOCATIONS,
         examples=(
             Example(r"{sign}listen add hello /\bhello\b/ echo hi {$chatter.display}", ""),
-            Example(
-                r"{sign}listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}", ""
-            ),
+            Example(r"{sign}listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}", ""),
             Example("{sign}listen test hello there", ""),
         ),
     ),
@@ -241,9 +238,7 @@ def _test(ctx: CommandContext, text: str) -> Result:
         params=(Param("1+", "arguments", description=EVENT_USAGE),),
         required_role="moderator",
         log_level=LogLevel.INVOCATIONS,
-        examples=(
-            Example("{sign}event add raid echo welcome {event.user.name} and {event.viewers} raiders!", ""),
-        ),
+        examples=(Example("{sign}event add raid echo welcome {event.user.name} and {event.viewers} raiders!", ""),),
     ),
     raw_tail_subcommands=(("add", 3),),
 )

@@ -1,12 +1,15 @@
 #!/bin/sh
 # The one place branch rules are written down. The pre-commit hook calls it for the branch you are on,
-# and CI calls it for the branch a pull request comes from, so both say the same thing.
+# and CI calls it (through check-pr-branches.sh) for the branch a pull request comes from, so both say
+# the same thing.
 #
-#     .githooks/check-branch-name.sh feature/add-quotes
+#     .conventions/githooks/check-branch-name.sh feature/add-quotes
 #
 # Conventional Branch (https://conventional-branch.github.io/): <type>/<description>, where the
 # description is lowercase words joined by single hyphens. A ticket number is just another word:
 # `bugfix/issue-42-cooldown-off-by-one`.
+#
+# Synced from vEXOULZ/conventions: change it there, not here.
 set -eu
 
 branch=${1:-}
@@ -17,8 +20,8 @@ if [ -z "$branch" ]; then
     exit 2
 fi
 
-# Committing on a long-lived branch is what this is here to stop: work reaches dev and main through a
-# merge, not directly (ADR-0021).
+# Committing on a long-lived branch is what this is here to stop: work reaches main (and dev, in a repo
+# with flow = "dev") through a merge, not directly.
 case "$branch" in
     main | master | dev | develop)
         cat >&2 <<EOF
@@ -45,7 +48,7 @@ double hyphens or a trailing one. For example:
 
     feature/publish-packs-globally
     bugfix/issue-42-cooldown-off-by-one
-    chore/bump-twitchio
+    chore/bump-dependencies
 
     git branch -m <new-name>    renames the branch you are on
 EOF

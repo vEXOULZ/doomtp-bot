@@ -107,9 +107,7 @@ def _make_room(conn: sa.Connection, bot: str, largest: int, now: int) -> None:
     """Raise the bot's publisher quota and value cap to twice what the copy needs, if they are lower."""
     used = (
         conn.execute(
-            sa.text(
-                "SELECT coalesce(sum(size_bytes), 0) FROM variables WHERE ns LIKE 'publisher%' AND key1 = :bot"
-            ),
+            sa.text("SELECT coalesce(sum(size_bytes), 0) FROM variables WHERE ns LIKE 'publisher%' AND key1 = :bot"),
             {"bot": bot},
         ).scalar()
         or 0
@@ -153,9 +151,7 @@ def downgrade() -> None:
     if bot is None:
         return
     rows = conn.execute(
-        sa.text(
-            "SELECT key2, name, value FROM variables WHERE ns = :ns AND key1 = :bot AND name IN (:q, :n)"
-        ),
+        sa.text("SELECT key2, name, value FROM variables WHERE ns = :ns AND key1 = :bot AND name IN (:q, :n)"),
         {"ns": NS, "bot": bot, "q": QUOTES, "n": NEXT},
     ).mappings()
     channels: dict[str, dict[str, Any]] = {}

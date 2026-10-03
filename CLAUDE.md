@@ -1,6 +1,13 @@
+@.conventions/CLAUDE.md
+
 # doomtp-bot
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing anything. It covers branch names, the checks CI runs and the ADR process. Design decisions live in [docs/adr/](docs/adr/) and the overall design in [docs/architecture.md](docs/architecture.md).
+
+- Work branches go into `dev`; only `dev`, `release/*` and `hotfix/*` merge into `main` (ADR-0021).
+- `compose.yaml` is production and pulls `${BOT_IMAGE}`; `compose.dev.yaml` on top builds from the tree.
+- Tests need Postgres: `docker compose --profile test up -d postgres-test`, or `TEST_DATABASE_URL`.
+- A release tag must equal both `version` in pyproject.toml and `__version__` in `src/doomtp_bot/__init__.py`.
 
 ## graphify
 

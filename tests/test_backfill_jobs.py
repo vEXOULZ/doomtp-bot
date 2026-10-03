@@ -44,9 +44,7 @@ async def counted(event: str, before: float) -> float:
     return metrics.BACKFILL_JOBS.value(event=event) - before
 
 
-async def test_a_range_is_queued_once_run_and_recorded(
-    dbs: Databases, make_backfill_jobs: MakeBackfillJobs
-) -> None:
+async def test_a_range_is_queued_once_run_and_recorded(dbs: Databases, make_backfill_jobs: MakeBackfillJobs) -> None:
     provider = FakeProvider(HistoryResponse(lines=(PRIVMSG,)))
     jobs = await make_backfill_jobs(await backfill_for(dbs, provider))
     started, succeeded = (metrics.BACKFILL_JOBS.value(event=e) for e in ("started", "succeeded"))
@@ -67,9 +65,7 @@ async def test_a_range_is_queued_once_run_and_recorded(
     assert await jobs.queue_range(CHANNEL_ID, 1100, 6000, "chat:1") is not None
 
 
-async def test_a_channel_with_backfill_off_queues_nothing(
-    dbs: Databases, make_backfill_jobs: MakeBackfillJobs
-) -> None:
+async def test_a_channel_with_backfill_off_queues_nothing(dbs: Databases, make_backfill_jobs: MakeBackfillJobs) -> None:
     jobs = await make_backfill_jobs(await backfill_for(dbs, FakeProvider(), opted_in=False))
     with pytest.raises(BackfillRefused):
         await jobs.queue_range(CHANNEL_ID, 0, 1000, "chat:1")

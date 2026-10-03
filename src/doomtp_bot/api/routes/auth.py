@@ -42,9 +42,7 @@ def _auth(request: Request) -> TwitchAuth | None:
 async def login(request: Request) -> Response:
     auth = _auth(request)
     if auth is None:
-        return _page(
-            "Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503
-        )
+        return _page("Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503)
     return RedirectResponse(auth.login_url(), status_code=302)
 
 
@@ -54,9 +52,7 @@ async def connect(request: Request) -> Response:
     """The link a broadcaster follows to grant their own channel, with its events."""
     auth = _auth(request)
     if auth is None:
-        return _page(
-            "Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503
-        )
+        return _page("Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503)
     return RedirectResponse(auth.connect_url(), status_code=302)
 
 
@@ -66,15 +62,11 @@ async def callback(
 ) -> Response:
     auth = _auth(request)
     if auth is None:
-        return _page(
-            "Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503
-        )
+        return _page("Twitch is not configured", "Set TWITCH_CLIENT_ID and the client secret, then restart.", 503)
     try:
         account = await auth.complete(code, state, error)
     except OAuthError as exc:
-        return _page(
-            "Authorization failed", html.escape(str(exc)) + ". <a href='/auth/login'>try again</a>", 400
-        )
+        return _page("Authorization failed", html.escape(str(exc)) + ". <a href='/auth/login'>try again</a>", 400)
     if account.flow == "broadcaster":
         granted = ", ".join(sorted(account.scopes)) or "nothing"
         return _page(
@@ -106,9 +98,7 @@ def _back_to_login(reason: str, next_path: str) -> RedirectResponse:
 
 
 @router.get("/admin/login")
-async def admin_login(
-    request: Request, next_path: str | None = Query(default=None, alias="next")
-) -> Response:
+async def admin_login(request: Request, next_path: str | None = Query(default=None, alias="next")) -> Response:
     """Sign in with Twitch, then land on `next`: a path on this site, never a full URL."""
     signin: TwitchSignIn | None = getattr(request.app.state, "twitch_signin", None)
     if signin is None:
@@ -136,9 +126,7 @@ async def admin_callback(
         return _back_to_login("not_configured", safe_next(None))
     next_path = signin.next_for(state)
     try:
-        grant, access, next_path = await signin.complete(
-            code, state, error, request.cookies.get(SIGNIN_COOKIE)
-        )
+        grant, access, next_path = await signin.complete(code, state, error, request.cookies.get(SIGNIN_COOKIE))
     except SignInError as exc:
         return _back_to_login(exc.reason, next_path)
     auth: AdminAuth = request.app.state.admin_auth

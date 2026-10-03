@@ -171,9 +171,7 @@ class FillEnrichment:
             except Exception as exc:
                 log.warning("history.enrich_helix_failed", lookup="emotes", error=repr(exc))
                 emotes = []
-            self._helix_emotes = {
-                e["id"]: _emote(e["set_id"], e["owner_id"], e["formats"], "helix") for e in emotes
-            }
+            self._helix_emotes = {e["id"]: _emote(e["set_id"], e["owner_id"], e["formats"], "helix") for e in emotes}
         return {i: self._helix_emotes[i] for i in ids if i in self._helix_emotes}
 
     async def _from_cdn(self, ids: set[str]) -> dict[str, dict[str, Any]]:

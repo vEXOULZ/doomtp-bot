@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "The expression editor for the doomtp-bot web UI (ADR-0011).",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "node build.mjs",
     "test": "vitest run"

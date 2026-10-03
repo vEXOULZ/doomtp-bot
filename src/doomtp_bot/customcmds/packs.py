@@ -143,8 +143,7 @@ class PackService:
     async def system_pack(self, name: str) -> Pack | None:
         row = await fetch_one(
             self.conn,
-            "SELECT * FROM custom_command_packs"
-            " WHERE name = %s AND system_version IS NOT NULL AND status = 'active'",
+            "SELECT * FROM custom_command_packs WHERE name = %s AND system_version IS NOT NULL AND status = 'active'",
             (name.lower(),),
         )
         return self._pack(row) if row else None
@@ -152,9 +151,7 @@ class PackService:
     async def system_members(self) -> list[tuple[CustomCommand, Pack, bool]]:
         """Every member of every system pack, with whether it is internal. They resolve by name with the
         sentinels, so no channel has to publish them (ADR-0019)."""
-        select = self.commands._SELECT.replace(
-            "SELECT c.*", self._WITH_PACK + ", m.internal AS member_internal", 1
-        )
+        select = self.commands._SELECT.replace("SELECT c.*", self._WITH_PACK + ", m.internal AS member_internal", 1)
         async with await self.conn.execute(
             f"{select}"
             " JOIN custom_command_pack_members m ON m.command_id = c.id"

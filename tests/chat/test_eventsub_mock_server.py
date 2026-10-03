@@ -85,9 +85,7 @@ class MockServer:
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         assert CLI is not None
         # utf-8 explicitly: the CLI's ticks and crosses are not in a Windows console's own encoding.
-        done = subprocess.run(
-            [CLI, "event", *args], capture_output=True, text=True, encoding="utf-8", errors="replace"
-        )
+        done = subprocess.run([CLI, "event", *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
         # The CLI prints ✔ or ✗ for what we asked, and then checks GitHub for a newer version of itself —
         # a check that can crash the process long after the event was already on its way. Believe the tick.
         if "✗" in done.stdout or ("✔" not in done.stdout and done.returncode != 0):
@@ -192,9 +190,7 @@ async def listener(server: MockServer) -> AsyncIterator[Listener]:
         await client.close(save_tokens=False)
 
 
-async def test_the_welcome_names_a_session_and_events_reach_the_sink(
-    server: MockServer, listener: Listener
-) -> None:
+async def test_the_welcome_names_a_session_and_events_reach_the_sink(server: MockServer, listener: Listener) -> None:
     assert listener.socket.session_id and listener.client.sessions == [listener.socket.session_id]
 
     server.trigger("channel.follow")

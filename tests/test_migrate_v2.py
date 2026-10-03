@@ -43,9 +43,7 @@ async def test_every_stored_body_moves_to_2_0(dbs: Databases) -> None:
         "alice/check: the built-in shadows it",
     ]
 
-    row = await fetch_one(
-        dbs.bot, "SELECT body, syntax_version FROM custom_command_versions WHERE command_id = 'cc_a'"
-    )
+    row = await fetch_one(dbs.bot, "SELECT body, syntax_version FROM custom_command_versions WHERE command_id = 'cc_a'")
     assert row == {"body": V2_BODY, "syntax_version": "2.0"}
     [trigger] = await fetch_all(dbs.bot, "SELECT expr, syntax_version FROM triggers")
     assert trigger == {"expr": "echo hi {event.user.name} --> channel.raids", "syntax_version": "2.0"}

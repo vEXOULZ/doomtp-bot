@@ -90,9 +90,7 @@ async def _all(client: httpx.AsyncClient, key: str, **params: Any) -> list[dict[
     found: list[dict[str, Any]] = []
     cursor = None
     while True:
-        page = await client.get(
-            LOG, params={**params, **({"cursor": cursor} if cursor else {})}, headers=auth(key)
-        )
+        page = await client.get(LOG, params={**params, **({"cursor": cursor} if cursor else {})}, headers=auth(key))
         assert page.status_code == 200, page.text
         body = page.json()
         found += body["entries"]
@@ -201,9 +199,7 @@ async def test_pages_follow_on_without_gaps_or_repeats(
     assert len(whole) == 6
 
 
-async def test_filters_narrow_the_timeline(
-    client: httpx.AsyncClient, chatlog: Connection, write_key: str
-) -> None:
+async def test_filters_narrow_the_timeline(client: httpx.AsyncClient, chatlog: Connection, write_key: str) -> None:
     async def ids(**params: Any) -> list[tuple[str, Any]]:
         return _ids(await _all(client, write_key, order="asc", **params))
 
@@ -333,8 +329,6 @@ async def test_coverage_names_every_hole_and_what_filled_it(
 async def test_coverage_of_a_channel_never_logged_is_one_hole(
     client: httpx.AsyncClient, chatlog: Connection, write_key: str
 ) -> None:
-    body = (
-        await client.get(f"{LOG}/coverage", params={"since": T, "until": T + 1}, headers=auth(write_key))
-    ).json()
+    body = (await client.get(f"{LOG}/coverage", params={"since": T, "until": T + 1}, headers=auth(write_key))).json()
     assert body["gaps"] == [{"from": T, "to": T + 1, "reason": "before_log", "backfill": None}]
     assert body["sessions"] == [] and body["complete"] is False

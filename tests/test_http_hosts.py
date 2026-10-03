@@ -88,9 +88,7 @@ async def test_hosts_round_trip_through_the_database(dbs: Databases) -> None:
     assert await fresh.deny("api.openweathermap.org", actor="1", via="chat")
     assert not await fresh.deny("api.openweathermap.org", actor="1", via="chat")
     assert fresh.secret_for("api.openweathermap.org") is None
-    assert (
-        await fetch_one(dbs.bot, "SELECT 1 FROM http_hosts WHERE pattern = 'api.openweathermap.org'") is None
-    )
+    assert await fetch_one(dbs.bot, "SELECT 1 FROM http_hosts WHERE pattern = 'api.openweathermap.org'") is None
 
 
 async def test_a_secret_needs_a_listed_host_and_a_limit_a_sane_number(dbs: Databases) -> None:
@@ -146,9 +144,7 @@ class Harness:
         uid, name, display = USERS[who]
         channel = dataclasses.replace(self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!")
         chatter = self.policy.build_chatter(CHANNEL_ID, uid, name, display, frozenset())
-        ctx = self.runtime.make_context(
-            channel=channel, invoker=chatter, context=Context.LINE, rng=random.Random(3)
-        )
+        ctx = self.runtime.make_context(channel=channel, invoker=chatter, context=Context.LINE, rng=random.Random(3))
         report = await self.runtime.run(text, ctx)
         assert report is not None
         return report
@@ -167,12 +163,8 @@ async def test_admin_http_edits_the_list(h: Harness) -> None:
     assert (await h.run("owner", "!admin http list")).send == (
         "hosts: none · limits: 10/min per channel, 60/min per host"
     )
-    assert (
-        await h.run("owner", "!admin http allow API.Example.com")
-    ).send == "http can fetch api.example.com"
-    assert (
-        await h.run("owner", "!admin http allow wttr.in http")
-    ).send == "http can fetch wttr.in (http too)"
+    assert (await h.run("owner", "!admin http allow API.Example.com")).send == "http can fetch api.example.com"
+    assert (await h.run("owner", "!admin http allow wttr.in http")).send == "http can fetch wttr.in (http too)"
     await h.hosts.set_secret("api.example.com", KEY, actor="1", via="api")
     listed = await h.run("owner", "!admin http list")
     assert KEY.value not in (listed.send or "") and KEY.value not in repr(listed.result)

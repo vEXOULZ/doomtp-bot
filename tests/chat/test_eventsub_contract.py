@@ -53,9 +53,7 @@ def test_the_recorded_version_is_the_one_the_bot_subscribes_to(subscription: Any
 
     assert recorded["subscription_version"] == subscription.version
     # TwitchIO turns the subscription type into the handler name it dispatches to; ours must match.
-    derived = _SUB_MAPPING.get(subscription.type, subscription.type.removeprefix("channel.")).replace(
-        ".", "_"
-    )
+    derived = _SUB_MAPPING.get(subscription.type, subscription.type.removeprefix("channel.")).replace(".", "_")
     assert f"event_{derived}" == handler
     assert callable(getattr(_BotClient, handler))
 

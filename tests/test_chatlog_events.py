@@ -255,9 +255,7 @@ def test_clearmsg_is_a_message_delete() -> None:
 
 
 def test_a_timeout_keeps_its_length_under_irc() -> None:
-    line = (
-        "@ban-duration=600;room-id=1;target-user-id=400;tmi-sent-ts=1 :tmi.twitch.tv CLEARCHAT #doomtp :alice"
-    )
+    line = "@ban-duration=600;room-id=1;target-user-id=400;tmi-sent-ts=1 :tmi.twitch.tv CLEARCHAT #doomtp :alice"
     event = events.moderation("irc", {"line": line})
     assert event["target_user_id"] == "400"
     assert event["target_user_login"] == "alice"
@@ -296,9 +294,7 @@ def test_enrichment_adds_emote_details_and_splits_out_mentions() -> None:
 
 def test_a_mention_keeps_its_trailing_punctuation_as_text() -> None:
     mention = {"user_id": "5", "user_login": "bob", "user_name": "Bob", "source": "log"}
-    fragments = events.apply(
-        [{"type": "text", "text": "hi @Bob, ok", **NO_ONE}], {"mentions": {"bob": mention}}
-    )
+    fragments = events.apply([{"type": "text", "text": "hi @Bob, ok", **NO_ONE}], {"mentions": {"bob": mention}})
     assert [(f["type"], f["text"]) for f in fragments] == [
         ("text", "hi "),
         ("mention", "@Bob"),
@@ -308,9 +304,7 @@ def test_a_mention_keeps_its_trailing_punctuation_as_text() -> None:
 
 def test_a_cheermote_is_split_out_whatever_its_case() -> None:
     cheer = {"prefix": "cheer", "bits": 100, "tier": 100, "source": "twitch"}
-    fragments = events.apply(
-        [{"type": "text", "text": "Cheer100 nice", **NO_ONE}], {"cheermotes": {"cheer100": cheer}}
-    )
+    fragments = events.apply([{"type": "text", "text": "Cheer100 nice", **NO_ONE}], {"cheermotes": {"cheer100": cheer}})
     assert fragments == [
         {"type": "cheermote", "text": "Cheer100", **NO_ONE, "cheermote": cheer},
         {"type": "text", "text": " nice", **NO_ONE},

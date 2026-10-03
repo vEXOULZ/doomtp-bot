@@ -55,9 +55,7 @@ class FakeCdn:
         return self.known.get(emote_id, [])
 
 
-def message(
-    text: str, *, tags: str = "", at: int = 1000, nick: str = "alice", user_id: str = "400"
-) -> ChatMessage:
+def message(text: str, *, tags: str = "", at: int = 1000, nick: str = "alice", user_id: str = "400") -> ChatMessage:
     raw = f"@id=m{at};user-id={user_id};tmi-sent-ts={at}{';' + tags if tags else ''} :{nick}!{nick}@x PRIVMSG #doomtp :{text}"
     line = parse_line(raw)
     assert line is not None
@@ -78,9 +76,7 @@ async def live_emote(conn: Connection, emote: dict[str, Any]) -> None:
 
 # ── emotes ─────────────────────────────────────────────────────────────────
 async def test_an_emote_is_looked_up_in_the_log_then_helix_then_the_cdn(dbs: Databases) -> None:
-    await live_emote(
-        dbs.chatlog, {"id": "e-log", "emote_set_id": "s1", "owner_id": "100", "format": ["static"]}
-    )
+    await live_emote(dbs.chatlog, {"id": "e-log", "emote_set_id": "s1", "owner_id": "100", "format": ["static"]})
     twitch = FakeTwitch(emotes=[{"id": "e-helix", "set_id": "s2", "owner_id": "100", "formats": ["static"]}])
     cdn = FakeCdn(known={"e-cdn": ["static", "animated"]})
     fill = Enricher(dbs.chatlog, twitch, cdn).fill(CHANNEL_ID)

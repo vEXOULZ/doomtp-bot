@@ -94,15 +94,9 @@ def run(dsn: str, out_dir: Path, keep: int, names: Sequence[str] = tuple(DUMPS))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)"
-    )
-    parser.add_argument(
-        "--out-dir", type=Path, default=Path("/data/backups"), help="where the dumps are written"
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)")
+    parser.add_argument("--out-dir", type=Path, default=Path("/data/backups"), help="where the dumps are written")
     parser.add_argument(
         "--keep",
         type=int,

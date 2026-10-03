@@ -91,9 +91,7 @@ class Harness:
     reply_to: dict[str, str] | None = None  # the message the asking one replies to
 
     def context(self, who: str) -> Any:
-        channel = dataclasses.replace(
-            self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!", live=self.live
-        )
+        channel = dataclasses.replace(self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!", live=self.live)
         user = USERS[who]
         badges = frozenset({"moderator"}) if who == "mod" else frozenset()
         chatter = self.policy.build_chatter(CHANNEL_ID, user[0], user[1], user[2], badges)
@@ -191,9 +189,7 @@ async def test_a_shoutout_is_the_card_alone_and_fails_while_offline(h: Harness) 
 
 async def test_a_refused_card_fails_with_twitchs_reason(h: Harness) -> None:
     h.live = True
-    h.twitch.refuse_shoutout = (
-        "Twitch allows one shoutout every 2 minutes, and the same streamer once an hour"
-    )
+    h.twitch.refuse_shoutout = "Twitch allows one shoutout every 2 minutes, and the same streamer once an hour"
     report = await h.run("mod", "!shoutout @friend")
     assert report.result.code == Code.FAIL and "2 minutes" in (report.result.message or "")
     assert (await h.run("mod", "!shoutout @doomtp")).result.message == "that's this channel"

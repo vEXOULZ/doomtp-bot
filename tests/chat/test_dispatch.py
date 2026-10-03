@@ -222,10 +222,7 @@ async def test_join_links_the_connect_page_instead_of_joining(h: Harness) -> Non
     await h.say("other", "!join", channel=BOT_ID)  # "other" types !join in the bot's own channel
     await h.settle()
     reply = h.twitch.sent[-1][1]
-    assert (
-        reply
-        == f"to add the bot, the broadcaster opens {CONNECT_URL} and signs in to Twitch as their channel"
-    )
+    assert reply == f"to add the bot, the broadcaster opens {CONNECT_URL} and signs in to Twitch as their channel"
     assert not h.channels.is_active("500") and "500" not in h.twitch.subscribed
 
     await h.say("bob", "!join basic bob", channel=BOT_ID)  # a cooldown is per chatter, so not "other" again
@@ -268,9 +265,7 @@ async def test_part_unsubscribes_so_join_works_again(h: Harness) -> None:
     await h.settle()
     assert h.twitch.sent[-1][1].startswith("joined #doomtp") and CHANNEL_ID in h.twitch.subscribed
     assert "Backfill is off" in h.twitch.sent[-1][1]  # a channel coming back keeps its choice
-    assert await h.rows(
-        f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}' ORDER BY id"
-    ) == [
+    assert await h.rows(f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}' ORDER BY id") == [
         ("part",),
         (None,),
     ]
@@ -283,9 +278,7 @@ async def test_a_403_on_a_send_leaves_the_channel_and_flags_it(h: Harness) -> No
     settings = h.policy.channel_settings(CHANNEL_ID)
     assert settings is not None and settings.status == "banned" and not settings.active
     assert CHANNEL_ID not in h.twitch.subscribed
-    assert await h.rows(f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}'") == [
-        ("part",)
-    ]
+    assert await h.rows(f"SELECT end_reason FROM log_sessions WHERE channel_id = '{CHANNEL_ID}'") == [("part",)]
     assert await h.rows("SELECT dropped_reason FROM outbound_msgs") == [(BANNED,)]
     async with await h.dbs.bot.execute(
         "SELECT actor_id AS actor_user_id, via, after FROM public.audit_log WHERE action = 'channel.set.status'"

@@ -215,11 +215,7 @@ async def warn_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
             f"announce [colour] <text…>: the colour is one of {', '.join(ANNOUNCE_COLORS)}, the"
             " channel's own if left out. Says nothing else."
         ),
-        params=(
-            Param(
-                "1+", "text", required=True, max_len=MAX_ANNOUNCEMENT_CHARS, description="What to announce"
-            ),
-        ),
+        params=(Param("1+", "text", required=True, max_len=MAX_ANNOUNCEMENT_CHARS, description="What to announce"),),
         required_role="moderator",
         requires=(MODERATE,),
         side_effects=True,
@@ -252,9 +248,7 @@ async def announce_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
             " (up to 3 months, 0 if left out)."
         ),
         params=(
-            Param(
-                "1", "mode", type="choice", choices=tuple(CHAT_MODES), required=True, description="Which mode"
-            ),
+            Param("1", "mode", type="choice", choices=tuple(CHAT_MODES), required=True, description="Which mode"),
             Param("2", "setting", description="on, off, or how long"),
         ),
         required_role="moderator",
@@ -324,9 +318,7 @@ async def clear_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         module=MODULE,
         summary="Turn Twitch's Shield Mode on or off",
         description="shield on|off: uses the channel's Shield Mode settings from Twitch.",
-        params=(
-            Param("1", "state", type="choice", choices=("on", "off"), required=True, description="on or off"),
-        ),
+        params=(Param("1", "state", type="choice", choices=("on", "off"), required=True, description="on or off"),),
         required_role="moderator",
         requires=(MODERATE,),
         side_effects=True,
@@ -513,9 +505,7 @@ async def raid_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     if user["id"] == ctx.channel.id:
         raise CommandError("that's this channel")
     await _act(ctx, lambda t: t.start_raid(ctx.channel.id, user["id"]))
-    return Result.success(
-        f"raiding {_name(user)}, Twitch sends it after the countdown", {"user": user["name"]}
-    )
+    return Result.success(f"raiding {_name(user)}, Twitch sends it after the countdown", {"user": user["name"]})
 
 
 @command(

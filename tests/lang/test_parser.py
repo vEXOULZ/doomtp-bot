@@ -79,9 +79,7 @@ def test_spans_cover_source() -> None:
 
 def _typed(inv: Invocation) -> list[tuple[str, str]]:
     """Each argument's source as (gap, text), placeholders shown by their own source."""
-    return [
-        (s.gap, "".join(p if isinstance(p, str) else f"<{p.span}>" for p in s.parts)) for s in inv.sources
-    ]
+    return [(s.gap, "".join(p if isinstance(p, str) else f"<{p.span}>" for p in s.parts)) for s in inv.sources]
 
 
 def test_arguments_keep_their_source_for_raw() -> None:

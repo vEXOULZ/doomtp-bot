@@ -42,9 +42,7 @@ class BackfillQueue:
         self.paused_until_ms: int | None = None  # the provider paused: nothing runs before then
 
     # ── queueing ──
-    async def queue_range(
-        self, channel_id: str, from_ms: int, to_ms: int, requested_by: str
-    ) -> BackfillJob | None:
+    async def queue_range(self, channel_id: str, from_ms: int, to_ms: int, requested_by: str) -> BackfillJob | None:
         """Queue one range. None when the same range is already queued or running."""
         if self.service.login_if_enabled(channel_id) is None:
             raise BackfillRefused("backfill is off for this channel")
@@ -186,8 +184,7 @@ class BackfillQueue:
         async with transaction(self.conn):
             row = await fetch_one(
                 self.conn,
-                "UPDATE backfill_jobs SET state = 'queued', started_at = NULL, error = %s WHERE id = %s"
-                " RETURNING *",
+                "UPDATE backfill_jobs SET state = 'queued', started_at = NULL, error = %s WHERE id = %s RETURNING *",
                 (error, job.id),
             )
         assert row is not None

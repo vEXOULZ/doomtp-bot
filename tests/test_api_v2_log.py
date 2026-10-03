@@ -27,15 +27,11 @@ LOG = f"/api/v2/channels/{CHANNEL_LOGIN}/log"
 
 
 def iso(ms: int) -> str:
-    return (
-        dt.datetime.fromtimestamp(ms / 1000, dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    )
+    return dt.datetime.fromtimestamp(ms / 1000, dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def same_time(value: str, ms: int) -> bool:
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00")) == dt.datetime.fromtimestamp(
-        ms / 1000, dt.UTC
-    )
+    return dt.datetime.fromisoformat(value.replace("Z", "+00:00")) == dt.datetime.fromtimestamp(ms / 1000, dt.UTC)
 
 
 def _ids(entries: list[dict[str, Any]]) -> list[tuple[str, Any]]:

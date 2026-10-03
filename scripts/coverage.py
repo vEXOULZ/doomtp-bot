@@ -51,9 +51,7 @@ def _duration(ms: int) -> str:
     return f"{seconds / 60:.0f}m" if seconds < 5400 else f"{seconds / 3600:.1f}h"
 
 
-def gaps(
-    chatlog: psycopg.Connection[dict[str, object]], channel_id: str, since_ms: int
-) -> list[tuple[int, int]]:
+def gaps(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, since_ms: int) -> list[tuple[int, int]]:
     """Between one session's end and the next one's start — the same rule the bot fills by."""
     rows = chatlog.execute(
         "SELECT started_at, ended_at FROM log_sessions WHERE channel_id = %s ORDER BY started_at",
@@ -129,12 +127,8 @@ def report(dsn: str, recent_days: int) -> tuple[list[str], int, int]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)"
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)")
     parser.add_argument(
         "--days",
         type=int,

@@ -83,9 +83,7 @@ async def add_admin(request: Request, body: AdminBody, caller: Caller = ADMIN_WR
     user = await _state(request, "twitch").resolve_user(body.login.lstrip("@"))
     if user is None:
         raise HTTPException(status_code=404, detail=f"no Twitch user named {body.login}")
-    await _policy(request).mutate(
-        lambda repo: repo.set_global_admin(user["id"], user["name"], True, caller.actor)
-    )
+    await _policy(request).mutate(lambda repo: repo.set_global_admin(user["id"], user["name"], True, caller.actor))
     return {"user_id": user["id"], "login": user["name"], "admin": True}
 
 
@@ -166,9 +164,7 @@ async def global_filters(request: Request, caller: Caller = ADMIN_READ) -> dict[
 
 
 @router.post("/global/filters", status_code=201)
-async def add_global_filter(
-    request: Request, body: FilterBody, caller: Caller = ADMIN_WRITE
-) -> dict[str, Any]:
+async def add_global_filter(request: Request, body: FilterBody, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     return await add_filter_to(request, GLOBAL, body, caller)
 
 
@@ -180,9 +176,7 @@ async def patch_global_filter(
 
 
 @router.delete("/global/filters/{entry_id}")
-async def remove_global_filter(
-    request: Request, entry_id: int, caller: Caller = ADMIN_WRITE
-) -> dict[str, Any]:
+async def remove_global_filter(request: Request, entry_id: int, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     return await remove_filter_from(request, GLOBAL, entry_id, caller)
 
 
@@ -206,9 +200,7 @@ async def unpublish_global(request: Request, name: str, caller: Caller = ADMIN_W
 
 
 @router.post("/global/packs", status_code=201)
-async def publish_global_pack(
-    request: Request, body: PackRef, caller: Caller = ADMIN_WRITE
-) -> dict[str, Any]:
+async def publish_global_pack(request: Request, body: PackRef, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     return await publish_pack_in(request, GLOBAL, body, caller)
 
 
