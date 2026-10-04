@@ -132,7 +132,7 @@ ADR-0019 keeps out of Python.
 3. [x] `PyramidWatcher` and the `pyramid` trigger type, with tests for complete, broken by the bot before
    and after the last row, broken by another chatter, fumbled, invisible characters and interleaved
    channels.
-4. [ ] The `pyramid` pack: `pyramid_on_event`, `pyramid`, `pyramid_fact`, the shared facts, the
+4. [x] The `pyramid` pack: `pyramid_on_event`, `pyramid`, `pyramid_fact`, the shared facts, the
    settings above and the stats, installed by `scripts/starter_pack.py`.
-5. [ ] Documentation: architecture §7, `{event.*}` for `pyramid` in namespaces.md, and the README's
+5. [x] Documentation: architecture §7, `{event.*}` for `pyramid` in namespaces.md, and the README's
    command list.
