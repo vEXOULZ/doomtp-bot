@@ -175,6 +175,14 @@ turns the set off with `!module disable starter` or one command with `!cmd disab
 hug` shows the body of any of them. `!deaths` writes a channel variable, so each channel allows it once
 with `!cc grant deaths channel.deaths`.
 
+The same step installs the `pyramid` pack (ADR-0028), which breaks emote pyramids with a pyramid fact,
+congratulates the ones that finish and keeps stats. It brings its own trigger (ADR-0029), so it runs in every
+channel until `!module disable pyramid`. A moderator sets the chance with `!pyramid chance 10` (percent per
+row); `chanceup` and `chancedown` set the rows going up and coming down apart, and start at 25 and 75. `!pyramid` says the stats, `!pyramid top [breakers]` the leaders, `!pyramid fact [number]` a fact
+and `!pyramid settings` the rest. Moderators also have `minpeak <n>`, `exempt <off|sub|vip|mod|broadcaster>`,
+`sharedfacts <on|off>`, `addfact <fact>`, `delfact <number>` and `congrats <message|off|reset>`. Escape the
+braces in a congratulations message so they fill in later: `!pyramid congrats GG \{event.user.display\}!`.
+
 ## Deploying an update
 
 The chat log records when the bot was listening, and fills what it missed from logs.ivr.fi when it

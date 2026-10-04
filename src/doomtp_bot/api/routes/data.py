@@ -69,7 +69,7 @@ from doomtp_bot.runtime.variables import (
     Limits,
     Space,
 )
-from doomtp_bot.triggers.service import TRIGGER_TYPES, TriggerError, TriggerService
+from doomtp_bot.triggers.service import TRIGGER_TYPES, PackTriggerError, TriggerError, TriggerService
 from doomtp_bot.variables.store import LimitOverride
 from doomtp_bot.webfetch.fetcher import Secret
 from doomtp_bot.webfetch.hosts import MAX_LIMIT, HostError, HostStore
@@ -784,6 +784,7 @@ def _trigger_json(trigger: Any) -> dict[str, Any]:
         "run_as_rank": trigger.run_as_rank,
         "log_level": trigger.log_level.value,
         "created_by": trigger.created_by,
+        "pack": trigger.pack,  # set on a pack's trigger, which can't be changed here (ADR-0029)
     }
 
 
@@ -854,17 +855,23 @@ async def patch_trigger(
                 prefix=settings.prefix,
                 via=caller.actor.via,
             )
+        except PackTriggerError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except TriggerError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if updated is None:
             raise missing
-    if body.enabled is not None and not await triggers.set_enabled(
-        channel_id=settings.channel_id,
-        trigger_id=trigger_id,
-        enabled=body.enabled,
-        actor_user_id=caller.actor.user_id,
-        via=caller.actor.via,
-    ):
+    try:
+        toggled = body.enabled is None or await triggers.set_enabled(
+            channel_id=settings.channel_id,
+            trigger_id=trigger_id,
+            enabled=body.enabled,
+            actor_user_id=caller.actor.user_id,
+            via=caller.actor.via,
+        )
+    except PackTriggerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not toggled:
         raise missing
     return _trigger_json(next(t for t in triggers.in_channel(settings.channel_id) if t.id == trigger_id))
 
@@ -873,12 +880,16 @@ async def patch_trigger(
 async def remove_trigger(request: Request, login: str, trigger_id: int, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
-    if not await triggers.remove(
-        channel_id=settings.channel_id,
-        trigger_id=trigger_id,
-        actor_user_id=caller.actor.user_id,
-        via=caller.actor.via,
-    ):
+    try:
+        removed = await triggers.remove(
+            channel_id=settings.channel_id,
+            trigger_id=trigger_id,
+            actor_user_id=caller.actor.user_id,
+            via=caller.actor.via,
+        )
+    except PackTriggerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not removed:
         raise HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
     return {"id": trigger_id, "removed": True}
 

@@ -59,6 +59,7 @@ from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp, VexoulzAuth
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.watchers import default_watchers
 from doomtp_bot.webfetch.fetcher import HttpFetcher
 from doomtp_bot.webfetch.hosts import HostStore
 
@@ -105,8 +106,9 @@ async def run(settings: Settings) -> None:
         await dbs.close()
         raise
     history = IvrLogsProvider(settings.ivr_logs_url)
-    triggers = TriggerService(dbs.bot, filters=content_filter)
+    triggers = TriggerService(dbs.bot, filters=content_filter, scope=policy)
     await triggers.reload()
+    packs.on_published = triggers.reload  # a pack's triggers follow where it is published (ADR-0029)
     activity = ChatActivity()
     writer = ChatLogWriter(dbs.chatlog)
     stale = await writer.close_stale_sessions()
@@ -242,6 +244,7 @@ async def run(settings: Settings) -> None:
         automod=(AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None),
         customcmds=customcmds,
         bot_badges=bot_badges,
+        watchers=default_watchers(),
     )
 
     poller = (

@@ -8,6 +8,7 @@ blackjack` turns a whole game off in a channel.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -84,6 +85,13 @@ class PackService:
     def __init__(self, conn: Connection, commands: CustomCommandService) -> None:
         self.conn = conn
         self.commands = commands
+        # Called after a pack is published, unpublished or deleted: the trigger cache follows where each
+        # pack is published (ADR-0029). Wired in once the trigger service exists.
+        self.on_published: Callable[[], Awaitable[None]] | None = None
+
+    async def _published_changed(self) -> None:
+        if self.on_published is not None:
+            await self.on_published()
 
     # ── reads ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -325,6 +333,7 @@ class PackService:
                 (now_ms(), pack.id),
             )
             await self.commands._audit(actor_via, pack.owner_user_id, "pack.delete", pack.id, pack.name, None)
+        await self._published_changed()
 
     async def conflicts(self, channel_id: str, pack: Pack) -> list[str]:
         """Member names already published in this channel by a different command (ADR-0012)."""
@@ -360,6 +369,7 @@ class PackService:
                 {"channel": channel_id, "name": pack.name},
                 channel_id=channel_id,
             )
+        await self._published_changed()
         return PackPublication(channel_id, pack.id, published_by, "active")
 
     async def unpublish(
@@ -387,6 +397,7 @@ class PackService:
                 )
         if cur.rowcount:
             await self.commands._grants_changed()
+            await self._published_changed()
         return bool(cur.rowcount)
 
 

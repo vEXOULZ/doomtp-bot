@@ -64,7 +64,7 @@ exemptions. It reports every pyramid from width 2 up.
 
 | Field | Meaning |
 |-------|---------|
-| `pyramid_id` | a counter per channel, so a pack can match a break attempt to its outcome |
+| `pyramid_id` | the message id of its first row, so a pack can match a break attempt to its outcome |
 | `phase` | `step` (a new row), `complete` (the builder reached width 1 again) or `broken` |
 | `direction` | `up` or `down`, on `step` |
 | `token`, `width`, `peak` | the emote, the current row's width, the widest row so far |
@@ -73,7 +73,8 @@ exemptions. It reports every pyramid from width 2 up.
 | `by_bot` | on `broken`: the bot's own line broke it |
 | `self_broken` | on `broken`: the builder broke it with a wrong row |
 
-- The chatter of the trigger run is the builder, with badges.
+- The chatter of the trigger run is the builder, with badges, except on `broken`, where it is the
+  breaker. So per-chatter stats land on the right person, and `!var top` can rank breakers.
 - **A break counts when the bot's line arrives before the builder's last row.** If the last row arrives
   first, the pyramid is `complete`, and the bot's line after it is only a line. Both cases follow from
   the order the watcher sees.
@@ -81,14 +82,15 @@ exemptions. It reports every pyramid from width 2 up.
 ### Everything else is the `pyramid` pack
 
 The rest is derived commands in a bot-owned `pyramid` pack, installed by `scripts/starter_pack.py`
-(ADR-0019) and published globally. A channel turns it on with one trigger, `!event add pyramid
-pyramid_on_event`, so a fix to the pack reaches every channel without touching its trigger.
+(ADR-0019) and published globally. Its trigger only calls `pyramid_on_event`, so a fix to the pack reaches
+every channel without touching the trigger. *Amended by ADR-0029:* the pack brings that trigger itself, so
+it runs wherever the pack's module is on; channels no longer add `!event add pyramid pyramid_on_event`.
 
 Per-channel settings, in channel variables:
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| chance | 0 | percent chance, rolled on **every row**, that the bot posts a fact to break it |
+| chance up, chance down | 25, 75 | percent chance, rolled on **every row**, that the bot posts a fact to break it; one for rows going up, one for rows coming down |
 | min peak | 3 | the smallest peak that counts as a pyramid in stats and congratulations |
 | exempt rank | off | builders at or above this rank are never broken. Off means above `bot_owner`, so nobody |
 | congratulations | a short line | posted when a pyramid completes; empty turns it off |
@@ -125,13 +127,13 @@ ADR-0019 keeps out of Python.
 
 ## Action Items
 
-1. [ ] Chat watchers: the `watchers` package, the dispatcher hook before the `is_self` return, live
+1. [x] Chat watchers: the `watchers` package, the dispatcher hook before the `is_self` return, live
    lines only, and the per-channel gate.
-2. [ ] Badges for trigger and listener runs, so `$chatter.rank` includes badge roles.
-3. [ ] `PyramidWatcher` and the `pyramid` trigger type, with tests for complete, broken by the bot before
+2. [x] Badges for trigger and listener runs, so `$chatter.rank` includes badge roles.
+3. [x] `PyramidWatcher` and the `pyramid` trigger type, with tests for complete, broken by the bot before
    and after the last row, broken by another chatter, fumbled, invisible characters and interleaved
    channels.
-4. [ ] The `pyramid` pack: `pyramid_on_event`, `pyramid`, `pyramid_fact`, the shared facts, the
+4. [x] The `pyramid` pack: `pyramid_on_event`, `pyramid`, `pyramid_fact`, the shared facts, the
    settings above and the stats, installed by `scripts/starter_pack.py`.
-5. [ ] Documentation: architecture §7, `{event.*}` for `pyramid` in namespaces.md, and the README's
+5. [x] Documentation: architecture §7, `{event.*}` for `pyramid` in namespaces.md, and the README's
    command list.

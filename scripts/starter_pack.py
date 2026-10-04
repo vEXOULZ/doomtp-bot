@@ -24,11 +24,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
 import psycopg
 
+from doomtp_bot.clock import now_ms
 from doomtp_bot.config import Settings
 from doomtp_bot.customcmds.packs import RESERVED_PACK_NAMES, Pack, PackService
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
@@ -44,9 +48,10 @@ from doomtp_bot.customcmds.system import (
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.roles import GLOBAL
-from doomtp_bot.storage.db import Connection, check_schema, configure_event_loop, connect
+from doomtp_bot.policy.roles import GLOBAL, MODERATOR_RANK
+from doomtp_bot.storage.db import Connection, check_schema, configure_event_loop, connect, fetch_value
 from doomtp_bot.storage.schema import SchemaMismatch
+from doomtp_bot.triggers.service import TriggerError, TriggerService
 
 PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
@@ -233,6 +238,316 @@ QUOTES: tuple[Derived, ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class PackTrigger:
+    """A trigger the pack brings (ADR-0029): it fires in every channel where the pack is published and its
+    module is on. Any type works: an event, a listener, a timer or a cron. `key` names it within the pack."""
+
+    key: str
+    type: str
+    expr: str
+    match: dict[str, Any] = field(default_factory=dict)
+    schedule: dict[str, Any] = field(default_factory=dict)
+    run_as_rank: int = MODERATOR_RANK
+
+
+PYRAMID_PACK = "pyramid"
+PYRAMID_SUMMARY = "Break emote pyramids with a fact, congratulate the ones that finish, and keep stats"
+_PY, _PS = "publisher.channel.pyramid", "publisher.channel.pyramid_stats"
+_PF, _PSHARED = "publisher.channel.pyramid_facts", "publisher.pyramid_facts"
+_NOBODY = 100000  # an exempt rank above bot_owner: nobody is exempt
+_MOD_ONLY = "fail changing pyramid settings takes moderator rank"
+_WHAT = '(arg.1 ?? "-")'
+# Post a fact and remember that this pyramid has had its try.
+_BREAK = (
+    f"( pyramid_fact 0 -> {_PY}[last_fact] && var set {_PY}[attempt] {{event.pyramid_id}}"
+    f" && echo {{{_PY}[last_fact][value]}} ) || true"
+)
+_CHANCES = f"{{{_PY}[chance_up] ?? 25}}% going up, {{{_PY}[chance_down] ?? 75}}% going down"
+_IS_PYRAMID = '(event.type ?? "-") == "pyramid"'
+_ATTEMPTED = f'({_PY}[attempt] ?? "-") == event.pyramid_id'
+# A broken pyramid counts from one row short of the minimum, or whenever the bot tried to break it.
+_COUNTS_BROKEN = f"event.peak >= ({_PY}[min_peak] ?? 3) - 1 or {_ATTEMPTED}"
+
+# The pyramid chat watcher (ADR-0028) fires a `pyramid` trigger event on every row, on completion and on a
+# break, and the pack's own trigger runs `pyramid_on_event` for it (ADR-0029). Settings live in the bot's
+# `publisher.channel.pyramid` map, totals in `publisher.channel.pyramid_stats`, per-chatter counts in
+# `publisher.channel.chatter.pyramids` (built) and `.pyramid_breaks` (broke someone's), the channel's own
+# facts in `publisher.channel.pyramid_facts`, and the shared facts in `publisher.pyramid_facts`, which
+# `install` writes from PYRAMID_FACTS. Only this pack's commands write any of them.
+PYRAMID: tuple[Derived, ...] = (
+    Derived(
+        name="pyramid",
+        summary="Pyramid stats, the top builders and breakers, facts and settings",
+        body=(
+            f'ifelse {{{_WHAT} == "-" or {_WHAT} == "stats"}} ( pyramid_stats )'
+            f' ( ifelse {{{_WHAT} == "top"}} ( pyramid_top {{arg.2 ?? builders}} )'
+            f' ( ifelse {{{_WHAT} == "fact"}} ( pyramid_fact {{arg.2 ?? 0}} )'
+            f' ( ifelse {{{_WHAT} == "settings"}} ( pyramid_settings )'
+            f' ( ifelse {{{_WHAT} == "addfact"}} ( pyramid_addfact {{arg.2+raw ?? -}} )'
+            f' ( ifelse {{{_WHAT} == "delfact"}} ( pyramid_delfact {{arg.2 ?? 0}} )'
+            f' ( ifelse {{{_WHAT} == "exempt"}} ( pyramid_exempt {{arg.2 ?? -}} )'
+            " ( pyramid_set {arg.1} {arg.2+ ?? -} ) ) ) ) ) ) )"
+        ),
+        declarations=(
+            '1+ name=what required=no "stats, top [breakers], fact [number], settings, or a setting:'
+            ' chance, chanceup, chancedown, minpeak, exempt, congrats, sharedfacts, addfact, delfact"',
+        ),
+    ),
+    Derived(
+        name="pyramid_on_event",
+        summary="Reacts to pyramid trigger events, through the pack's own trigger",
+        body=(
+            f"ifelse {{{_IS_PYRAMID}}}"
+            ' ( ifelse {event.phase == "step"} ( pyramid_step )'
+            ' ( ifelse {event.phase == "complete"} ( pyramid_complete ) ( pyramid_broken ) ) )'
+        ),
+        note="runs in every channel with the pyramid module on; `!module disable pyramid` turns it off",
+    ),
+    Derived(
+        name="pyramid_step",
+        summary="Maybe break a pyramid with a fact",
+        # One try per pyramid: once the bot's line is out, it breaks the pyramid wherever it lands.
+        body=(
+            f"ifelse {{$chatter.rank < ({_PY}[exempt_rank] ?? {_NOBODY}) and not ({_ATTEMPTED})}}"
+            ' ( ifelse {event.direction == "up"}'
+            f" ( random 1-100 | ifelse {{_ <= ({_PY}[chance_up] ?? 25)}} ( {_BREAK} ) )"
+            f" ( random 1-100 | ifelse {{_ <= ({_PY}[chance_down] ?? 75)}} ( {_BREAK} ) ) )"
+        ),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_complete",
+        summary="Count a finished pyramid and congratulate its builder",
+        body=(
+            f"ifelse {{event.peak >= ({_PY}[min_peak] ?? 3)}}"
+            f" ( var incr {_PS}[completed] && var incr publisher.channel.chatter.pyramids"
+            f" && ( ifelse {{event.peak > ({_PS}[biggest] ?? 0)}}"
+            f" ( var set {_PS}[biggest] {{event.peak}} && var set {_PS}[biggest_by] {{event.user.display}} ) )"
+            f" && ( ifelse {{{_ATTEMPTED}}} ( var incr {_PS}[dodged] ) )"
+            f' && ifelse {{({_PY}[congrats] ?? "-") != "off"}}'
+            f" ( echo {{{_PY}[congrats]:template ?? {{event.user.display}} built a {{event.peak}}-wide"
+            " {event.token} pyramid!} ) ( true ) )"
+        ),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_broken",
+        summary="Count a broken pyramid: by the bot, by another chatter, or fumbled by its builder",
+        # The run's chatter is whoever broke it (ADR-0028), so `pyramid_breaks` lands on the breaker.
+        body=(
+            f"ifelse {{{_COUNTS_BROKEN}}}"
+            f" ( ifelse {{event.by_bot}} ( var incr {_PS}[broken_by_bot] && true )"
+            f" ( ifelse {{event.self_broken}} ( var incr {_PS}[fumbled] && true )"
+            f" ( var incr {_PS}[broken_by_chatters] && var incr publisher.channel.chatter.pyramid_breaks && true ) ) )"
+        ),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_fact",
+        summary="Say a random pyramid fact, or the channel's fact by number",
+        body=(
+            "ifelse {(arg.number ?? 0) > 0}"
+            f" ( ifelse {{arg.number <= ({_PF}:len ?? 0)}} ( echo #{{arg.number}}: {{{_PF}[arg.number - 1]}} )"
+            " ( fail 3 there is no pyramid fact #{arg.number} ) )"
+            f" ( ifelse {{({_PY}[shared_facts] ?? true) and ({_PSHARED}:len ?? 0) > 0}}"
+            f" ( ifelse {{({_PF}:len ?? 0) > 0}} ( random {{{_PF} + {_PSHARED}}} ) ( random {{{_PSHARED}}} ) )"
+            f" ( ifelse {{({_PF}:len ?? 0) > 0}} ( random {{{_PF}}} )"
+            " ( fail 3 no pyramid facts yet. Add one with {$channel.prefix}pyramid addfact <fact> ) ) )"
+        ),
+        declarations=('1 name=number type=int required=no "the channel\'s fact by number; none for a random one"',),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_stats",
+        summary="Say the channel's pyramid totals",
+        body=(
+            f"echo pyramids: {{{_PS}[completed] ?? 0}} built, {{{_PS}[broken_by_bot] ?? 0}} broken by me,"
+            f" {{{_PS}[broken_by_chatters] ?? 0}} broken by chat, {{{_PS}[fumbled] ?? 0}} fumbled,"
+            f" {{{_PS}[dodged] ?? 0}} got past me"
+            f" | ifelse {{({_PS}[biggest] ?? 0) > 0}}"
+            f" ( echo {{_}}. Biggest: {{{_PS}[biggest]}} wide by {{{_PS}[biggest_by]}} ) ( echo {{_}} )"
+        ),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_top",
+        summary="Say the top pyramid builders or breakers",
+        body=(
+            'ifelse {arg.board == "breakers"}'
+            " ( var top publisher.channel.chatter.pyramid_breaks | ifelse {_:len > 0}"
+            " ( echo top pyramid breakers: {_.message} ) ( echo nobody has broken a pyramid yet ) )"
+            " ( var top publisher.channel.chatter.pyramids | ifelse {_:len > 0}"
+            " ( echo top pyramid builders: {_.message} ) ( echo nobody has built a pyramid yet ) )"
+        ),
+        declarations=('1 name=board required=yes "builders or breakers"',),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_settings",
+        summary="Say the channel's pyramid settings",
+        body=(
+            f"echo break chance {_CHANCES}, pyramids count from {{{_PY}[min_peak] ?? 3}} wide,"
+            f" exempt: {{{_PY}[exempt] ?? off}}, shared facts: {{{_PY}[shared_facts] ?? true}},"
+            f" channel facts: {{{_PF}:len ?? 0}},"
+            f' congratulations: {{({_PY}[congrats] ?? "default") == "off" and "off" or "on"}}'
+        ),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_set",
+        summary="Change a pyramid setting (moderators)",
+        body=(
+            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
+            ' ( ifelse {arg.1 == "chance" or arg.1 == "chanceup" or arg.1 == "chancedown"}'
+            " ( ifelse {0 <= (arg.2:int ?? -1) <= 100}"
+            f' ( ( ifelse {{arg.1 != "chancedown"}} ( var set {_PY}[chance_up] {{arg.2:int}} ) ( true ) )'
+            f' && ( ifelse {{arg.1 != "chanceup"}} ( var set {_PY}[chance_down] {{arg.2:int}} ) ( true ) )'
+            f" && echo pyramid break chance is now {_CHANCES} )"
+            " ( fail 2 usage: pyramid {arg.1} <0-100> ) )"
+            ' ( ifelse {arg.1 == "minpeak"}'
+            " ( ifelse {2 <= (arg.2:int ?? 0) <= 50}"
+            f" ( var set {_PY}[min_peak] {{arg.2:int}} && echo pyramids now count from {{arg.2:int}} wide )"
+            " ( fail 2 usage: pyramid minpeak <2-50> ) )"
+            ' ( ifelse {arg.1 == "sharedfacts"}'
+            ' ( ifelse {arg.2 == "on" or arg.2 == "off"}'
+            f' ( var set {_PY}[shared_facts] {{arg.2 == "on"}} && echo shared pyramid facts are {{arg.2}} )'
+            " ( fail 2 usage: pyramid sharedfacts <on|off> ) )"
+            ' ( ifelse {arg.1 == "congrats" and arg.2 != "-"}'
+            ' ( ifelse {arg.2 == "reset"}'
+            f" ( ( var del {_PY}[congrats] || true ) && echo pyramid congratulations are back to the default )"
+            f' ( var set {_PY}[congrats] {{arg.2+raw}} && ifelse {{arg.2 == "off"}}'
+            " ( echo pyramid congratulations are off ) ( echo pyramid congratulations set ) ) )"
+            " ( fail 2 usage: pyramid <stats|top|fact|settings|chance|chanceup|chancedown|minpeak|exempt|congrats"
+            "|sharedfacts"
+            "|addfact|delfact> ) ) ) ) )"
+        ),
+        declarations=(
+            '1 name=setting required=yes "chance, chanceup, chancedown, minpeak, congrats or sharedfacts"',
+            '2+ name=value required=yes "the new value"',
+        ),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_exempt",
+        summary="Set the rank that is never broken (moderators)",
+        body=(
+            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
+            f' ( ( ifelse {{arg.role == "off"}} ( var set {_PY}[exempt_rank] {_NOBODY} )'
+            f' ( ifelse {{arg.role == "broadcaster"}} ( var set {_PY}[exempt_rank] 100 )'
+            f' ( ifelse {{arg.role == "mod"}} ( var set {_PY}[exempt_rank] 80 )'
+            f' ( ifelse {{arg.role == "vip"}} ( var set {_PY}[exempt_rank] 60 )'
+            f' ( ifelse {{arg.role == "sub"}} ( var set {_PY}[exempt_rank] 20 )'
+            " ( fail 2 usage: pyramid exempt <off|sub|vip|mod|broadcaster> ) ) ) ) ) )"
+            f" && var set {_PY}[exempt] {{arg.role}}"
+            ' && ifelse {arg.role == "off"} ( echo nobody is exempt from pyramid breaks )'
+            " ( echo {arg.role} and up are exempt from pyramid breaks ) )"
+        ),
+        declarations=('1 name=role required=yes "off, sub, vip, mod or broadcaster"',),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_addfact",
+        summary="Add a pyramid fact for this channel (moderators)",
+        body=(
+            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
+            ' ( ifelse {arg.1+raw == "-"} ( fail 2 usage: pyramid addfact <fact> )'
+            " ( ifelse {arg.1+raw:len > 300} ( fail 2 a pyramid fact is at most 300 characters )"
+            f" ( echo {{arg.1+raw}} --> {_PF} && echo added pyramid fact #{{{_PF}:len}} ) ) )"
+        ),
+        declarations=('1+ name=fact required=yes "the fact"',),
+        internal=True,
+    ),
+    Derived(
+        name="pyramid_delfact",
+        summary="Delete one of the channel's pyramid facts (moderators)",
+        body=(
+            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
+            f" ( ifelse {{1 <= arg.number <= ({_PF}:len ?? 0)}}"
+            f" ( var pop {_PF} {{arg.number - 1}} && echo deleted pyramid fact #{{arg.number}} )"
+            " ( fail 3 there is no pyramid fact #{arg.number} ) )"
+        ),
+        declarations=('1 name=number type=int required=yes "which fact, by number"',),
+        internal=True,
+    ),
+)
+
+# The shared facts every channel draws from unless it turns them off with `!pyramid sharedfacts off`. This
+# list is their source: `install` rewrites `publisher.pyramid_facts` whenever it changes.
+PYRAMID_TRIGGERS: tuple[PackTrigger, ...] = (PackTrigger(key="on_event", type="pyramid", expr="pyramid_on_event"),)
+
+PYRAMID_FACTS: tuple[str, ...] = (
+    "The Great Pyramid of Giza was the tallest human-made structure on Earth for over 3,800 years.",
+    "The Great Pyramid was built for the pharaoh Khufu, around 2560 BC.",
+    "The Great Pyramid was about 146 meters tall when finished. It has lost around 8 meters off its top.",
+    "The Great Pyramid is made of an estimated 2.3 million stone blocks.",
+    "The sides of the Great Pyramid line up with north, south, east and west to within a fraction of a degree.",
+    "The Great Pyramid was once covered in polished white limestone casing stones.",
+    "Most of the Great Pyramid's casing stones were carted off in the Middle Ages to build Cairo.",
+    "The Great Pyramid is the oldest of the Seven Wonders of the Ancient World, and the only one still standing.",
+    "The Great Pyramid is the oldest and largest of the three main pyramids at Giza.",
+    "The Great Pyramid's base covers about 5.3 hectares, roughly 13 acres.",
+    "The Great Pyramid has three main chambers: the King's, the Queen's and one cut into the bedrock below.",
+    "The Great Pyramid's faces are very slightly concave, which shows best from the air.",
+    "The granite in the Great Pyramid's King's Chamber came from Aswan, about 800 km up the Nile.",
+    "The Diary of Merer, among the oldest inscribed papyri ever found, logs limestone shipped for the Great Pyramid.",
+    "Workers' villages at Giza suggest the pyramids were built by paid laborers, not slaves.",
+    "Nobody knows for sure how the pyramid blocks were raised. Ramps are the leading theory.",
+    "The Pyramid of Djoser at Saqqara, a step pyramid from around 2670 BC, is the oldest Egyptian pyramid.",
+    "Imhotep is credited as the architect of the Step Pyramid of Djoser.",
+    "The Bent Pyramid at Dahshur changes its angle partway up, from about 54 degrees to about 43.",
+    "The Red Pyramid at Dahshur is thought to be Egypt's first successful smooth-sided pyramid.",
+    "Sneferu, Khufu's father, built at least three pyramids.",
+    "The Pyramid of Khafre looks taller than the Great Pyramid because it stands on higher ground.",
+    "The Pyramid of Khafre still has some of its original casing stones near the top.",
+    "The Pyramid of Menkaure is the smallest of the three main pyramids at Giza.",
+    "Egypt has well over 100 known pyramids.",
+    "Most Egyptian pyramids were built as tombs for pharaohs and their queens.",
+    "Saqqara was the vast burial ground of Memphis, Egypt's ancient capital.",
+    "Besides Giza and Saqqara, Egypt has pyramids at Dahshur, Abusir, Meidum, Lisht and Abu Rawash.",
+    "Sudan has more pyramids than Egypt: over 200, built by the Kingdom of Kush.",
+    "Nubian pyramids in Sudan are smaller and steeper than Egypt's.",
+    "Nearly every Egyptian pyramid was emptied by tomb robbers in ancient times.",
+    "Nearly all of Egypt's pyramids are on the west bank of the Nile, the side of the setting sun.",
+    "The last royal pyramid built in Egypt is thought to be that of Ahmose I, at Abydos.",
+    "The pyramidion was the capstone at the very top of a pyramid, sometimes covered in gold.",
+    "The word pyramid comes from the Greek pyramis.",
+    "Mesopotamian ziggurats were stepped temple towers, not tombs.",
+    "Caral in Peru has pyramid platforms about as old as Egypt's first pyramids.",
+    "Most Maya and Aztec pyramids were step pyramids with a temple on top.",
+    "The oldest Maya pyramids go back around 3,000 years.",
+    "The Templo Mayor, the Aztecs' great pyramid in Tenochtitlan, was begun around 1325.",
+    "The Great Pyramid of Cholula in Mexico is the largest pyramid in the world by volume.",
+    "The Great Pyramid of Cholula is so overgrown it looks like a hill, with a church on top.",
+    "El Castillo at Chichen Itza has 91 steps on each side. With the top platform, that makes 365.",
+    "At the equinoxes, shadows on El Castillo's stairs look like a serpent sliding down.",
+    "The Pyramid of the Sun at Teotihuacan is one of the largest buildings in the ancient Americas.",
+    "The Pyramid of Cestius in Rome was built as a tomb, around 12 BC.",
+    "China has pyramid-shaped burial mounds for early emperors, like Qin Shi Huang's.",
+    "The Louvre Pyramid in Paris, designed by I. M. Pei, opened in 1989.",
+    "The Louvre Pyramid is made of 673 panes of glass.",
+    "The Luxor hotel in Las Vegas is a 30-story pyramid with a beam of light shining from its tip.",
+    "The Luxor in Las Vegas has over 4,000 hotel rooms inside its pyramid.",
+    "The Transamerica Pyramid in San Francisco is 260 meters tall.",
+    "The Palace of Peace and Reconciliation in Astana, Kazakhstan, is a 62-meter glass and stone pyramid.",
+    "The Slovak Radio Building in Bratislava is shaped like an upside-down pyramid.",
+    "A square pyramid has 5 faces, 8 edges and 5 corners.",
+    "A pyramid's volume is a third of its base area times its height.",
+    "A triangular pyramid with four equal equilateral faces is a regular tetrahedron.",
+    "A triangular pyramid, or tetrahedron, has 4 faces, 6 edges and 4 corners.",
+    # Running jokes from the old bot's channels, not facts.
+    "Shungite pyramids are said to protect from EMF, heal and balance your energy.",
+    "It's the Illuminati and Lizard Aliens who control everything.",
+    "I wonder what would happen if everyone suddenly woke up together and realized they'd been living in an invisible prison",
+    "I can't go into detail, but there's a reason why I went to the special meeting at the Pentagon",
+    "Mother Goddess of Depravity, Origin of Evil, The Indestructible, Brood Hive of Filth. I pray for the Goddess' loving grace.",
+    "NASA has a reason why we haven't gone back to the moon for so long. What won't they tell us?",
+    "I've set the stage, now the actors are moving. Why are they moving?",
+    "We have no safe place in the universe.",
+    "I'm almost behind you now. BroBalt",
+)
+
+
 def check_core() -> None:
     """Every `core` body may call only what can never be switched off (ADR-0019). Raises NotASentinel."""
     registry = builtin_registry()
@@ -256,7 +571,82 @@ async def install(conn: Connection, *, owner_user_id: str, owner_login: str, dry
     done = await _install(commands, packs, owner, CORE, CORE_SUMMARY, CORE_COMMANDS, CORE_VERSION, dry_run=dry_run)
     done += await _install(commands, packs, owner, PACK, PACK_SUMMARY, STARTER, None, dry_run=dry_run)
     done += await _install(commands, packs, owner, QUOTES_PACK, QUOTES_SUMMARY, QUOTES, None, dry_run=dry_run)
+    done += await _install(commands, packs, owner, PYRAMID_PACK, PYRAMID_SUMMARY, PYRAMID, None, dry_run=dry_run)
+    done += await _install_triggers(conn, packs, owner_user_id, PYRAMID_PACK, PYRAMID_TRIGGERS, dry_run=dry_run)
+    done += await _install_facts(conn, owner_user_id, dry_run=dry_run)
     return done
+
+
+async def _install_triggers(
+    conn: Connection,
+    packs: PackService,
+    owner_user_id: str,
+    name: str,
+    declared: tuple[PackTrigger, ...],
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """The pack's triggers (ADR-0029): add or update each one by key, and drop the ones no longer declared.
+    Their commands are installed first, so the expressions can call them."""
+    pack = await packs.by_owner(owner_user_id, name)
+    triggers = TriggerService(conn)
+    await triggers.reload()
+    stored = {t.pack_key: t for t in triggers.pack_triggers(name)}
+    done: list[str] = []
+    for wanted in declared:
+        current = stored.get(wanted.key)
+        same = current is not None and (
+            (current.type, current.expr, current.match, current.schedule, current.run_as_rank)
+            == (wanted.type, wanted.expr, wanted.match, wanted.schedule, wanted.run_as_rank)
+        )
+        if same:
+            continue
+        done.append(f"{'add' if current is None else 'update'} {name} trigger {wanted.key}")
+        if dry_run or pack is None:
+            continue
+        try:
+            await triggers.install_pack_trigger(
+                pack_id=pack.id,
+                key=wanted.key,
+                type_=wanted.type,
+                expr=wanted.expr,
+                match=wanted.match,
+                schedule=wanted.schedule,
+                run_as_rank=wanted.run_as_rank,
+                created_by=owner_user_id,
+            )
+        except TriggerError as exc:
+            raise CustomCommandError(f"{name} trigger {wanted.key}: {exc}") from exc
+    gone = sorted(set(stored) - {t.key for t in declared})
+    done += [f"remove {name} trigger {key}" for key in gone]
+    if gone and pack is not None and not dry_run:
+        await triggers.remove_pack_triggers(
+            pack_id=pack.id, keep=[t.key for t in declared], actor_user_id=owner_user_id
+        )
+    return done
+
+
+async def _install_facts(conn: Connection, owner_user_id: str, *, dry_run: bool) -> list[str]:
+    """Write PYRAMID_FACTS to the bot's `publisher.pyramid_facts`, which the pyramid pack reads. Too long
+    for a command body, and no command writes it, so this list is its only source."""
+    facts = list(PYRAMID_FACTS)
+    stored = await fetch_value(
+        conn,
+        "SELECT value FROM variables WHERE ns = 'publisher' AND key1 = %s AND key2 = '' AND key3 = ''"
+        " AND name = 'pyramid_facts'",
+        (owner_user_id,),
+    )
+    if stored is not None and json.loads(stored) == facts:
+        return []
+    if not dry_run:
+        await conn.execute(
+            "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at, updated_via)"
+            " VALUES ('publisher', %s, '', '', 'pyramid_facts', %s, %s, 'script')"
+            " ON CONFLICT (ns, key1, key2, key3, name) DO UPDATE SET value = excluded.value,"
+            " updated_at = excluded.updated_at, updated_by = NULL, updated_via = excluded.updated_via",
+            (owner_user_id, json.dumps(facts), now_ms()),
+        )
+    return [f"{'set' if stored is None else 'update'} the {len(facts)} shared pyramid facts"]
 
 
 async def _install(
@@ -379,7 +769,7 @@ async def run(args: argparse.Namespace) -> int:
 
     changes = ", ".join(done) if done else "nothing to do"
     print(f"{'would: ' if args.dry_run else ''}{changes} (as @{owner[1]})")
-    for derived in STARTER:
+    for derived in (*STARTER, *PYRAMID):
         if derived.note:
             print(f"  {derived.name}: {derived.note}")
     return 0

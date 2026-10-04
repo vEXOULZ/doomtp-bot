@@ -49,6 +49,7 @@ class TriggerRunner:
         event: dict[str, Any] | None = None,
         match: dict[str, Any] | None = None,
         user: tuple[str, str, str] | None = None,  # (id, login, display)
+        badges: frozenset[str] = frozenset(),  # the user's badge set ids, for `$chatter.rank`
         input_text: str = "",
         is_cancelled: Callable[[], bool] | None = None,
         message_id: str | None = None,
@@ -59,7 +60,7 @@ class TriggerRunner:
         )
         chatter = None
         if user is not None:
-            chatter = self.policy.build_chatter(trigger.channel_id, user[0], user[1], user[2])
+            chatter = self.policy.build_chatter(trigger.channel_id, user[0], user[1], user[2], badges)
         context = Context.LISTENER if trigger.type == "listener" else Context.TRIGGER
         ctx = self.runtime.make_context(
             channel=channel,
