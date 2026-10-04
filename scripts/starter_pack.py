@@ -535,6 +535,7 @@ PYRAMID_FACTS: tuple[str, ...] = (
     "A pyramid's volume is a third of its base area times its height.",
     "A triangular pyramid with four equal equilateral faces is a regular tetrahedron.",
     "A triangular pyramid, or tetrahedron, has 4 faces, 6 edges and 4 corners.",
+    "Shungite pyramids are said to protect from EMF, heal and balance your energy.",
 )
 
 
