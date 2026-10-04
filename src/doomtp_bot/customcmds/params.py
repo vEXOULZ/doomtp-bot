@@ -62,9 +62,7 @@ def _value(key: str, raw: str) -> Any:
     return raw
 
 
-def declare(
-    existing: Any, position: str, assignments: list[str], description: str = ""
-) -> list[dict[str, Any]]:
+def declare(existing: Any, position: str, assignments: list[str], description: str = "") -> list[dict[str, Any]]:
     """Add or replace the declaration at `position`. `assignments` are `key=value` words (spec §5.3).
 
     Returns the new JSON-ready list. Raises ParamError with a user-facing message.

@@ -94,9 +94,7 @@ def _split(text: str, mentions: dict[str, Any], cheermotes: dict[str, Any]) -> l
 
     def plain(until: int) -> None:
         if until > at:
-            parts.append(
-                {"type": "text", "text": text[at:until], "cheermote": None, "emote": None, "mention": None}
-            )
+            parts.append({"type": "text", "text": text[at:until], "cheermote": None, "emote": None, "mention": None})
 
     for word in _WORD.finditer(text):
         token = word.group()

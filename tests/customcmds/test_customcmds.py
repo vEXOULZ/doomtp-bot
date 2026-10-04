@@ -56,9 +56,7 @@ class Harness:
     async def run(self, who: str, text: str) -> RunReport:
         channel = self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN)
         channel = dataclasses.replace(channel, prefix="!")
-        report = await self.runtime.run(
-            text, self.runtime.make_context(channel=channel, invoker=self.chatter(who))
-        )
+        report = await self.runtime.run(text, self.runtime.make_context(channel=channel, invoker=self.chatter(who)))
         assert report is not None
         return report
 
@@ -114,9 +112,7 @@ async def test_owner_runs_their_own_command(h: Harness) -> None:
 
 async def test_publication_serves_the_whole_channel(h: Harness) -> None:
     command = await h.add("alice", "roll", "random 1-{arg.1 ?? 20} | echo {$chatter.display} rolled {_1}")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"])
     reply = await h.say("bob", "!roll 6")
     assert reply is not None and reply.startswith("Bob rolled ")
 
@@ -132,9 +128,7 @@ async def test_link_gives_a_personal_alias_and_unlink_removes_it(h: Harness) -> 
 
 async def test_builtins_win_over_publications(h: Harness) -> None:
     command = await h.add("alice", "random", "echo custom")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="random", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="random", command=command, published_by=USERS["mod"]["id"])
     assert await h.say("bob", "!random 1-1") == "1"
 
 
@@ -158,9 +152,7 @@ async def test_edits_are_live_and_deletes_break_links_immediately(h: Harness) ->
 
 async def test_deleting_orphans_publications(h: Harness) -> None:
     command = await h.add("alice", "roll", "echo rolled")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"])
     await h.service.delete(command)
     assert await h.say("bob", "!roll") is None
     rows = await h.service.publications_in(CHANNEL_ID)
@@ -169,9 +161,7 @@ async def test_deleting_orphans_publications(h: Harness) -> None:
 
 async def test_mods_can_disable_and_re_enable_a_publication(h: Harness) -> None:
     command = await h.add("alice", "roll", "echo rolled")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"])
     await h.service.set_publication_status(
         channel_id=CHANNEL_ID, name="roll", status="disabled", actor_user_id=USERS["mod"]["id"]
     )
@@ -216,9 +206,7 @@ async def test_expanded_invocations_count_toward_the_limit(h: Harness) -> None:
 async def test_the_body_runs_as_the_invoker_not_the_owner(h: Harness) -> None:
     """A moderator's command run by a viewer stays a viewer's run (ADR-0009)."""
     command = await h.add("mod", "mine", "echo {$chatter.display} rank {$chatter.rank}")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="mine", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="mine", command=command, published_by=USERS["mod"]["id"])
     assert await h.say("bob", "!mine") == "Bob rank 0"
     assert await h.say("mod", "!mine") == "Mod rank 80"
 
@@ -243,9 +231,7 @@ async def test_publishing_says_which_writes_still_need_a_grant(h: Harness) -> No
 
 async def test_a_published_body_cannot_write_channel_variables_without_a_grant(h: Harness) -> None:
     command = await h.add("alice", "count", "echo 1 -> channel.deaths")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="count", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="count", command=command, published_by=USERS["mod"]["id"])
     denied = await h.run("bob", "!count")
     assert (denied.result.code, denied.send) == (Code.DENIED, None)
     assert await h.value("channel", CHANNEL_ID, name="deaths") is MISSING
@@ -258,9 +244,7 @@ async def test_a_published_body_cannot_write_channel_variables_without_a_grant(h
 
 async def test_publisher_variables_belong_to_the_owner(h: Harness) -> None:
     command = await h.add("alice", "note", "echo {arg.1} -> publisher.channel.note")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="note", command=command, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="note", command=command, published_by=USERS["mod"]["id"])
     assert (await h.run("bob", "!note hello")).result.ok
     assert await h.value("publisher.channel", USERS["alice"]["id"], CHANNEL_ID, name="note") == "hello"
 
@@ -268,13 +252,9 @@ async def test_publisher_variables_belong_to_the_owner(h: Harness) -> None:
 async def test_publisher_is_restored_after_a_nested_body(h: Harness) -> None:
     """A nested command must not leave its publisher behind for the rest of the line."""
     inner = await h.add("alice", "inner", "echo {$publisher.name}")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="inner", command=inner, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="inner", command=inner, published_by=USERS["mod"]["id"])
     outer = await h.add("bob", "outer", "inner | echo inner said {_1}, mine is {$publisher.name}")
-    await h.service.publish(
-        channel_id=CHANNEL_ID, name="outer", command=outer, published_by=USERS["mod"]["id"]
-    )
+    await h.service.publish(channel_id=CHANNEL_ID, name="outer", command=outer, published_by=USERS["mod"]["id"])
     assert await h.say("mod", "!outer") == "inner said alice, mine is bob"
 
 
@@ -465,9 +445,7 @@ async def test_a_body_cannot_call_cc_run(h: Harness) -> None:
 # ── declared parameters and !help (ADR-0009 action item 3) ─────────────────
 async def test_declared_params_are_validated_and_shown(h: Harness) -> None:
     await h.say("alice", "!cc add roll random 1-{arg.sides} | echo {$chatter.display} rolled {_1}")
-    usage = await h.say(
-        "alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "how many sides"'
-    )
+    usage = await h.say("alice", '!cc param roll 1 name=sides type=int min=2 max=100 required=yes "how many sides"')
     assert usage == "!roll <sides>. 1 sides: int, how many sides"
 
     good = await h.run("alice", "!roll 20")
@@ -500,10 +478,7 @@ async def test_help_lists_custom_commands_the_caller_can_run(h: Harness) -> None
     listing = await h.say("bob", "!help")
     assert listing is not None and "custom: hype" in listing
     detail = await h.say("bob", "!help hype")
-    assert (
-        detail
-        == "!hype [arguments…]: gets the chat hyped. 1+ arguments: str (optional), passed to the command body"
-    )
+    assert detail == "!hype [arguments…]: gets the chat hyped. 1+ arguments: str (optional), passed to the command body"
 
     alices = await h.say("alice", "!help")
     assert alices is not None and "custom: hype" in alices  # her own alias

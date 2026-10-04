@@ -29,17 +29,12 @@ async def test_writer_batches_and_is_idempotent(dbs: Databases) -> None:
     await writer.message(msg("m1"))  # EventSub redelivery
     await writer.message(msg("m2", text="the doom slayer"))
     await writer.stop()
-    assert await rows(
-        dbs, "SELECT message_id, is_command, raw->'badges' FROM messages ORDER BY message_id"
-    ) == [
+    assert await rows(dbs, "SELECT message_id, is_command, raw->'badges' FROM messages ORDER BY message_id") == [
         ("m1", True, [{"set_id": "subscriber", "id": "3", "info": ""}]),
         ("m2", False, [{"set_id": "subscriber", "id": "3", "info": ""}]),
     ]
     assert (
-        await rows(
-            dbs, "SELECT message_id FROM messages WHERE tsv @@ websearch_to_tsquery('simple', 'slayer')"
-        )
-        != []
+        await rows(dbs, "SELECT message_id FROM messages WHERE tsv @@ websearch_to_tsquery('simple', 'slayer')") != []
     )
 
 
@@ -118,9 +113,7 @@ async def test_stale_sessions_closed_at_last_message_before_next_session(dbs: Da
         await writer.message(msg(mid, at=at, channel="c1"))  # received_at = at + 5
     await writer.stop()
     assert await writer.close_stale_sessions() == 3
-    assert await rows(
-        dbs, "SELECT channel_id, started_at, ended_at, end_reason FROM log_sessions ORDER BY id"
-    ) == [
+    assert await rows(dbs, "SELECT channel_id, started_at, ended_at, end_reason FROM log_sessions ORDER BY id") == [
         ("c1", 1000, 4005, "unclean_shutdown"),
         ("c1", 5000, 6005, "unclean_shutdown"),
         ("c2", 7000, 7000, "unclean_shutdown"),

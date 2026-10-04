@@ -39,9 +39,7 @@ def ago(ms: int, now_ms: int) -> str:
             f"{USAGE}: the newest message with all the words, and how many more match. Leaves out deleted"
             " messages, chatters timed out or banned since, and the bot's own lines."
         ),
-        params=(
-            Param("1+", "words", required=True, max_len=MAX_QUERY_CHARS, description="What to look for"),
-        ),
+        params=(Param("1+", "words", required=True, max_len=MAX_QUERY_CHARS, description="What to look for"),),
         required_role="moderator",
         default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=10)},
         log_level=LogLevel.INVOCATIONS,
@@ -75,9 +73,7 @@ async def logsearch_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -
     now = int(ctx.exec.clock() * 1000)
     count = f"{MAX_COUNTED}+" if len(found) > MAX_COUNTED else str(len(found))
     more = f" (1 of {count})" if len(found) > 1 else ""
-    shown = [
-        {"login": m["user_login"], "text": m["text"], "sent_at": m["sent_at"]} for m in found[:MAX_SHOWN]
-    ]
+    shown = [{"login": m["user_login"], "text": m["text"], "sent_at": m["sent_at"]} for m in found[:MAX_SHOWN]]
     return Result.success(
         f"{newest['display_name'] or newest['user_login']}, {ago(newest['sent_at'], now)}: {newest['text']}{more}",
         {"count": len(found[:MAX_COUNTED]), "messages": shown},

@@ -79,7 +79,8 @@ def _describe(trigger: Trigger) -> str:
         what = describe_cron(trigger.cron)
     else:
         what = trigger.type
-    return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'} → {trigger.expr}"
+    pack = f" ({trigger.pack} pack)" if trigger.pack else ""
+    return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'}{pack} → {trigger.expr}"
 
 
 async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
@@ -91,6 +92,7 @@ async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
         [
             {"id": t.id, "type": t.type, "enabled": t.enabled, "expr": t.expr}
             | ({"name": t.name} if t.name else {})
+            | ({"pack": t.pack} if t.pack else {})
             for t in found
         ],
     )
@@ -118,20 +120,23 @@ async def _remove_or_toggle(
     need(values, 2, usage)
     entry_id = _entry_id(ctx, values[1], named=named)
     actor = ctx.invoker.id if ctx.invoker else None
-    if action == "rm":
-        removed = await _service(ctx).remove(
-            channel_id=ctx.channel.id, trigger_id=entry_id, actor_user_id=actor, via="chat"
+    try:
+        if action == "rm":
+            removed = await _service(ctx).remove(
+                channel_id=ctx.channel.id, trigger_id=entry_id, actor_user_id=actor, via="chat"
+            )
+            if not removed:
+                raise CommandError(f"no entry {entry_id} here")
+            return Result.success(f"removed {values[1]}")
+        changed = await _service(ctx).set_enabled(
+            channel_id=ctx.channel.id,
+            trigger_id=entry_id,
+            enabled=action == "on",
+            actor_user_id=actor,
+            via="chat",
         )
-        if not removed:
-            raise CommandError(f"no entry {entry_id} here")
-        return Result.success(f"removed {values[1]}")
-    changed = await _service(ctx).set_enabled(
-        channel_id=ctx.channel.id,
-        trigger_id=entry_id,
-        enabled=action == "on",
-        actor_user_id=actor,
-        via="chat",
-    )
+    except TriggerError as exc:  # a pack's trigger (ADR-0029)
+        raise CommandError(str(exc)) from exc
     if not changed:
         raise CommandError(f"no entry {entry_id} here")
     return Result.success(f"{values[1]} is {'on' if action == 'on' else 'off'}")
@@ -182,9 +187,7 @@ def _warning(ctx: CommandContext, type_: str) -> str:
         log_level=LogLevel.INVOCATIONS,
         examples=(
             Example(r"{sign}listen add hello /\bhello\b/ echo hi {$chatter.display}", ""),
-            Example(
-                r"{sign}listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}", ""
-            ),
+            Example(r"{sign}listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}", ""),
             Example("{sign}listen test hello there", ""),
         ),
     ),
@@ -241,9 +244,7 @@ def _test(ctx: CommandContext, text: str) -> Result:
         params=(Param("1+", "arguments", description=EVENT_USAGE),),
         required_role="moderator",
         log_level=LogLevel.INVOCATIONS,
-        examples=(
-            Example("{sign}event add raid echo welcome {event.user.name} and {event.viewers} raiders!", ""),
-        ),
+        examples=(Example("{sign}event add raid echo welcome {event.user.name} and {event.viewers} raiders!", ""),),
     ),
     raw_tail_subcommands=(("add", 3),),
 )

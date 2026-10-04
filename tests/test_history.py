@@ -29,9 +29,7 @@ CLEARMSG = (
     "@login=alice;target-msg-id=abc-123;target-user-id=400;tmi-sent-ts=2000 "
     ":tmi.twitch.tv CLEARMSG #doomtp :hello there"
 )
-CLEARCHAT_USER = (
-    "@ban-duration=600;target-user-id=400;tmi-sent-ts=3000 :tmi.twitch.tv CLEARCHAT #doomtp :alice"
-)
+CLEARCHAT_USER = "@ban-duration=600;target-user-id=400;tmi-sent-ts=3000 :tmi.twitch.tv CLEARCHAT #doomtp :alice"
 CLEARCHAT_ALL = "@tmi-sent-ts=4000 :tmi.twitch.tv CLEARCHAT #doomtp"
 USERNOTICE = (
     "@msg-id=resub;msg-param-cumulative-months=12;system-msg=Alice\\ssubscribed\\sfor\\s12\\smonths;"
@@ -147,9 +145,7 @@ class FakeProvider:
 
 async def backfill_for(dbs: Databases, provider: FakeProvider, *, opted_in: bool = True) -> BackfillService:
     policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN))
-    await policy.mutate(
-        lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", opted_in, Actor(None, "s"))
-    )
+    await policy.mutate(lambda repo: repo.set_channel_field(CHANNEL_ID, "history_backfill", opted_in, Actor(None, "s")))
     writer = ChatLogWriter(dbs.chatlog)
     return BackfillService(conn=dbs.chatlog, writer=writer, provider=provider, policy=policy)
 
@@ -174,19 +170,11 @@ async def test_a_gap_is_filled_from_history_and_recorded(dbs: Databases) -> None
     ) as cur:
         rows = [tuple(r.values()) for r in await cur.fetchall()]
     assert rows == [("abc-123", "ivr-logs", "irc", PRIVMSG)]
-    async with await dbs.chatlog.execute(
-        "SELECT type, raw_format, raw ? 'line' AS kept FROM mod_events"
-    ) as cur:
+    async with await dbs.chatlog.execute("SELECT type, raw_format, raw ? 'line' AS kept FROM mod_events") as cur:
         assert [tuple(r.values()) for r in await cur.fetchall()] == [("delete", "irc", True)]
-    async with await dbs.chatlog.execute(
-        "SELECT deleted_at FROM messages WHERE message_id = 'abc-123'"
-    ) as cur:
-        assert (await cur.fetchone())[
-            "deleted_at"
-        ] == 2000  # the CLEARMSG flagged it, without deleting the row
-    async with await dbs.chatlog.execute(
-        "SELECT fetched, inserted, complete, provider FROM backfill_runs"
-    ) as cur:
+    async with await dbs.chatlog.execute("SELECT deleted_at FROM messages WHERE message_id = 'abc-123'") as cur:
+        assert (await cur.fetchone())["deleted_at"] == 2000  # the CLEARMSG flagged it, without deleting the row
+    async with await dbs.chatlog.execute("SELECT fetched, inserted, complete, provider FROM backfill_runs") as cur:
         assert [tuple(r.values()) for r in await cur.fetchall()] == [(3, 3, 1, "ivr-logs")]
 
 
@@ -376,9 +364,7 @@ async def test_a_delete_names_the_author_by_id(dbs: Databases) -> None:
     service = await backfill_for(dbs, provider)
     await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000))
     await service.writer.stop()
-    async with await dbs.chatlog.execute(
-        "SELECT message_id, target_user_id FROM mod_events ORDER BY at"
-    ) as cur:
+    async with await dbs.chatlog.execute("SELECT message_id, target_user_id FROM mod_events ORDER BY at") as cur:
         assert [tuple(r.values()) for r in await cur.fetchall()] == [
             ("m-new", "400"),
             ("m-old", "500"),
@@ -391,9 +377,7 @@ async def test_a_backfilled_timeout_keeps_its_length(dbs: Databases) -> None:
     service = await backfill_for(dbs, provider)
     await service.fill(Gap(CHANNEL_ID, CHANNEL_LOGIN, 1100, 6000))
     await service.writer.stop()
-    async with await dbs.chatlog.execute(
-        "SELECT type, target_user_id, raw, raw_format FROM mod_events"
-    ) as cur:
+    async with await dbs.chatlog.execute("SELECT type, target_user_id, raw, raw_format FROM mod_events") as cur:
         found = await cur.fetchall()
     assert [(r["type"], r["target_user_id"]) for r in found] == [("user_clear", "400")]
     assert events.moderation(found[0]["raw_format"], found[0]["raw"])["irc"]["ban-duration"] == "600"

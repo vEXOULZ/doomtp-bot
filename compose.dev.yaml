@@ -1,0 +1,17 @@
+# Local development: build the image from this tree rather than pulling the published one.
+#
+#     docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+#
+# Or set COMPOSE_FILE=compose.yaml:compose.dev.yaml in your .env and drop the -f flags.
+x-build: &build
+  build: .
+  image: doomtp-bot:dev
+  pull_policy: build
+
+services:
+  migrate: *build
+  doomtp-bot: *build
+  coverage: *build
+  starter-pack: *build
+  migrate-v2: *build
+  backup: *build

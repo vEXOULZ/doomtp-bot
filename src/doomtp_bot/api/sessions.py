@@ -22,7 +22,7 @@ SESSION_TTL_S = 8 * 3600
 SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 #: Where the password login is taken from unless ADMIN_PASSWORD_NETWORKS says otherwise: this host and
 #: the private ranges. The password is the way in when Twitch is down, not a second front door.
-LOCAL_NETWORKS = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+LOCAL_NETWORKS = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"  # conventions:allow-infra
 
 Networks = tuple[IPv4Network | IPv6Network, ...]
 
@@ -38,7 +38,7 @@ def parse_networks(csv: str) -> Networks | None:
 
 def address_in(address: str, networks: Networks | None) -> bool:
     """Whether an address is in `networks` (None: anywhere). An IPv4 address seen as IPv6
-    (`::ffff:192.168.1.5`) counts as the IPv4 one."""
+    (`::ffff:192.168.1.5`) counts as the IPv4 one."""  # conventions:allow-infra
     if networks is None:
         return True
     try:

@@ -50,9 +50,7 @@ class HistoryResponse:
 
 
 class HistoryProvider(Protocol):
-    async def fetch(
-        self, channel_id: str, *, from_ms: int, to_ms: int, limit: int, offset: int = 0
-    ) -> HistoryResponse:
+    async def fetch(self, channel_id: str, *, from_ms: int, to_ms: int, limit: int, offset: int = 0) -> HistoryResponse:
         """Lines sent from `from_ms` (inclusive) to `to_ms` (exclusive), oldest first: `limit` of them,
         skipping the first `offset`."""
         ...

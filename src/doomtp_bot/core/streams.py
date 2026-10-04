@@ -124,9 +124,7 @@ class StreamPoller:
         self.last_error = None
         return await self._apply(found, wanted)
 
-    async def _apply(
-        self, found: dict[str, dict[str, Any]], wanted: Sequence[str]
-    ) -> list[StreamStatusChanged]:
+    async def _apply(self, found: dict[str, dict[str, Any]], wanted: Sequence[str]) -> list[StreamStatusChanged]:
         at = now_ms()
         changes: list[StreamStatusChanged] = []
         for channel_id, info in found.items():

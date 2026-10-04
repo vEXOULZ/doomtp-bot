@@ -32,8 +32,7 @@ async def site(request: Request) -> dict[str, Any]:
         "default_prefix": DEFAULT_PREFIX,
         "admin_enabled": bool(auth and auth.enabled),
         "channels": [
-            {"login": c.login, "prefix": c.prefix, "tier": c.tier}
-            for c in sorted(channels, key=lambda c: c.login)
+            {"login": c.login, "prefix": c.prefix, "tier": c.tier} for c in sorted(channels, key=lambda c: c.login)
         ],
     }
 
@@ -58,9 +57,7 @@ async def site_channel(request: Request, login: str) -> dict[str, Any]:
 async def roles() -> dict[str, Any]:
     """The built-in roles by rank, and the range channels may give roles of their own."""
     return {
-        "roles": [
-            {"name": name, "rank": rank} for name, rank in sorted(BUILTIN_RANKS.items(), key=lambda kv: kv[1])
-        ],
+        "roles": [{"name": name, "rank": rank} for name, rank in sorted(BUILTIN_RANKS.items(), key=lambda kv: kv[1])],
         "custom_rank_range": [CUSTOM_RANK_MIN, CUSTOM_RANK_MAX],
     }
 

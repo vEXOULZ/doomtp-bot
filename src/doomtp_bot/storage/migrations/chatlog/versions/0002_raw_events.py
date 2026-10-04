@@ -96,8 +96,7 @@ def upgrade() -> None:
     op.execute(LEGACY_MOD_EVENT)
     for table in TABLES:
         op.execute(
-            f"ALTER TABLE {table} ADD CONSTRAINT {table}_raw_has_format"
-            " CHECK ((raw IS NULL) = (raw_format IS NULL))"
+            f"ALTER TABLE {table} ADD CONSTRAINT {table}_raw_has_format CHECK ((raw IS NULL) = (raw_format IS NULL))"
         )
 
     op.execute("ALTER TABLE backfill_runs ADD COLUMN provider text NOT NULL DEFAULT 'recent-messages'")

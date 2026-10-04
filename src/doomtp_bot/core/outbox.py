@@ -52,9 +52,7 @@ class OutboundLog(Protocol):
     ) -> None: ...
 
 
-FilterFn = Callable[
-    [str, str], tuple[str | None, list[str]]
-]  # (channel_id, text) → (text or None=block, hits)
+FilterFn = Callable[[str, str], tuple[str | None, list[str]]]  # (channel_id, text) → (text or None=block, hits)
 
 
 def passthrough_filter(channel_id: str, text: str) -> tuple[str | None, list[str]]:
@@ -62,9 +60,7 @@ def passthrough_filter(channel_id: str, text: str) -> tuple[str | None, list[str
 
 
 class TokenBucket:
-    def __init__(
-        self, capacity: int, per_seconds: float, clock: Callable[[], float] = time.monotonic
-    ) -> None:
+    def __init__(self, capacity: int, per_seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
         self.capacity = capacity
         self.rate = capacity / per_seconds
         self.tokens = float(capacity)
@@ -227,9 +223,7 @@ class Outbox:
         except Exception:  # leaving is best-effort; the next refused send tries again
             log.exception("outbox.leave_failed", channel=channel_id)
 
-    async def _drop(
-        self, channel_id: str, text: str, reason: str, hits: list[str], run_ref: str | None = None
-    ) -> None:
+    async def _drop(self, channel_id: str, text: str, reason: str, hits: list[str], run_ref: str | None = None) -> None:
         self._count_drop(reason)
         log.info("outbox.dropped", channel=channel_id, reason=reason)
         if self.outbound_log is not None:

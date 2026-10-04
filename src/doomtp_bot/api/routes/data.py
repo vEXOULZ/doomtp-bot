@@ -69,7 +69,7 @@ from doomtp_bot.runtime.variables import (
     Limits,
     Space,
 )
-from doomtp_bot.triggers.service import TRIGGER_TYPES, TriggerError, TriggerService
+from doomtp_bot.triggers.service import TRIGGER_TYPES, PackTriggerError, TriggerError, TriggerService
 from doomtp_bot.variables.store import LimitOverride
 from doomtp_bot.webfetch.fetcher import Secret
 from doomtp_bot.webfetch.hosts import MAX_LIMIT, HostError, HostStore
@@ -217,9 +217,7 @@ async def join_own_channel(request: Request, caller: Caller = PERSONAL_WRITE) ->
 
 
 @router.patch("/channels/{login}")
-async def patch_channel(
-    request: Request, login: str, body: ChannelPatch, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def patch_channel(request: Request, login: str, body: ChannelPatch, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     policy = _policy(request)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in SETTABLE}
@@ -301,9 +299,7 @@ async def cancel_backfill(
     settings = _channel(request, login)
     job = await _backfill(request).cancel(settings.channel_id, job_id, actor=platform_actor(caller))
     if job is None:
-        raise HTTPException(
-            status_code=409, detail=f"job {job_id} isn't queued or running in {settings.login}"
-        )
+        raise HTTPException(status_code=409, detail=f"job {job_id} isn't queued or running in {settings.login}")
     return job.to_json()
 
 
@@ -314,9 +310,7 @@ async def _module_specs(request: Request, channel_id: str) -> dict[str, tuple[Co
         c.spec.module: (c.spec, "builtin") for c in _state(request, "runtime").registry.all()
     }
     services = request.app.state
-    found = await custom_modules(
-        channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None)
-    )
+    found = await custom_modules(channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None))
     for name, kind in found.items():
         specs.setdefault(name, (CommandSpec(name="", module=name, summary=""), kind))
     return specs
@@ -422,9 +416,7 @@ async def ignored_users(request: Request, login: str, caller: Caller = READ) -> 
 
 
 @router.post("/channels/{login}/ignored", status_code=201)
-async def add_ignored(
-    request: Request, login: str, body: IgnoreBody, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def add_ignored(request: Request, login: str, body: IgnoreBody, caller: Caller = WRITE) -> dict[str, Any]:
     """Ignore a user here, or everywhere with `everywhere: true` (admins only). Audited as `ignore.add`,
     like chat."""
     if body.everywhere:
@@ -463,12 +455,8 @@ async def remove_ignored(
     if own and not caller.manages(login) and (entry is None or entry.added_by != user_id):
         raise HTTPException(status_code=403, detail="only a moderator can lift an ignore someone else set")
     if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"{user_id} isn't ignored {'everywhere' if everywhere else 'here'}"
-        )
-    await policy.mutate(
-        lambda repo: repo.set_ignored(scope, user_id, entry.user_login or "", False, caller.actor)
-    )
+        raise HTTPException(status_code=404, detail=f"{user_id} isn't ignored {'everywhere' if everywhere else 'here'}")
+    await policy.mutate(lambda repo: repo.set_ignored(scope, user_id, entry.user_login or "", False, caller.actor))
     return {"user_id": user_id, "removed": True, "everywhere": everywhere}
 
 
@@ -532,8 +520,7 @@ def rule_json(policy: PolicyService, scope: str, spec: CommandSpec) -> dict[str,
         "required_role": required,
         "allowed_roles": list(allowed) if allowed else None,
         "cooldowns": {
-            role: {"tier_s": cd.tier_s, "user_s": cd.user_s}
-            for role, cd in policy.cooldown_rules(scope, spec).items()
+            role: {"tier_s": cd.tier_s, "user_s": cd.user_s} for role, cd in policy.cooldown_rules(scope, spec).items()
         },
         "log_level": policy.log_level(scope, spec).value,
     }
@@ -681,9 +668,7 @@ async def list_filters(request: Request, login: str, caller: Caller = READ) -> d
 
 
 @router.post("/channels/{login}/filters", status_code=201)
-async def add_filter(
-    request: Request, login: str, body: FilterBody, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def add_filter(request: Request, login: str, body: FilterBody, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     return await add_filter_to(request, settings.channel_id, body, caller)
 
@@ -750,9 +735,7 @@ async def patch_filter_in(
 
 
 @router.delete("/channels/{login}/filters/{entry_id}")
-async def remove_filter(
-    request: Request, login: str, entry_id: int, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def remove_filter(request: Request, login: str, entry_id: int, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     return await remove_filter_from(request, settings.channel_id, entry_id, caller)
 
@@ -801,6 +784,7 @@ def _trigger_json(trigger: Any) -> dict[str, Any]:
         "run_as_rank": trigger.run_as_rank,
         "log_level": trigger.log_level.value,
         "created_by": trigger.created_by,
+        "pack": trigger.pack,  # set on a pack's trigger, which can't be changed here (ADR-0029)
     }
 
 
@@ -822,9 +806,7 @@ async def list_triggers(request: Request, login: str, caller: Caller = READ) -> 
 
 
 @router.post("/channels/{login}/triggers", status_code=201)
-async def add_trigger(
-    request: Request, login: str, body: TriggerBody, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def add_trigger(request: Request, login: str, body: TriggerBody, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
     if body.type not in TRIGGER_TYPES:
@@ -859,9 +841,7 @@ async def patch_trigger(
         raise HTTPException(status_code=400, detail="nothing to change")
     missing = HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
     if fields - {"enabled"}:
-        run_as = (
-            None if body.run_as_rank is None else _run_as(request, caller, settings.login, body.run_as_rank)
-        )
+        run_as = None if body.run_as_rank is None else _run_as(request, caller, settings.login, body.run_as_rank)
         try:
             updated = await triggers.update(
                 channel_id=settings.channel_id,
@@ -875,33 +855,41 @@ async def patch_trigger(
                 prefix=settings.prefix,
                 via=caller.actor.via,
             )
+        except PackTriggerError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except TriggerError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if updated is None:
             raise missing
-    if body.enabled is not None and not await triggers.set_enabled(
-        channel_id=settings.channel_id,
-        trigger_id=trigger_id,
-        enabled=body.enabled,
-        actor_user_id=caller.actor.user_id,
-        via=caller.actor.via,
-    ):
+    try:
+        toggled = body.enabled is None or await triggers.set_enabled(
+            channel_id=settings.channel_id,
+            trigger_id=trigger_id,
+            enabled=body.enabled,
+            actor_user_id=caller.actor.user_id,
+            via=caller.actor.via,
+        )
+    except PackTriggerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not toggled:
         raise missing
     return _trigger_json(next(t for t in triggers.in_channel(settings.channel_id) if t.id == trigger_id))
 
 
 @router.delete("/channels/{login}/triggers/{trigger_id}")
-async def remove_trigger(
-    request: Request, login: str, trigger_id: int, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def remove_trigger(request: Request, login: str, trigger_id: int, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
-    if not await triggers.remove(
-        channel_id=settings.channel_id,
-        trigger_id=trigger_id,
-        actor_user_id=caller.actor.user_id,
-        via=caller.actor.via,
-    ):
+    try:
+        removed = await triggers.remove(
+            channel_id=settings.channel_id,
+            trigger_id=trigger_id,
+            actor_user_id=caller.actor.user_id,
+            via=caller.actor.via,
+        )
+    except PackTriggerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not removed:
         raise HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
     return {"id": trigger_id, "removed": True}
 
@@ -932,9 +920,7 @@ def _custom_json(command: Any) -> dict[str, Any]:
 
 # ADR-0012
 @router.get("/custom-commands")
-async def custom_commands(
-    request: Request, owner: str | None = Query(default=None, max_length=40)
-) -> dict[str, Any]:
+async def custom_commands(request: Request, owner: str | None = Query(default=None, max_length=40)) -> dict[str, Any]:
     """Public: what is published everywhere, or one owner's shared commands."""
     service: CustomCommandService = _state(request, "customcmds")
     if owner is None:
@@ -976,9 +962,7 @@ async def set_publication(
 ) -> dict[str, Any]:
     """`cc enable|disable`: for whoever reaches the channel's `publish_min_role`, as in chat."""
     settings = _channel(request, login)
-    check_setting_role(
-        request, caller, settings.login, "publish_min_role", "turn published commands on or off"
-    )
+    check_setting_role(request, caller, settings.login, "publish_min_role", "turn published commands on or off")
     service: CustomCommandService = _state(request, "customcmds")
     changed = await service.set_publication_status(
         channel_id=settings.channel_id,
@@ -1066,9 +1050,7 @@ async def variable_limits(request: Request, caller: Caller = ADMIN_READ) -> dict
 
 
 @router.patch("/variable-limits/default")
-async def set_default_limits(
-    request: Request, body: LimitsBody, caller: Caller = ADMIN_WRITE
-) -> dict[str, Any]:
+async def set_default_limits(request: Request, body: LimitsBody, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     await _apply_limits(request, "*", "*", body, caller)
     defaults = await _state(request, "variable_store").defaults()
     return _limits_json(defaults)
@@ -1154,9 +1136,7 @@ async def set_http_secret(
 ) -> dict[str, Any]:
     secret = Secret(body.kind, body.name, body.value)
     try:
-        entry = await _hosts(request).set_secret(
-            pattern, secret, actor=caller.actor.user_id, via=caller.actor.via
-        )
+        entry = await _hosts(request).set_secret(pattern, secret, actor=caller.actor.user_id, via=caller.actor.via)
     except HostError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return entry.public()
@@ -1165,18 +1145,14 @@ async def set_http_secret(
 @router.delete("/http-hosts/{pattern}/secret")
 async def clear_http_secret(request: Request, pattern: str, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     try:
-        entry = await _hosts(request).set_secret(
-            pattern, None, actor=caller.actor.user_id, via=caller.actor.via
-        )
+        entry = await _hosts(request).set_secret(pattern, None, actor=caller.actor.user_id, via=caller.actor.via)
     except HostError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return entry.public()
 
 
 @router.patch("/http-limits")
-async def set_http_limits(
-    request: Request, body: HttpLimitsBody, caller: Caller = ADMIN_WRITE
-) -> dict[str, int]:
+async def set_http_limits(request: Request, body: HttpLimitsBody, caller: Caller = ADMIN_WRITE) -> dict[str, int]:
     limits = await _hosts(request).set_limits(
         channel_per_minute=body.channel_per_minute,
         host_per_minute=body.host_per_minute,
@@ -1324,9 +1300,7 @@ async def audit(
     request: Request,
     channel: str | None = Query(default=None, max_length=40),
     actor: str | None = Query(default=None, max_length=40, description="a login, or `me`"),
-    action: str | None = Query(
-        default=None, max_length=64, description="`cc.edit`, or `cc.` for every cc one"
-    ),
+    action: str | None = Query(default=None, max_length=64, description="`cc.edit`, or `cc.` for every cc one"),
     before: int | None = Query(default=None, ge=1, description="the `next` of the page before"),
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
     caller: Caller = PERSONAL_READ,
@@ -1359,9 +1333,7 @@ async def audit(
             actor_id = caller.user_id
         else:
             scope["channel_ids"] = [c.channel_id for c in policy.channels() if caller.manages(c.login)]
-    found = await read_audit(
-        conn, limit=limit, before_id=before, actor_user_id=actor_id, action=action, **scope
-    )
+    found = await read_audit(conn, limit=limit, before_id=before, actor_user_id=actor_id, action=action, **scope)
     for entry in found:
         entry["channel_login"] = known.get(entry.get("channel_id") or "")
         entry["actor_login"] = await _login_of(request, entry.get("actor_user_id"), known)

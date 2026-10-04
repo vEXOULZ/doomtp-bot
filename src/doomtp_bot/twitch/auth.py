@@ -124,8 +124,11 @@ class TwitchAuth:
         self._states: dict[str, tuple[float, str]] = {}  # state -> (issued at, which flow)
 
     def login_url(self) -> str:
-        """Where the bot account signs in. One-time setup, by whoever runs the bot."""
-        return self._authorize_url(BOT_SCOPES, "bot")
+        """Where the bot account signs in. One-time setup, by whoever runs the bot.
+
+        It also asks for the broadcaster scopes, for the bot's own channel: Twitch clients hold one token
+        per user, so the bot's channel can't have a broadcaster token of its own next to the bot's."""
+        return self._authorize_url(BOT_SCOPES + BROADCASTER_SCOPES, "bot")
 
     def connect_url(self) -> str:
         """Where a broadcaster grants their own channel's events (ADR-0007, full tier)."""
@@ -148,9 +151,7 @@ class TwitchAuth:
         )
         return f"{AUTHORIZE_URL}?{query}"
 
-    async def complete(
-        self, code: str | None, state: str | None, error: str | None = None
-    ) -> AuthorizedAccount:
+    async def complete(self, code: str | None, state: str | None, error: str | None = None) -> AuthorizedAccount:
         if error:
             raise OAuthError(f"Twitch returned an error: {error}")
         found = self._states.pop(state or "", None)
@@ -180,10 +181,29 @@ class TwitchAuth:
             scopes=scopes,
             expires_in=token.get("expires_in"),
         )
+        if set(scopes) & set(BROADCASTER_SCOPES) and token.get("refresh_token"):
+            # The same token stands for the bot's own channel. Refreshes update every row of a user.
+            await self.tokens.save(
+                identity=broadcaster_identity(info["user_id"]),
+                user_id=info["user_id"],
+                login=info["login"],
+                access_token=token["access_token"],
+                refresh_token=token.get("refresh_token"),
+                scopes=scopes,
+                expires_in=token.get("expires_in"),
+            )
+        else:
+            await self.tokens.forget(broadcaster_identity(info["user_id"]))  # an older, separate token
         account = AuthorizedAccount(info["user_id"], info["login"], scopes)
         if self.on_bot_authorized is not None:
             await self.on_bot_authorized(account)
         return account
+
+    async def _bot_id(self) -> str | None:
+        if self.expected_bot_id:
+            return self.expected_bot_id
+        stored = await self.tokens.get(BOT_IDENTITY)
+        return stored.user_id if stored is not None else None
 
     async def _store_broadcaster(self, token: dict[str, Any], info: dict[str, Any]) -> AuthorizedAccount:
         """A broadcaster connected their channel: what they granted becomes that channel's capabilities."""
@@ -195,6 +215,9 @@ class TwitchAuth:
             )
         if not token.get("refresh_token"):
             raise OAuthError("Twitch returned no refresh token; start again from /auth/connect")
+        if info["user_id"] == await self._bot_id():
+            # A second token for the bot's user would replace the bot's own in the Twitch client.
+            raise OAuthError("this is the bot's own account. Its channel is connected by signing in at /auth/login")
         await self.tokens.save(
             identity=broadcaster_identity(info["user_id"]),
             user_id=info["user_id"],

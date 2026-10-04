@@ -491,7 +491,7 @@ Sketch only — `storage/migrations/bot/sql/0001_init.sql` and the revisions aft
 ```sql
 triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
          -- redemption | raid | sub | resub | gift_sub | cheer | follow | stream_online |
-         -- stream_offline | timer | cron | listener
+         -- stream_offline | pyramid | timer | cron | listener
          match text,        -- JSON: {reward_id}, {min_viewers}, {regex}, {min_bits}, …
          schedule text,     -- timers: {"every_s": 900, "jitter_s": 120, "only_live": true,
                             --          "min_chat_lines": 5}
@@ -502,7 +502,9 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
 ```
 
 - Inside the pipeline, `{event.*}` exposes the payload: `{event.user.name}`, `{event.viewers}`, `{event.input}` (redemption text), `{event.reward.title}`, `{event.bits}`, `{event.months}` and so on.
-- **`chatter` for a trigger is the event's user:** the redeemer, the raider or the subscriber. Timers have no chatter.
+- **`chatter` for a trigger is the event's user:** the redeemer, the raider or the subscriber. Timers have no chatter. A listener's or a watcher event's chatter carries the line's badges, so `{$chatter.rank}` includes moderator and VIP.
+- **Chat watchers** (ADR-0028, `watchers/`) are a third source of events, next to EventSub notifications and the stream poller. A watcher sees every live line in a channel in order, including the bot's own lines, other bots and ignored users, because the dispatcher calls it before it drops any of them. It is synchronous and in memory, and only keeps state for a channel with an enabled trigger of one of its types. Its events run like notification triggers, one at a time per channel. `PyramidWatcher` emits `pyramid`: `{event.phase}` is `step`, `complete` or `broken`, with the builder, the width and peak, and on a break who broke it. On `broken` the run's chatter is the breaker; otherwise it is the builder. The bot-owned `pyramid` pack (`scripts/starter_pack.py`) reacts to it through its own trigger.
+- **Pack triggers** (ADR-0029) belong to a pack instead of a channel: `channel_id` is `*`, with `pack_id` and a `pack_key` the pack's install script matches on. Any type works. `TriggerService` hands one out as a copy per channel where the pack is published (there or globally) and its module is on, so the dispatcher, the watcher gate and the scheduler treat it like the channel's own; timer and cron state is kept per trigger and channel. Chat and the API list it marked with its pack and refuse to change it: `!module disable <pack>` turns it off. The cache reloads when a pack is published, unpublished or deleted; module toggles are read live from the policy snapshot.
 - **Listeners** run on every non-ignored, non-command message that matches the regex:
   - They use the [`regex`](https://pypi.org/project/regex/) module (`patterns.py`), not `re`: it takes the same syntax, avoids most catastrophic backtracking, and accepts a match timeout for the rest. Every search runs with a 50 ms timeout, and a pattern that runs out of time counts as no match and logs `pattern.timed_out`. Patterns are limited to 200 characters. The badword filter's regex and wildcard entries go through the same module (§9).
   - *Changed in revision 5:* earlier revisions said `re` plus an RE2-compatible check through `google-re2`. `re` can't be interrupted, so a timeout guard around it would have needed a thread per match; `regex` gives the timeout directly, and an RE2 check would only have refused patterns (backreferences, lookarounds) that moderators do write and that the timeout already makes safe.
@@ -571,6 +573,7 @@ A **race window** remains: a mod can act after the message has already been sent
 
 - The **CapabilityProbe** runs at join and hourly, and updates `channels.capabilities` and `channels.tier`. It measures mod status by *asking for* the moderator-only `channel.follow` subscription: no endpoint tells the bot's own token whether it is a mod without a scope the broadcaster would have to grant anyway, and that subscription is what a follow trigger needs in any case. What the broadcaster granted (redemptions, subs, bits) is never taken away by a probe — only the broadcaster flow (ADR-0007 item 5) sets it.
 - **The broadcaster flow** (`/auth/connect`) is one link a broadcaster follows. It asks for `channel:bot`, `channel:read:redemptions`, `channel:read:subscriptions`, `bits:read`, `channel:manage:broadcast` and `channel:manage:raids`, and none of them is required: whatever comes back becomes that channel's capabilities, and the rest stays unavailable with a reason. The token is stored as `broadcaster:<user_id>` alongside the bot's own, the channel is joined if it wasn't, and the redemption and cheer subscriptions are created with it. Both OAuth flows return to the one `/auth/callback` Twitch has registered, and are told apart by the `state` — which is doing its anti-forgery job at the same time. At startup, every stored broadcaster token is handed back to the Twitch client and its subscriptions are recreated.
+- **The bot's own channel** gets its broadcaster scopes from the bot's sign-in at `/auth/login`, which asks for both sets. The Twitch client keeps one token per user, so a second token for the bot's user would replace the bot's own and stop its chat. The bot's token is stored as `broadcaster:<bot id>` too (a refresh updates every row of a user), the client never adds a broadcaster token for the bot's id, and `/auth/connect` turns the bot account away with a pointer to `/auth/login`.
 
 **Scopes for later.** Asking for a scope is cheap to add and costs every bot and broadcaster a fresh sign-in, so these are listed rather than requested before a feature uses them (reviewed 2026-09-28):
 
@@ -709,6 +712,7 @@ src/doomtp_bot/
 ├─ customcmds/  service.py resolution.py packs.py params.py                ✔ ADR-0009, ADR-0012
 ├─ variables/   store.py access.py                                         ✔
 ├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
+├─ watchers/    base.py pyramid.py                                         ✔ ADR-0028
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ webfetch/    addresses.py fetcher.py hosts.py                           ✔ ADR-0020: allowed hosts, public addresses only
 ├─ audit/       log.py                                                     ✔
@@ -772,8 +776,8 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
     reaches it. To look at it from outside, tunnel in over SSH (§11).
   - `pgweb`: optional, read-only, for browsing the log by hand. It replaced Datasette, which could
     only read SQLite.
-  - `compose.prod.yaml` on top replaces every `build:` with `${BOT_IMAGE}` — the image CI published
-    (ADR-0013). The same file builds locally in development and pulls on a server.
+  - Every service runs `${BOT_IMAGE}`, the image CI published (ADR-0013), defaulting to `:main`.
+    `compose.dev.yaml` on top builds it from the tree instead, for local development.
 - **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
   `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
   publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to

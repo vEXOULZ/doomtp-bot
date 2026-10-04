@@ -133,9 +133,7 @@ async def read_audit(
         params.append(actor_user_id)
     if action is not None:
         clauses.append("action LIKE %s" if action.endswith(".") else "action = %s")
-        params.append(
-            action.replace("%", r"\%").replace("_", r"\_") + "%" if action.endswith(".") else action
-        )
+        params.append(action.replace("%", r"\%").replace("_", r"\_") + "%" if action.endswith(".") else action)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     async with await conn.execute(
         "SELECT id, scope AS channel_id, CASE WHEN actor_kind = 'user' THEN actor_id END AS actor_user_id,"

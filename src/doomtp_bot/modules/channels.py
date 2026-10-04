@@ -33,9 +33,7 @@ MODULE = "core_admin"
         params=(
             Param("1", "basic", description="basic joins without a grant (bot admins only)"),
             Param("2", "channel", description="Channel to join with basic"),
-            Param(
-                "3", "rejoin", choices=("rejoin",), description="Come back to a channel that banned the bot"
-            ),
+            Param("3", "rejoin", choices=("rejoin",), description="Come back to a channel that banned the bot"),
         ),
         examples=(
             Example(
@@ -73,9 +71,7 @@ async def join_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     try:
         failed = await channels.join(channel_id, login, actor(ctx), rejoin=args.get("rejoin") == "rejoin")
     except ChannelBanned as exc:
-        return Result.failure(
-            Code.FAIL, f"{exc}. {ctx.channel.prefix}join basic {login} rejoin comes back anyway"
-        )
+        return Result.failure(Code.FAIL, f"{exc}. {ctx.channel.prefix}join basic {login} rejoin comes back anyway")
     if failed:
         return Result.failure(Code.FAIL, f"joined #{login}, but Twitch refused: {', '.join(failed)}")
     joined = ctx.service("policy").channel_settings(channel_id)
@@ -198,11 +194,7 @@ async def backfill_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
     if queue is None:
         return Result.failure(Code.FAIL, "the backfill queue isn't running")
     requested_by = f"chat:{ctx.invoker.id if ctx.invoker else '?'}"
-    by = (
-        JobActor("user", ctx.invoker.id, ctx.invoker.login, "chat")
-        if ctx.invoker
-        else JobActor("system", via="chat")
-    )
+    by = JobActor("user", ctx.invoker.id, ctx.invoker.login, "chat") if ctx.invoker else JobActor("system", via="chat")
     try:
         if action == "gaps":
             gaps_job, created = await queue.queue_gaps(ctx.channel.id, requested_by, actor=by)

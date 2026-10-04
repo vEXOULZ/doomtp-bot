@@ -184,9 +184,7 @@ def _named(root: str, path: tuple[str, ...]) -> str:
     return f"{namespace}.{rest[0]}" + _brackets(tuple(rest[1:]))
 
 
-_NAMESPACES = frozenset(
-    {"channel.chatter", "publisher.channel", "publisher.chatter", "publisher.channel.chatter"}
-)
+_NAMESPACES = frozenset({"channel.chatter", "publisher.channel", "publisher.chatter", "publisher.channel.chatter"})
 
 
 def _brackets(path: tuple[str, ...]) -> str:

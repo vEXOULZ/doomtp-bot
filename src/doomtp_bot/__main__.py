@@ -59,6 +59,7 @@ from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp, VexoulzAuth
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.watchers import default_watchers
 from doomtp_bot.webfetch.fetcher import HttpFetcher
 from doomtp_bot.webfetch.hosts import HostStore
 
@@ -105,8 +106,9 @@ async def run(settings: Settings) -> None:
         await dbs.close()
         raise
     history = IvrLogsProvider(settings.ivr_logs_url)
-    triggers = TriggerService(dbs.bot, filters=content_filter)
+    triggers = TriggerService(dbs.bot, filters=content_filter, scope=policy)
     await triggers.reload()
+    packs.on_published = triggers.reload  # a pack's triggers follow where it is published (ADR-0029)
     activity = ChatActivity()
     writer = ChatLogWriter(dbs.chatlog)
     stale = await writer.close_stale_sessions()
@@ -141,9 +143,7 @@ async def run(settings: Settings) -> None:
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
     emote_cdn = TwitchCdn()
     enricher = Enricher(dbs.chatlog, twitch, emote_cdn)  # what backfilled lines lack (ADR-0024 §3)
-    backfill = BackfillService(
-        conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher
-    )
+    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher)
     job_registry = Registry()
     register_backfill(job_registry, backfill)
     # Jobs keep their own pool, on the `jobs` schema (ADR-0027); a backfill still writes through `chatlog`.
@@ -199,9 +199,7 @@ async def run(settings: Settings) -> None:
         settings_ = policy.channel_settings(channel_id)
         elevated = settings_ is not None and settings_.tier in ("moderator", "full")
         if not elevated and twitch is not None and twitch.bot_id is not None:
-            elevated = (
-                policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
-            )
+            elevated = policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
         return (90, 30.0) if elevated else (20, 30.0)
 
     bot_badges = BotBadges()
@@ -231,9 +229,7 @@ async def run(settings: Settings) -> None:
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
-    timers = TimerScheduler(
-        triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams
-    )
+    timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
         runtime=runtime,
         policy=policy,
@@ -245,11 +241,10 @@ async def run(settings: Settings) -> None:
         trigger_runner=trigger_runner,
         activity=activity,
         streams=streams,
-        automod=(
-            AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None
-        ),
+        automod=(AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None),
         customcmds=customcmds,
         bot_badges=bot_badges,
+        watchers=default_watchers(),
     )
 
     poller = (
@@ -299,20 +294,20 @@ async def run(settings: Settings) -> None:
         if twitch is None:
             return
         for stored in await twitch.tokens.broadcasters():
+            if stored.user_id == twitch.bot_id:  # granted by the bot's own sign-in, which has no callback of its own
+                await probe.grant(stored.user_id, granted_by(stored.scopes))
             settings_of = policy.channel_settings(stored.user_id)
             capabilities = set(settings_of.capabilities) if settings_of else set()
             await use_broadcaster(stored.user_id, stored.login, stored, capabilities)
 
-    async def use_broadcaster(
-        channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]
-    ) -> None:
+    async def use_broadcaster(channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]) -> None:
         """Subscribe to a channel's own events with the broadcaster's token, and notice when it's gone."""
         if twitch is None:
             return
         if stored is None or not stored.refresh_token:
             await forget_broadcaster(channel_id, login, "no usable token is stored")
             return
-        if not await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token):
+        if not await twitch.use_broadcaster_token(stored.user_id, stored.access_token, stored.refresh_token):
             await forget_broadcaster(channel_id, login, "Twitch would not take the token")
             return
         events = await twitch.subscribe_broadcaster(channel_id, capabilities)
@@ -396,9 +391,7 @@ async def run(settings: Settings) -> None:
 
     async def chatlog_check() -> ComponentHealth:
         status = Status.OK if writer.queue_depth < 5_000 else Status.DEGRADED
-        return ComponentHealth(
-            status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms}
-        )
+        return ComponentHealth(status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms})
 
     async def twitch_check() -> ComponentHealth:
         if twitch is None:

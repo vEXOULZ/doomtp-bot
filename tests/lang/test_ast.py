@@ -37,9 +37,7 @@ def test_canonical_pipe_with_placeholder() -> None:
 
 
 def test_canonical_precedence_shape() -> None:
-    node = Or(
-        And(inv(1, "a"), Pipe(inv(2, "b"), Store(inv(3, "c"), VarRef("channel", "x"), False))), inv(4, "d")
-    )
+    node = Or(And(inv(1, "a"), Pipe(inv(2, "b"), Store(inv(3, "c"), VarRef("channel", "x"), False))), inv(4, "d"))
     assert to_canonical(node) == "Or(And(a[], Pipe(b[], Store(c[], channel.x))), d[])"
 
 
@@ -64,10 +62,7 @@ def test_expressions_render_with_every_inner_operation_parenthesised() -> None:
     expr = Binary("-", Binary("*", Unary("-", Ref("_1")), Binary("+", Lit(2), Lit(3))), Lit(1))
     assert render_expr(expr) == "((-_1) * (2 + 3)) - 1"
     chained = Compare(Lit(1), (("<", VarRef("channel", "x")), ("<=", Lit(3))))
-    assert (
-        render_expr(Binary("and", chained, Unary("not", Lit(False))))
-        == "(1 < channel.x <= 3) and (not false)"
-    )
+    assert render_expr(Binary("and", chained, Unary("not", Lit(False)))) == "(1 < channel.x <= 3) and (not false)"
 
 
 def test_brackets_render_as_written() -> None:

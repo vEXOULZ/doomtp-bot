@@ -93,7 +93,7 @@ A type is either **declared once** in the command's parameter definition, or giv
 | `{$bot.*}` | `name`, `id`, `version` | anywhere |
 | `{$now.*}` | `iso`, `unix`, `date`, `time`, `weekday` (channel timezone) | anywhere |
 | `{cmd.*}` | `name`, `alias`, `id`, `version`, `owner` | custom commands |
-| `{event.*}` | trigger payload: `type`, `user.*`, `input`, `reward.*`, `viewers`, `bits`, `months`, `tier`, `message` | custom commands and triggers |
+| `{event.*}` | trigger payload: `type`, `user.*`, `input`, `reward.*`, `viewers`, `bits`, `months`, `tier`, `message`; for `pyramid`, `pyramid_id`, `phase`, `direction`, `token`, `width`, `peak`, `breaker.*`, `by_bot`, `self_broken` (ADR-0028) | custom commands and triggers |
 | `{match.*}` | `0` (whole match), `1..N`, named groups | listeners only |
 | `{cooldown.*}` | `command`, `tier`, `tier_remaining`, `user_remaining` | `on_cooldown` callbacks only |
 | `{denied.*}` | `command`, `required_role`, `rank` | `on_denied` callbacks only |

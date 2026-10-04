@@ -54,9 +54,7 @@ def parse_ref(token: str, *, allow_path: bool = False) -> tuple[str, str, tuple[
     try:
         ref = parse_var_ref(token)
     except ParseError:
-        raise CommandError(
-            f"expected a variable like channel.deaths or channel.stats[kills], got {token}"
-        ) from None
+        raise CommandError(f"expected a variable like channel.deaths or channel.stats[kills], got {token}") from None
     if ref.path and not allow_path:
         raise CommandError(f"{ref.namespace}.{ref.name} takes no [path] here")
     steps: list[str | int] = []

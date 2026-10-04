@@ -156,9 +156,7 @@ class PostgresVariableStore:
             f"SELECT owner_kind, owner_id, {_COLUMNS} FROM variable_limits"
             " WHERE owner_kind <> '*' ORDER BY owner_kind, owner_id",
         )
-        return [
-            (r["owner_kind"], r["owner_id"], LimitOverride(**{c: r[c] for c in LIMIT_COLUMNS})) for r in rows
-        ]
+        return [(r["owner_kind"], r["owner_id"], LimitOverride(**{c: r[c] for c in LIMIT_COLUMNS})) for r in rows]
 
     async def limits_for(self, kind: str, owner_id: str) -> Limits:
         """Field by field: the owner's override where it has one, the default otherwise."""

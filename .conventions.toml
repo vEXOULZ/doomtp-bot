@@ -1,0 +1,7 @@
+# Which version of vEXOULZ/conventions this repo follows, and how.
+# See https://github.com/vEXOULZ/conventions#conventionstoml
+version = "v1.0.0"
+profile = "python-service"
+flow = "dev"
+extra_checks = ["web-editor"]   # the editor bundle, built and checked in ci.yml
+# extra_workflows = []   # workflow files beyond ci.yml and publish.yml

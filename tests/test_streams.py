@@ -141,9 +141,7 @@ async def test_the_probe_finds_and_stores_the_moderator_tier(h: Harness) -> None
 
 async def test_the_probe_leaves_what_the_broadcaster_granted_alone(h: Harness) -> None:
     await h.policy.mutate(
-        lambda repo: repo.set_channel_field(
-            CHANNEL_ID, "capabilities", {"chat", "redemptions"}, Actor(None, "x")
-        )
+        lambda repo: repo.set_channel_field(CHANNEL_ID, "capabilities", {"chat", "redemptions"}, Actor(None, "x"))
     )
     probe = CapabilityProbe(policy=h.policy, channels=h.channels, prober=h.helix)
 

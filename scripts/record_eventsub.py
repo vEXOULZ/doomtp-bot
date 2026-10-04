@@ -127,9 +127,7 @@ async def record_all(port: int, twitch: str, out: Path) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=Path("tests/fixtures/eventsub"))
     parser.add_argument("--port", type=int, default=8998, help="the mock server's port")
     parser.add_argument("--twitch", default="twitch", help="path to the Twitch CLI")

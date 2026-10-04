@@ -57,12 +57,8 @@ async def test_reading_one_channel_and_a_limit(dbs: Databases) -> None:
 
 
 async def test_rows_land_in_the_shared_table_in_its_shape(dbs: Databases) -> None:
-    await write_audit(
-        dbs.bot, action="cc.create", actor_user_id="1", via="chat", channel_id="100", after={"a": 1}
-    )
-    await write_audit(
-        dbs.bot, action="http_limits", actor_user_id=None, via="api", before="3"
-    )  # undotted: older
+    await write_audit(dbs.bot, action="cc.create", actor_user_id="1", via="chat", channel_id="100", after={"a": 1})
+    await write_audit(dbs.bot, action="http_limits", actor_user_id=None, via="api", before="3")  # undotted: older
     async with await dbs.bot.execute(
         "SELECT actor_kind, actor_id, via, action, scope, outcome, before, after FROM public.audit_log ORDER BY id"
     ) as cur:
@@ -111,9 +107,7 @@ async def test_the_old_tables_rows_are_copied_once(dbs: Databases) -> None:
     assert await copy_legacy_audit(dbs.bot) == 4
     assert await copy_legacy_audit(dbs.bot) == 0
     rows = await read_audit(dbs.bot)
-    assert [
-        (r["action"], r["channel_id"], r["actor_user_id"], r["before"], r["after"], r["at"]) for r in rows
-    ] == [
+    assert [(r["action"], r["channel_id"], r["actor_user_id"], r["before"], r["after"], r["at"]) for r in rows] == [
         ("pack.publish", None, None, None, None, at),
         ("role.create", "100", "2", None, 7, at),
         ("http_limits", None, None, "plain text", "", at),

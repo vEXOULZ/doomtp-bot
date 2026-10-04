@@ -84,9 +84,7 @@ def _connect(dsn: str) -> Iterator[Connection]:
 
 
 def _exists(conn: Connection, schema: str, table: str) -> bool:
-    return (
-        conn.execute(text("SELECT to_regclass(:name)"), {"name": f'"{schema}".{table}'}).scalar() is not None
-    )
+    return conn.execute(text("SELECT to_regclass(:name)"), {"name": f'"{schema}".{table}'}).scalar() is not None
 
 
 def _revision(conn: Connection, schema: str) -> str | None:
@@ -192,17 +190,13 @@ def _show(revisions: dict[str, str | None] | dict[str, str]) -> str:
 
 def cli(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="doomtp-bot db", description="Schema migrations (ADR-0022)")
-    parser.add_argument(
-        "--database-url", help="default: DATABASE_URL and its password, as the bot reads them"
-    )
+    parser.add_argument("--database-url", help="default: DATABASE_URL and its password, as the bot reads them")
     sub = parser.add_subparsers(dest="action", required=True)
     up = sub.add_parser("upgrade", help="bring both schemas to this build's heads")
     up.add_argument("--to", default="head", help="a revision other than head (both schemas)")
     down = sub.add_parser("downgrade", help="take schemas down to older revisions")
     for schema in SCHEMAS:
-        down.add_argument(
-            f"--{schema}", metavar="REV", help=f"target revision for {schema} (base empties it)"
-        )
+        down.add_argument(f"--{schema}", metavar="REV", help=f"target revision for {schema} (base empties it)")
     sub.add_parser("current", help="where the database stands")
     sub.add_parser("heads", help="the newest revisions this build has; needs no database")
     args = parser.parse_args(argv)

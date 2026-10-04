@@ -91,9 +91,7 @@ class AutoMod:
         deleted = await self.moderator.delete_message(msg.channel_id, msg.message_id)
         timed_out = False
         if verdict.action == "timeout":
-            timed_out = await self.moderator.timeout_user(
-                msg.channel_id, msg.user_id, verdict.seconds, REASON
-            )
+            timed_out = await self.moderator.timeout_user(msg.channel_id, msg.user_id, verdict.seconds, REASON)
         log.info(
             "automod.acted",
             channel=msg.channel_id,

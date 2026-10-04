@@ -33,9 +33,7 @@ class ModerationIndex:
             case ChatCleared(channel_id=channel, at=at):
                 self._chat_clears[channel] = max(self._chat_clears.get(channel, 0), at)
 
-    def is_invalidated(
-        self, channel_id: str, message_id: str | None, user_id: str | None, sent_at_ms: int
-    ) -> bool:
+    def is_invalidated(self, channel_id: str, message_id: str | None, user_id: str | None, sent_at_ms: int) -> bool:
         """True if the triggering message was deleted, or its author/the chat was cleared at or after it was sent."""
         if message_id and message_id in self._deleted:
             return True

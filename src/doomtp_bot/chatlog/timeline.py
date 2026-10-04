@@ -264,9 +264,7 @@ def _payload(kind: str, event: dict[str, Any], at: int) -> dict[str, Any]:
     return {
         "system_message": event.get("system_message", ""),
         "text": (event.get("message") or {}).get("text", ""),
-        "chatter": None
-        if anonymous
-        else {"id": event["chatter_user_id"], "login": event.get("chatter_user_login")},
+        "chatter": None if anonymous else {"id": event["chatter_user_id"], "login": event.get("chatter_user_login")},
         "detail": event.get(event.get("notice_type") or kind),
     }
 
@@ -438,12 +436,8 @@ async def coverage(conn: Connection, channel_id: str, since: int, until: int | N
             ) as cur:
                 found = await cur.fetchone()
             backfill = None if found is None else dict(found)
-        gaps.append(
-            {"from": max(start, since), "to": min(end, until), "reason": reason, "backfill": backfill}
-        )
-    overlapping = [
-        s for s in sessions if s["started_at"] < until and (s["ended_at"] is None or s["ended_at"] > since)
-    ]
+        gaps.append({"from": max(start, since), "to": min(end, until), "reason": reason, "backfill": backfill})
+    overlapping = [s for s in sessions if s["started_at"] < until and (s["ended_at"] is None or s["ended_at"] > since)]
     return {
         "since": since,
         "until": until,

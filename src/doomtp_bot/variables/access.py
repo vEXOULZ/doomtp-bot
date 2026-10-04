@@ -51,9 +51,7 @@ class VariableAccessPolicy:
         async with await self.conn.execute(
             "SELECT channel_id, command_id, variable FROM publication_write_grants"
         ) as cur:
-            self._grants = frozenset(
-                (r["channel_id"], r["command_id"], r["variable"]) for r in await cur.fetchall()
-            )
+            self._grants = frozenset((r["channel_id"], r["command_id"], r["variable"]) for r in await cur.fetchall())
 
     def _has_grant(self, ctx: ExecContext, namespace: str, name: str) -> bool:
         """Grants are per command, not per published name: republishing something else under the same

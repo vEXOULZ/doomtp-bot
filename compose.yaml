@@ -1,5 +1,10 @@
-# Development: this file builds the image from the tree. A server runs it with compose.prod.yaml on top,
-# which replaces every `build` with the image CI published (ADR-0013).
+# Production: every service runs the image CI published (ADR-0013). BOT_IMAGE in .env picks the tag; it
+# defaults to :main, what production follows. `pull_policy: always` asks the registry every time, because
+# the tag moves and an image already on disk would otherwise win.
+#
+# Development: compose.dev.yaml on top builds the image from the tree instead.
+#
+#     docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 services:
   postgres:
     image: postgres:17-alpine
@@ -30,8 +35,8 @@ services:
   # The migrate step (ADR-0022): the schema upgrade and the starter pack, from the bot's own image, before
   # the bot starts. Every `up` runs it, so no deploy can skip it; if it fails, the bot isn't replaced.
   migrate:
-    build: .
-    image: doomtp-bot:dev
+    image: ${BOT_IMAGE:-ghcr.io/vexoulz/doomtp-bot:main}
+    pull_policy: always
     restart: "no"
     entrypoint: ["sh", "/app/scripts/migrate.sh"]
     env_file: .env
@@ -46,8 +51,8 @@ services:
       - no-new-privileges:true
 
   doomtp-bot:
-    build: .
-    image: doomtp-bot:dev
+    image: ${BOT_IMAGE:-ghcr.io/vexoulz/doomtp-bot:main}
+    pull_policy: always
     restart: unless-stopped
     # Long enough for SIGTERM to close the log sessions and drain the writer queue, so a deploy doesn't
     # look like a crash to the gap detector (ADR-0008). The default 10s is not.
@@ -101,8 +106,8 @@ services:
   # One-shot coverage check after a deploy (ADR-0008): docker compose --profile tools run --rm coverage
   coverage:
     profiles: ["tools"]
-    build: .
-    image: doomtp-bot:dev
+    image: ${BOT_IMAGE:-ghcr.io/vexoulz/doomtp-bot:main}
+    pull_policy: always
     entrypoint: ["python", "/app/scripts/coverage.py"]
     env_file: .env
     secrets: [postgres_password]
@@ -119,8 +124,8 @@ services:
   # this is for a dry run: docker compose --profile tools run --rm starter-pack --dry-run
   starter-pack:
     profiles: ["tools"]
-    build: .
-    image: doomtp-bot:dev
+    image: ${BOT_IMAGE:-ghcr.io/vexoulz/doomtp-bot:main}
+    pull_policy: always
     entrypoint: ["python", "/app/scripts/starter_pack.py"]
     env_file: .env
     secrets: [postgres_password]
@@ -137,8 +142,8 @@ services:
   # docker compose --profile tools run --rm migrate-v2 [--dry-run]
   migrate-v2:
     profiles: ["tools"]
-    build: .
-    image: doomtp-bot:dev
+    image: ${BOT_IMAGE:-ghcr.io/vexoulz/doomtp-bot:main}
+    pull_policy: always
     entrypoint: ["python", "/app/scripts/migrate_v2.py"]
     env_file: .env
     secrets: [postgres_password]
@@ -155,8 +160,8 @@ services:
   # It writes pg_dump archives into ./data/backups; getting them off this host is still your job.
   backup:
     profiles: ["tools"]
-    build: .
-    image: doomtp-bot:dev
+    image: ${BOT_IMAGE:-ghcr.io/vexoulz/doomtp-bot:main}
+    pull_policy: always
     entrypoint: ["python", "/app/scripts/backup.py"]
     command: ["--out-dir", "/data/backups", "--keep", "7"]
     env_file: .env

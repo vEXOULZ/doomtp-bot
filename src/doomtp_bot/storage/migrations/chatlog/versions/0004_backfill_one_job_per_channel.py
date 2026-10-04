@@ -21,8 +21,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute(
-        "ALTER TABLE backfill_jobs ADD COLUMN kind text NOT NULL DEFAULT 'range'"
-        " CHECK (kind IN ('range', 'gaps'))"
+        "ALTER TABLE backfill_jobs ADD COLUMN kind text NOT NULL DEFAULT 'range' CHECK (kind IN ('range', 'gaps'))"
     )
     op.execute(
         "UPDATE backfill_jobs SET state = 'cancelled', error = 'replaced by one job per channel'"

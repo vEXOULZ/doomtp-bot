@@ -8,87 +8,41 @@ on:
   pull_request:
 
 jobs:
-  branch-name:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Conventional Branch, and allowed into its base
-        # Through the environment, never interpolated into the script: a branch name is user input.
-        # Also checks the flow of ADR-0021: only dev, release/* and hotfix/* merge into main.
-        env:
-          HEAD: ${{ github.head_ref }}
-          BASE: ${{ github.base_ref }}
-        run: .githooks/check-pr-branches.sh "$HEAD" "$BASE"
+  conventions:
+    uses: vEXOULZ/conventions/.github/workflows/conventions-check.yml@v1.0.0
+    secrets: inherit
 
-  python:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-    services:
-      # The suite runs against a real Postgres, not a stand-in (ADR-0014). Same major as compose runs.
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55432/postgres
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install
-        # --locked fails if uv.lock is missing or stale for pyproject.toml.
-        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
-      - name: Lint
-        run: uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
-      - name: Type check
-        run: uv run mypy
-      - name: Twitch CLI
-        # Twitch's event simulator, for the EventSub handshake tests (ADR-0001 item 5). Without it they
-        # would skip, and --require-tools below makes that a failure; bumping the version re-checks us
-        # against a newer simulator.
-        run: |
-          version=1.1.24
-          url=https://github.com/twitchdev/twitch-cli/releases/download/v$version/twitch-cli_${version}_Linux_x86_64.tar.gz
-          curl -fsSL "$url" | tar -xz
-          sudo install "twitch-cli_${version}_Linux_x86_64/twitch" /usr/local/bin/twitch
-          twitch version || true  # the CLI's own update check can crash it after it has done the job
-      - name: Postgres client
-        # pg_dump, so the backup script's tests run here rather than skipping. It must be at least the
-        # server's version or it refuses to dump, and the runner ships 16 against a 17 service — so take
-        # the client from PostgreSQL's own apt repo, which the runner does not have configured. Same
-        # major as the Dockerfile and compose, for the same reason.
-        run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-client-17
-          # The runner already carries 16 and puts its bin directory ahead of the wrapper in /usr/bin,
-          # so installing 17 is not enough to be the one that runs. Name the version explicitly.
-          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
-      - name: Test
-        # --require-tools: a test whose tool (pg_dump, the Twitch CLI) is missing fails here instead of
-        # skipping, so a broken install step above can't leave the run green with those tests unrun.
-        run: |
-          pg_dump --version  # name a mismatch here, not as a test failure fifty lines later
-          pg_restore --version
-          uv run pytest -q --require-tools
-      - name: Grammar copy in sync with spec
-        run: uv run python scripts/check_railroad.py
-      - name: Railroad diagrams in sync with the grammar
-        run: uv run python scripts/render_railroad.py --check
+  ci:
+    # The suite runs against a real Postgres, not a stand-in (ADR-0014). Same major as compose runs.
+    uses: vEXOULZ/conventions/.github/workflows/python-ci.yml@v1.0.0
+    with:
+      postgres: true
+      # The Twitch CLI is Twitch's event simulator, for the EventSub handshake tests (ADR-0001 item 5).
+      # pg_dump is for the backup script's tests: it must be at least the server's version or it refuses
+      # to dump, and the runner ships 16 against a 17 service, so take it from PostgreSQL's own apt repo.
+      # The runner's 16 is ahead of the wrapper in /usr/bin, so name 17's bin directory explicitly.
+      setup: |
+        version=1.1.24
+        url=https://github.com/twitchdev/twitch-cli/releases/download/v$version/twitch-cli_${version}_Linux_x86_64.tar.gz
+        curl -fsSL "$url" | tar -xz
+        sudo install "twitch-cli_${version}_Linux_x86_64/twitch" /usr/local/bin/twitch
+        twitch version || true  # the CLI's own update check can crash it after it has done the job
+        sudo install -d /usr/share/postgresql-common/pgdg
+        sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+        echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+        sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-client-17
+        echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      # --require-tools: a test whose tool (pg_dump, the Twitch CLI) is missing fails instead of skipping,
+      # so a broken setup can't leave the run green with those tests unrun. Then the grammar copy and the
+      # railroad diagrams must match the spec.
+      test-command: |
+        pg_dump --version && pg_restore --version
+        uv run pytest -q --require-tools
+        uv run python scripts/check_railroad.py
+        uv run python scripts/render_railroad.py --check
 
   web-editor:
+    # A required check of its own, listed in .conventions.toml extra_checks.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -97,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: web-editor/.nvmrc
           cache: npm
           cache-dependency-path: web-editor/package-lock.json
       - run: npm ci
@@ -106,75 +60,23 @@ jobs:
       - name: Committed bundle matches the sources
         run: npm run build && git diff --exit-code ../src/doomtp_bot/api/static/editor
 
-  docker:
-    runs-on: ubuntu-latest
-    needs: python
+  image:
+    # A pull request builds the image and stops there. Pushes to main and dev and release tags publish
+    # one (ADR-0013, ADR-0021).
+    needs: ci
+    uses: vEXOULZ/conventions/.github/workflows/publish-image.yml@v1.0.0
     permissions:
       contents: read
       packages: write
-    env:
-      # A pull request builds the image and stops there. Pushes to main and dev and release tags publish
-      # one (ADR-0013, ADR-0021).
-      PUBLISH: ${{ github.event_name == 'push' }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Tag matches the package version
-        # A v* tag names the version the code says it is, so /healthz and $bot.version agree with it.
-        if: github.ref_type == 'tag'
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
+    with:
+      # The compose files parse (services name `.env`, which is gitignored; the example is what a server
+      # copies anyway), and a release tag also matches __version__, so /healthz and $bot.version agree.
+      pre-build: |
+        cp .env.example .env
+        docker compose --profile tools config --quiet
+        docker compose -f compose.yaml -f compose.dev.yaml --profile tools --profile test config --quiet
+        if [ "$GITHUB_REF_TYPE" = tag ]; then
           code=$(grep -m1 '^__version__ = ' src/doomtp_bot/__init__.py | cut -d'"' -f2)
-          project=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
-          echo "tag $TAG, __version__ $code, pyproject $project"
-          [ "$TAG" = "v$code" ] && [ "$TAG" = "v$project" ]
-      - uses: docker/setup-buildx-action@v3
-      - name: Image name
-        # GHCR rejects an uppercase path, and an owner's login may well have one.
-        id: image
-        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - name: Server compose files are valid
-        # Nothing else parses the production override, and it is only ever run on the box it matters on.
-        env:
-          BOT_IMAGE: ${{ steps.image.outputs.repo }}:main
-        run: |
-          # Services name `.env`, which is gitignored and so absent here. The example is what a server
-          # copies anyway, and this step is checking that the files parse, not what is in them.
-          cp .env.example .env
-          docker compose -f compose.yaml -f compose.prod.yaml --profile tools config --quiet
-      - name: Log in to GHCR
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Image tags
-        # :main is what production follows and :dev what a test box follows. A release adds :vX.Y.Z,
-        # the name to roll back to; the sha tag is there for everything else.
-        id: tags
-        env:
-          REPO: ${{ steps.image.outputs.repo }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          case "$REF_TYPE/$REF_NAME" in
-            tag/v*) name=$REF_NAME ;;
-            branch/dev) name=dev ;;
-            *) name=main ;;
-          esac
-          {
-            echo 'list<<EOF'
-            echo "$REPO:$name"
-            echo "$REPO:$GITHUB_SHA"
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
-      - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ env.PUBLISH == 'true' }}
-          platforms: linux/amd64
-          tags: ${{ steps.tags.outputs.list }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          echo "tag $GITHUB_REF_NAME, __version__ $code"
+          [ "$GITHUB_REF_NAME" = "v$code" ]
+        fi

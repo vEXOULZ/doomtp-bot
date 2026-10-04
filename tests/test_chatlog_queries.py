@@ -37,7 +37,5 @@ async def test_search_finds_the_newest_first_and_chat_sees_only_what_is_still_in
     assert [m["message_id"] for m in everything] == ["m6", "m5", "m4", "m3", "m2", "m1"]
     visible = await search_messages(dbs.chatlog, CHANNEL_ID, "doom", visible_only=True)
     assert [m["message_id"] for m in visible] == ["m2", "m1"]
-    assert [m["message_id"] for m in await search_messages(dbs.chatlog, CHANNEL_ID, "doom", limit=1)] == [
-        "m6"
-    ]
+    assert [m["message_id"] for m in await search_messages(dbs.chatlog, CHANNEL_ID, "doom", limit=1)] == ["m6"]
     assert await search_messages(dbs.chatlog, CHANNEL_ID, '"') == []  # takes whatever a person types

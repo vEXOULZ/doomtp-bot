@@ -105,10 +105,7 @@ async def test_sign_in_asks_twitch_for_moderated_channels_only(
     assert (location.netloc, location.path) == ("id.twitch.tv", "/oauth2/authorize")
     assert query["scope"] == ["user:read:moderated_channels"]
     assert query["redirect_uri"] == ["https://bot.example/auth/admin/callback"]
-    assert (
-        "doomtp_signin" in started.headers["set-cookie"]
-        and "Path=/auth/admin" in started.headers["set-cookie"]
-    )
+    assert "doomtp_signin" in started.headers["set-cookie"] and "Path=/auth/admin" in started.headers["set-cookie"]
     assert (await client.get("/api/v1/session")).json()["twitch_login"] is True
 
 
@@ -124,16 +121,12 @@ async def test_a_moderator_signs_in_and_lands_where_they_started(
     assert (await client.get(f"/api/v1/channels/{OWN_LOGIN}")).status_code == 403
 
 
-async def test_a_broadcaster_manages_their_own_channel(
-    client: httpx.AsyncClient, signin: dict[str, Any]
-) -> None:
+async def test_a_broadcaster_manages_their_own_channel(client: httpx.AsyncClient, signin: dict[str, Any]) -> None:
     await sign_in(client, "own")
     assert (await client.get("/api/v1/session")).json()["channels"] == [OWN_LOGIN]
 
 
-async def test_a_bot_owner_is_an_admin_without_asking_helix(
-    client: httpx.AsyncClient, signin: dict[str, Any]
-) -> None:
+async def test_a_bot_owner_is_an_admin_without_asking_helix(client: httpx.AsyncClient, signin: dict[str, Any]) -> None:
     assert (await sign_in(client, "owner")).headers["location"] == "/admin"
     session = (await client.get("/api/v1/session")).json()
     assert (session["role"], session["channels"]) == ("admin", None)
@@ -180,16 +173,14 @@ async def test_failures_go_back_to_the_login_page_with_a_reason(
     assert error_of(again)[1]["error"] == ["expired"]  # a state is good once
 
     await client.get("/auth/admin/login")
-    assert error_of(await client.get("/auth/admin/callback", params={"code": "mod", "state": "made-up"}))[
-        1
-    ] == {"error": ["expired"]}
+    assert error_of(await client.get("/auth/admin/callback", params={"code": "mod", "state": "made-up"}))[1] == {
+        "error": ["expired"]
+    }
     bad_code = await sign_in(client, "not-a-code")
     assert error_of(bad_code)[1]["error"] == ["twitch"]
 
 
-async def test_a_callback_from_another_browser_is_refused(
-    client: httpx.AsyncClient, signin: dict[str, Any]
-) -> None:
+async def test_a_callback_from_another_browser_is_refused(client: httpx.AsyncClient, signin: dict[str, Any]) -> None:
     """Otherwise a page could sign a visitor in as the page's author, with a code the author obtained."""
     started = await client.get("/auth/admin/login")
     state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
@@ -214,15 +205,11 @@ def test_next_is_only_ever_a_path_on_this_site(given: str | None, lands: str) ->
     assert safe_next(given) == lands
 
 
-async def test_a_full_url_as_next_lands_on_the_admin_home(
-    client: httpx.AsyncClient, signin: dict[str, Any]
-) -> None:
+async def test_a_full_url_as_next_lands_on_the_admin_home(client: httpx.AsyncClient, signin: dict[str, Any]) -> None:
     assert (await sign_in(client, "mod", "https://evil.example/")).headers["location"] == "/admin"
 
 
-async def test_channels_are_refreshed_every_few_minutes(
-    client: httpx.AsyncClient, signin: dict[str, Any]
-) -> None:
+async def test_channels_are_refreshed_every_few_minutes(client: httpx.AsyncClient, signin: dict[str, Any]) -> None:
     http, now = signin["http"], signin["now"]
     await sign_in(client, "mod")
     http.moderated[MOD_ID] = [OWN_ID]
