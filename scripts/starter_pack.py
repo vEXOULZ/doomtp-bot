@@ -27,6 +27,8 @@ import asyncio
 import json
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
 import psycopg
 
@@ -46,9 +48,10 @@ from doomtp_bot.customcmds.system import (
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.modules import builtin_registry
-from doomtp_bot.policy.roles import GLOBAL
+from doomtp_bot.policy.roles import GLOBAL, MODERATOR_RANK
 from doomtp_bot.storage.db import Connection, check_schema, configure_event_loop, connect, fetch_value
 from doomtp_bot.storage.schema import SchemaMismatch
+from doomtp_bot.triggers.service import TriggerError, TriggerService
 
 PACK = "starter"
 PACK_SUMMARY = "The commands every channel starts with"
@@ -235,6 +238,19 @@ QUOTES: tuple[Derived, ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class PackTrigger:
+    """A trigger the pack brings (ADR-0029): it fires in every channel where the pack is published and its
+    module is on. Any type works: an event, a listener, a timer or a cron. `key` names it within the pack."""
+
+    key: str
+    type: str
+    expr: str
+    match: dict[str, Any] = field(default_factory=dict)
+    schedule: dict[str, Any] = field(default_factory=dict)
+    run_as_rank: int = MODERATOR_RANK
+
+
 PYRAMID_PACK = "pyramid"
 PYRAMID_SUMMARY = "Break emote pyramids with a fact, congratulate the ones that finish, and keep stats"
 _PY, _PS = "publisher.channel.pyramid", "publisher.channel.pyramid_stats"
@@ -254,7 +270,7 @@ _ATTEMPTED = f'({_PY}[attempt] ?? "-") == event.pyramid_id'
 _COUNTS_BROKEN = f"event.peak >= ({_PY}[min_peak] ?? 3) - 1 or {_ATTEMPTED}"
 
 # The pyramid chat watcher (ADR-0028) fires a `pyramid` trigger event on every row, on completion and on a
-# break; a channel turns this on with `!event add pyramid pyramid_on_event`. Settings live in the bot's
+# break, and the pack's own trigger runs `pyramid_on_event` for it (ADR-0029). Settings live in the bot's
 # `publisher.channel.pyramid` map, totals in `publisher.channel.pyramid_stats`, per-chatter counts in
 # `publisher.channel.chatter.pyramids` (built) and `.pyramid_breaks` (broke someone's), the channel's own
 # facts in `publisher.channel.pyramid_facts`, and the shared facts in `publisher.pyramid_facts`, which
@@ -280,13 +296,13 @@ PYRAMID: tuple[Derived, ...] = (
     ),
     Derived(
         name="pyramid_on_event",
-        summary="Reacts to pyramid trigger events: !event add pyramid pyramid_on_event",
+        summary="Reacts to pyramid trigger events, through the pack's own trigger",
         body=(
             f"ifelse {{{_IS_PYRAMID}}}"
             ' ( ifelse {event.phase == "step"} ( pyramid_step )'
             ' ( ifelse {event.phase == "complete"} ( pyramid_complete ) ( pyramid_broken ) ) )'
         ),
-        note="a channel turns it on with `!event add pyramid pyramid_on_event`, then `!pyramid chance <percent>`",
+        note="runs in every channel with the pyramid module on; `!module disable pyramid` turns it off",
     ),
     Derived(
         name="pyramid_step",
@@ -458,6 +474,8 @@ PYRAMID: tuple[Derived, ...] = (
 
 # The shared facts every channel draws from unless it turns them off with `!pyramid sharedfacts off`. This
 # list is their source: `install` rewrites `publisher.pyramid_facts` whenever it changes.
+PYRAMID_TRIGGERS: tuple[PackTrigger, ...] = (PackTrigger(key="on_event", type="pyramid", expr="pyramid_on_event"),)
+
 PYRAMID_FACTS: tuple[str, ...] = (
     "The Great Pyramid of Giza was the tallest human-made structure on Earth for over 3,800 years.",
     "The Great Pyramid was built for the pharaoh Khufu, around 2560 BC.",
@@ -526,7 +544,57 @@ async def install(conn: Connection, *, owner_user_id: str, owner_login: str, dry
     done += await _install(commands, packs, owner, PACK, PACK_SUMMARY, STARTER, None, dry_run=dry_run)
     done += await _install(commands, packs, owner, QUOTES_PACK, QUOTES_SUMMARY, QUOTES, None, dry_run=dry_run)
     done += await _install(commands, packs, owner, PYRAMID_PACK, PYRAMID_SUMMARY, PYRAMID, None, dry_run=dry_run)
+    done += await _install_triggers(conn, packs, owner_user_id, PYRAMID_PACK, PYRAMID_TRIGGERS, dry_run=dry_run)
     done += await _install_facts(conn, owner_user_id, dry_run=dry_run)
+    return done
+
+
+async def _install_triggers(
+    conn: Connection,
+    packs: PackService,
+    owner_user_id: str,
+    name: str,
+    declared: tuple[PackTrigger, ...],
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """The pack's triggers (ADR-0029): add or update each one by key, and drop the ones no longer declared.
+    Their commands are installed first, so the expressions can call them."""
+    pack = await packs.by_owner(owner_user_id, name)
+    triggers = TriggerService(conn)
+    await triggers.reload()
+    stored = {t.pack_key: t for t in triggers.pack_triggers(name)}
+    done: list[str] = []
+    for wanted in declared:
+        current = stored.get(wanted.key)
+        same = current is not None and (
+            (current.type, current.expr, current.match, current.schedule, current.run_as_rank)
+            == (wanted.type, wanted.expr, wanted.match, wanted.schedule, wanted.run_as_rank)
+        )
+        if same:
+            continue
+        done.append(f"{'add' if current is None else 'update'} {name} trigger {wanted.key}")
+        if dry_run or pack is None:
+            continue
+        try:
+            await triggers.install_pack_trigger(
+                pack_id=pack.id,
+                key=wanted.key,
+                type_=wanted.type,
+                expr=wanted.expr,
+                match=wanted.match,
+                schedule=wanted.schedule,
+                run_as_rank=wanted.run_as_rank,
+                created_by=owner_user_id,
+            )
+        except TriggerError as exc:
+            raise CustomCommandError(f"{name} trigger {wanted.key}: {exc}") from exc
+    gone = sorted(set(stored) - {t.key for t in declared})
+    done += [f"remove {name} trigger {key}" for key in gone]
+    if gone and pack is not None and not dry_run:
+        await triggers.remove_pack_triggers(
+            pack_id=pack.id, keep=[t.key for t in declared], actor_user_id=owner_user_id
+        )
     return done
 
 

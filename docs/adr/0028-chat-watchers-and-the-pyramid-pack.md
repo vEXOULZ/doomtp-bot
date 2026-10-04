@@ -82,8 +82,9 @@ exemptions. It reports every pyramid from width 2 up.
 ### Everything else is the `pyramid` pack
 
 The rest is derived commands in a bot-owned `pyramid` pack, installed by `scripts/starter_pack.py`
-(ADR-0019) and published globally. A channel turns it on with one trigger, `!event add pyramid
-pyramid_on_event`, so a fix to the pack reaches every channel without touching its trigger.
+(ADR-0019) and published globally. Its trigger only calls `pyramid_on_event`, so a fix to the pack reaches
+every channel without touching the trigger. *Amended by ADR-0029:* the pack brings that trigger itself, so
+it runs wherever the pack's module is on; channels no longer add `!event add pyramid pyramid_on_event`.
 
 Per-channel settings, in channel variables:
 

@@ -106,8 +106,9 @@ async def run(settings: Settings) -> None:
         await dbs.close()
         raise
     history = IvrLogsProvider(settings.ivr_logs_url)
-    triggers = TriggerService(dbs.bot, filters=content_filter)
+    triggers = TriggerService(dbs.bot, filters=content_filter, scope=policy)
     await triggers.reload()
+    packs.on_published = triggers.reload  # a pack's triggers follow where it is published (ADR-0029)
     activity = ChatActivity()
     writer = ChatLogWriter(dbs.chatlog)
     stale = await writer.close_stale_sessions()

@@ -80,7 +80,7 @@ class TimerScheduler:
         self.rng = rng or random.Random()
         self._clock = clock
         self._wall = wall
-        self._state: dict[int, TimerState] = {}
+        self._state: dict[tuple[int, str], TimerState] = {}  # by trigger and channel (ADR-0029)
         self._task: asyncio.Task[None] | None = None
 
     def now(self) -> float:
@@ -119,14 +119,16 @@ class TimerScheduler:
         now = self.now()
         fired: list[Trigger] = []
         for timer in self.triggers.timers():
-            state = self._state.setdefault(timer.id, TimerState(next_at=now + self._interval(timer)))
+            state = self._state.setdefault(
+                (timer.id, timer.channel_id), TimerState(next_at=now + self._interval(timer))
+            )
             if now < state.next_at or not self._ready(timer, state):
                 continue
             state.next_at = now + self._interval(timer)
             await self._fire(timer, state)
             fired.append(timer)
         for cron in self.triggers.crons():
-            state = self._state.setdefault(cron.id, TimerState())
+            state = self._state.setdefault((cron.id, cron.channel_id), TimerState())
             if not self._cron_due(cron, state) or not self._ready(cron, state):
                 continue
             await self._fire(cron, state)

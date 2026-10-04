@@ -190,6 +190,16 @@ class PolicyService:
             return toggles[(GLOBAL, module)]
         return True
 
+    def module_on(self, channel_id: str, module: str) -> bool:
+        """The module toggle alone, as `is_enabled` reads it: for what runs without a command, such as a
+        pack's triggers (ADR-0029)."""
+        toggles = self._snapshot.module_toggles
+        if toggles.get((GLOBAL, module)) is False:
+            return False
+        if (channel_id, module) in toggles:
+            return toggles[(channel_id, module)]
+        return toggles.get((GLOBAL, module), True)
+
     def switched_off_by(self, channel_id: str, spec: CommandSpec) -> str | None:
         """`"module"` or `"command"`: which toggle keeps this command off here, or None when it is on.
         For explain, which may say what chat won't (spec §6.6: off answers like unknown)."""

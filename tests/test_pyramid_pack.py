@@ -1,7 +1,7 @@
 """The `pyramid` pack: what it does with the pyramid watcher's trigger events, and `!pyramid` (ADR-0028).
 
 The events are fed straight to `pyramid_on_event` in a trigger context, the way `TriggerRunner` runs the
-channel's `!event add pyramid pyramid_on_event`. The watcher itself is tested in `tests/watchers/`.
+pack's own `pyramid` trigger (ADR-0029). The watcher itself is tested in `tests/watchers/`.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Any
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.engine import RunReport
 from doomtp_bot.storage.db import fetch_value
+from doomtp_bot.triggers.service import TriggerService
 from scripts.starter_pack import PYRAMID_FACTS, PYRAMID_PACK
 from tests.customcmds.test_customcmds import BADGES, CHANNEL_ID, CHANNEL_LOGIN, USERS
 from tests.customcmds.test_packs import OTHER_CHANNEL, Harness, h  # noqa: F401
@@ -228,3 +229,14 @@ async def test_settings_and_stats_are_per_channel(h: Harness) -> None:  # noqa: 
         and other.send is not None
         and other.send.startswith("break chance 25% going up, 75% going down")
     )
+
+
+async def test_install_brings_the_trigger_so_every_channel_watches(h: Harness) -> None:  # noqa: F811
+    done = await _install(h)
+    assert f"add {PYRAMID_PACK} trigger on_event" in done
+    triggers = TriggerService(h.dbs.bot)
+    await triggers.reload()
+    [trigger] = triggers.of_type(CHANNEL_ID, "pyramid")
+    assert (trigger.pack, trigger.expr) == (PYRAMID_PACK, "pyramid_on_event")
+    assert [t.channel_id for t in triggers.of_type(OTHER_CHANNEL, "pyramid")] == [OTHER_CHANNEL]
+    assert not any("trigger" in step for step in await _install(h))

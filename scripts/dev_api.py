@@ -239,8 +239,9 @@ async def main(args: argparse.Namespace) -> None:
     await filters.reload()
     customcmds = CustomCommandService(dbs.bot, filters=filters)
     packs = PackService(dbs.bot, customcmds)
-    triggers = TriggerService(dbs.bot, filters=filters)
+    triggers = TriggerService(dbs.bot, filters=filters, scope=policy)
     await triggers.reload()
+    packs.on_published = triggers.reload
     twitch = StandInTwitch()
     runtime = Runtime(
         builtin_registry(),
