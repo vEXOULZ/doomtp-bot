@@ -42,14 +42,16 @@ TriggerType = Literal[
     "follow",
     "stream_online",
     "stream_offline",
+    "pyramid",
     "timer",
     "cron",
     "listener",
 ]
 TRIGGER_TYPES: tuple[TriggerType, ...] = (
     "redemption", "raid", "sub", "resub", "gift_sub", "cheer", "follow",
-    "stream_online", "stream_offline", "timer", "cron", "listener",
+    "stream_online", "stream_offline", "pyramid", "timer", "cron", "listener",
 )  # fmt: skip
+# `pyramid` comes from a chat watcher (ADR-0028), not from Twitch: `watchers.PyramidWatcher`.
 # Event types that only work where the channel granted the bot something (ADR-0007): `follow` needs the
 # bot to be a moderator, the other two need the broadcaster to have connected their channel. The rest —
 # raids, subs, resubs, gift subs — arrive as chat notifications, which every joined channel has.

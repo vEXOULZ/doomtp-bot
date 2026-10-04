@@ -23,7 +23,7 @@ from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.spec import LogLevel
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Coroutine, Sequence
 
     from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.channels import ChannelManager
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from doomtp_bot.triggers.runner import TriggerRunner
     from doomtp_bot.triggers.service import TriggerService
     from doomtp_bot.triggers.timers import ChatActivity
+    from doomtp_bot.watchers import ChatWatcher, WatchEvent
 
 log = structlog.get_logger(__name__)
 
@@ -96,6 +97,7 @@ class Dispatcher:
         automod: AutoMod | None = None,
         customcmds: CustomCommandService | None = None,
         bot_badges: BotBadges | None = None,
+        watchers: Sequence[ChatWatcher] = (),
         max_concurrent_runs: int = MAX_CONCURRENT_RUNS,
     ) -> None:
         self.runtime = runtime
@@ -111,6 +113,9 @@ class Dispatcher:
         self.automod = automod
         self.customcmds = customcmds
         self.bot_badges = bot_badges
+        self.watchers = tuple(watchers)
+        # Watcher events run one at a time per channel, in the order the lines came (ADR-0028).
+        self._watch_locks: dict[str, asyncio.Lock] = {}
         self._slots = asyncio.Semaphore(max_concurrent_runs)
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -140,6 +145,8 @@ class Dispatcher:
             await self.writer.message(msg, is_command=is_command)  # logged first, always — including ignored users
         if self.activity is not None and not msg.is_self:
             self.activity.saw_message(msg.channel_id)
+        if self.watchers and msg.source == "eventsub":
+            self._watch(msg)  # before any line is dropped: every line visible in chat counts (ADR-0028)
         if msg.is_self:
             if self.bot_badges is not None:  # whether the bot may post links here (ADR-0019)
                 self.bot_badges.saw(msg.channel_id, msg.badges)
@@ -166,6 +173,36 @@ class Dispatcher:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def _watch(self, msg: ChatMessage) -> None:
+        """Feed the line to the watchers whose events this channel has a trigger for."""
+        events: list[WatchEvent] = []
+        for watcher in self.watchers:
+            if self.triggers is None or not any(self.triggers.of_type(msg.channel_id, t) for t in watcher.types):
+                watcher.forget(msg.channel_id)
+                continue
+            events.extend(watcher.observe(msg))
+        if events:
+            self._spawn(self._watch_triggers(msg.channel_login, events), f"watch-{msg.message_id}")
+
+    async def _watch_triggers(self, channel_login: str, events: list[WatchEvent]) -> None:
+        """Run the triggers for watcher events. A channel's events run in order, so a pack's state sees
+        each pyramid row after the one before it."""
+        if self.triggers is None or self.trigger_runner is None:
+            return
+        lock = self._watch_locks.setdefault(events[0].channel_id, asyncio.Lock())
+        async with lock:
+            for event in events:
+                found = self.triggers.event_triggers(event.channel_id, event.type, event.payload)
+                for trigger in found:
+                    async with self._slots:
+                        await self.trigger_runner.run(
+                            trigger,
+                            channel_login=channel_login,
+                            event=event.payload,
+                            user=event.user,
+                            badges=event.badges,
+                        )
+
     async def _listeners(self, msg: ChatMessage) -> None:
         """Regex listeners run on ordinary chat lines, cancelled by moderation like any other run."""
         if self.triggers is None or self.trigger_runner is None:
@@ -182,6 +219,7 @@ class Dispatcher:
                     event={"user": {"id": msg.user_id, "name": msg.user_login}, "message": msg.text},
                     match=fields,
                     user=(msg.user_id, msg.user_login, msg.display_name),
+                    badges=frozenset(b.set_id for b in msg.badges),
                     input_text=msg.text,
                     is_cancelled=invalidated,
                     message_id=msg.message_id,

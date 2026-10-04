@@ -491,7 +491,7 @@ Sketch only — `storage/migrations/bot/sql/0001_init.sql` and the revisions aft
 ```sql
 triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
          -- redemption | raid | sub | resub | gift_sub | cheer | follow | stream_online |
-         -- stream_offline | timer | cron | listener
+         -- stream_offline | pyramid | timer | cron | listener
          match text,        -- JSON: {reward_id}, {min_viewers}, {regex}, {min_bits}, …
          schedule text,     -- timers: {"every_s": 900, "jitter_s": 120, "only_live": true,
                             --          "min_chat_lines": 5}
@@ -502,7 +502,8 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
 ```
 
 - Inside the pipeline, `{event.*}` exposes the payload: `{event.user.name}`, `{event.viewers}`, `{event.input}` (redemption text), `{event.reward.title}`, `{event.bits}`, `{event.months}` and so on.
-- **`chatter` for a trigger is the event's user:** the redeemer, the raider or the subscriber. Timers have no chatter.
+- **`chatter` for a trigger is the event's user:** the redeemer, the raider or the subscriber. Timers have no chatter. A listener's or a watcher event's chatter carries the line's badges, so `{$chatter.rank}` includes moderator and VIP.
+- **Chat watchers** (ADR-0028, `watchers/`) are a third source of events, next to EventSub notifications and the stream poller. A watcher sees every live line in a channel in order, including the bot's own lines, other bots and ignored users, because the dispatcher calls it before it drops any of them. It is synchronous and in memory, and only keeps state for a channel with an enabled trigger of one of its types. Its events run like notification triggers, one at a time per channel. `PyramidWatcher` emits `pyramid`: `{event.phase}` is `step`, `complete` or `broken`, with the builder, the width and peak, and on a break who broke it.
 - **Listeners** run on every non-ignored, non-command message that matches the regex:
   - They use the [`regex`](https://pypi.org/project/regex/) module (`patterns.py`), not `re`: it takes the same syntax, avoids most catastrophic backtracking, and accepts a match timeout for the rest. Every search runs with a 50 ms timeout, and a pattern that runs out of time counts as no match and logs `pattern.timed_out`. Patterns are limited to 200 characters. The badword filter's regex and wildcard entries go through the same module (§9).
   - *Changed in revision 5:* earlier revisions said `re` plus an RE2-compatible check through `google-re2`. `re` can't be interrupted, so a timeout guard around it would have needed a thread per match; `regex` gives the timeout directly, and an RE2 check would only have refused patterns (backreferences, lookarounds) that moderators do write and that the timeout already makes safe.
@@ -709,6 +710,7 @@ src/doomtp_bot/
 ├─ customcmds/  service.py resolution.py packs.py params.py                ✔ ADR-0009, ADR-0012
 ├─ variables/   store.py access.py                                         ✔
 ├─ triggers/    service.py timers.py runner.py cron.py                     ✔ architecture §7
+├─ watchers/    base.py pyramid.py                                         ✔ ADR-0028
 ├─ filters/     normalize.py matcher.py service.py                         ✔ architecture §9
 ├─ webfetch/    addresses.py fetcher.py hosts.py                           ✔ ADR-0020: allowed hosts, public addresses only
 ├─ audit/       log.py                                                     ✔

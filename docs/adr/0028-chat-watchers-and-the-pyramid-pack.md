@@ -64,7 +64,7 @@ exemptions. It reports every pyramid from width 2 up.
 
 | Field | Meaning |
 |-------|---------|
-| `pyramid_id` | a counter per channel, so a pack can match a break attempt to its outcome |
+| `pyramid_id` | the message id of its first row, so a pack can match a break attempt to its outcome |
 | `phase` | `step` (a new row), `complete` (the builder reached width 1 again) or `broken` |
 | `direction` | `up` or `down`, on `step` |
 | `token`, `width`, `peak` | the emote, the current row's width, the widest row so far |
@@ -125,10 +125,10 @@ ADR-0019 keeps out of Python.
 
 ## Action Items
 
-1. [ ] Chat watchers: the `watchers` package, the dispatcher hook before the `is_self` return, live
+1. [x] Chat watchers: the `watchers` package, the dispatcher hook before the `is_self` return, live
    lines only, and the per-channel gate.
-2. [ ] Badges for trigger and listener runs, so `$chatter.rank` includes badge roles.
-3. [ ] `PyramidWatcher` and the `pyramid` trigger type, with tests for complete, broken by the bot before
+2. [x] Badges for trigger and listener runs, so `$chatter.rank` includes badge roles.
+3. [x] `PyramidWatcher` and the `pyramid` trigger type, with tests for complete, broken by the bot before
    and after the last row, broken by another chatter, fumbled, invisible characters and interleaved
    channels.
 4. [ ] The `pyramid` pack: `pyramid_on_event`, `pyramid`, `pyramid_fact`, the shared facts, the

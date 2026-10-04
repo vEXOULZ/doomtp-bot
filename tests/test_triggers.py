@@ -7,6 +7,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -335,6 +336,96 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         "live: bot night",
         "raid!",
     ]
+
+
+async def _watching_dispatcher(dbs: Databases, *, pyramid_trigger: bool) -> tuple[Any, FakeSender, Any]:
+    """A dispatcher with the pyramid watcher, and optionally a `pyramid` trigger that says what it saw."""
+    from doomtp_bot.chatlog.writer import ChatLogWriter
+    from doomtp_bot.core.channels import ChannelManager
+    from doomtp_bot.core.dispatch import Dispatcher
+    from doomtp_bot.moderation.index import ModerationIndex
+    from doomtp_bot.watchers import PyramidWatcher
+
+    policy = await policy_with_channels(dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, clock=TickingClock())
+    triggers = TriggerService(dbs.bot)
+    if pyramid_trigger:
+        await triggers.add(
+            channel_id=CHANNEL_ID,
+            type_="pyramid",
+            expr="echo {event.phase} {event.width} bot={event.by_bot} rank={$chatter.rank}",
+            run_as_rank=0,
+            created_by="300",
+            prefix="!",
+            via="chat",
+        )
+    sender = FakeSender()
+    outbox = Outbox(sender, None)
+    writer = ChatLogWriter(dbs.chatlog)
+    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy})
+    watcher = PyramidWatcher()
+    dispatcher = Dispatcher(
+        runtime=runtime,
+        policy=policy,
+        writer=writer,
+        outbox=outbox,
+        moderation=ModerationIndex(),
+        channels=ChannelManager(policy, None, writer),
+        triggers=triggers,
+        trigger_runner=TriggerRunner(runtime=runtime, policy=policy, outbox=outbox),
+        watchers=[watcher],
+    )
+    return dispatcher, sender, watcher
+
+
+def _line(n: int, who: str, text: str, **kw: Any) -> Any:
+    from doomtp_bot.core.events import ChatMessage
+
+    user = USERS.get(who, ("999", "doomtp_bot", "doomtp_bot"))
+    return ChatMessage(
+        message_id=f"m{n}", channel_id=CHANNEL_ID, channel_login=CHANNEL_LOGIN, user_id=user[0],
+        user_login=user[1], display_name=user[2], text=text, sent_at=n, received_at=n, **kw,
+    )  # fmt: skip
+
+
+async def test_the_bots_own_line_breaks_a_pyramid_through_the_dispatcher(dbs: Databases) -> None:
+    """Watchers see the lines the dispatcher drops, and the trigger's chatter is the builder, with badges."""
+    from doomtp_bot.core.events import Badge
+
+    dispatcher, sender, _ = await _watching_dispatcher(dbs, pyramid_trigger=True)
+    mod = (Badge("moderator", "1"),)
+    for n, text in enumerate(["LUL", "LUL LUL", "LUL LUL LUL"], start=1):
+        await dispatcher.handle(_line(n, "alice", text, badges=mod))
+    await dispatcher.handle(_line(4, "bot", "Fact: the bot was here", is_self=True))
+    await dispatcher.drain()
+    await dispatcher.writer.stop()
+    assert sender.sent == ["step 2 bot=false rank=80", "step 3 bot=false rank=80", "broken 3 bot=true rank=80"]
+
+
+async def test_backfilled_lines_are_never_watched(dbs: Databases) -> None:
+    dispatcher, sender, _ = await _watching_dispatcher(dbs, pyramid_trigger=True)
+    for n, text in enumerate(["LUL", "LUL LUL", "LUL"], start=1):
+        await dispatcher.handle(_line(n, "alice", text, source="recent-messages"))
+    await dispatcher.drain()
+    await dispatcher.writer.stop()
+    assert sender.sent == []
+
+
+async def test_a_channel_without_a_pyramid_trigger_keeps_no_state(dbs: Databases) -> None:
+    dispatcher, _, watcher = await _watching_dispatcher(dbs, pyramid_trigger=False)
+    for n, text in enumerate(["LUL", "LUL LUL"], start=1):
+        await dispatcher.handle(_line(n, "alice", text))
+    await dispatcher.drain()
+    await dispatcher.writer.stop()
+    assert watcher._open == {}
+
+
+async def test_a_listener_chatter_carries_badge_roles(h: Harness) -> None:
+    await h.say("mod", r"!listen add ranked /howdy/ echo rank {$chatter.rank}")
+    (trigger,) = h.triggers.of_type(CHANNEL_ID, "listener")
+    await h.runner.run(
+        trigger, channel_login=CHANNEL_LOGIN, user=USERS["alice"], badges=frozenset({"vip"}), input_text="howdy"
+    )
+    assert h.sender.sent[-1] == "rank 60"
 
 
 # ── timers ─────────────────────────────────────────────────────────────────

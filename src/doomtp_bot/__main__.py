@@ -59,6 +59,7 @@ from doomtp_bot.twitch.signin import TwitchSignIn, TwitchSignInHttp, VexoulzAuth
 from doomtp_bot.twitch.tokens import StoredToken, TokenStore, broadcaster_identity
 from doomtp_bot.variables.access import VariableAccessPolicy
 from doomtp_bot.variables.store import PostgresVariableStore
+from doomtp_bot.watchers import default_watchers
 from doomtp_bot.webfetch.fetcher import HttpFetcher
 from doomtp_bot.webfetch.hosts import HostStore
 
@@ -242,6 +243,7 @@ async def run(settings: Settings) -> None:
         automod=(AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None),
         customcmds=customcmds,
         bot_badges=bot_badges,
+        watchers=default_watchers(),
     )
 
     poller = (
