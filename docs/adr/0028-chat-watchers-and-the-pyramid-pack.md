@@ -89,7 +89,7 @@ Per-channel settings, in channel variables:
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| chance | 0 | percent chance, rolled on **every row**, that the bot posts a fact to break it |
+| chance up, chance down | 25, 75 | percent chance, rolled on **every row**, that the bot posts a fact to break it; one for rows going up, one for rows coming down |
 | min peak | 3 | the smallest peak that counts as a pyramid in stats and congratulations |
 | exempt rank | off | builders at or above this rank are never broken. Off means above `bot_owner`, so nobody |
 | congratulations | a short line | posted when a pyramid completes; empty turns it off |

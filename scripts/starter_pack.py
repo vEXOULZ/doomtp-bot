@@ -242,6 +242,12 @@ _PF, _PSHARED = "publisher.channel.pyramid_facts", "publisher.pyramid_facts"
 _NOBODY = 100000  # an exempt rank above bot_owner: nobody is exempt
 _MOD_ONLY = "fail changing pyramid settings takes moderator rank"
 _WHAT = '(arg.1 ?? "-")'
+# Post a fact and remember that this pyramid has had its try.
+_BREAK = (
+    f"( pyramid_fact 0 -> {_PY}[last_fact] && var set {_PY}[attempt] {{event.pyramid_id}}"
+    f" && echo {{{_PY}[last_fact][value]}} ) || true"
+)
+_CHANCES = f"{{{_PY}[chance_up] ?? 25}}% going up, {{{_PY}[chance_down] ?? 75}}% going down"
 _IS_PYRAMID = '(event.type ?? "-") == "pyramid"'
 _ATTEMPTED = f'({_PY}[attempt] ?? "-") == event.pyramid_id'
 # A broken pyramid counts from one row short of the minimum, or whenever the bot tried to break it.
@@ -269,7 +275,7 @@ PYRAMID: tuple[Derived, ...] = (
         ),
         declarations=(
             '1+ name=what required=no "stats, top [breakers], fact [number], settings, or a setting:'
-            ' chance, minpeak, exempt, congrats, sharedfacts, addfact, delfact"',
+            ' chance, chanceup, chancedown, minpeak, exempt, congrats, sharedfacts, addfact, delfact"',
         ),
     ),
     Derived(
@@ -288,9 +294,9 @@ PYRAMID: tuple[Derived, ...] = (
         # One try per pyramid: once the bot's line is out, it breaks the pyramid wherever it lands.
         body=(
             f"ifelse {{$chatter.rank < ({_PY}[exempt_rank] ?? {_NOBODY}) and not ({_ATTEMPTED})}}"
-            f" ( random 1-100 | ifelse {{_ <= ({_PY}[chance] ?? 0)}}"
-            f" ( ( pyramid_fact 0 -> {_PY}[last_fact] && var set {_PY}[attempt] {{event.pyramid_id}}"
-            f" && echo {{{_PY}[last_fact][value]}} ) || true ) )"
+            ' ( ifelse {event.direction == "up"}'
+            f" ( random 1-100 | ifelse {{_ <= ({_PY}[chance_up] ?? 25)}} ( {_BREAK} ) )"
+            f" ( random 1-100 | ifelse {{_ <= ({_PY}[chance_down] ?? 75)}} ( {_BREAK} ) ) )"
         ),
         internal=True,
     ),
@@ -365,7 +371,7 @@ PYRAMID: tuple[Derived, ...] = (
         name="pyramid_settings",
         summary="Say the channel's pyramid settings",
         body=(
-            f"echo break chance {{{_PY}[chance] ?? 0}}% per row, pyramids count from {{{_PY}[min_peak] ?? 3}} wide,"
+            f"echo break chance {_CHANCES}, pyramids count from {{{_PY}[min_peak] ?? 3}} wide,"
             f" exempt: {{{_PY}[exempt] ?? off}}, shared facts: {{{_PY}[shared_facts] ?? true}},"
             f" channel facts: {{{_PF}:len ?? 0}},"
             f' congratulations: {{({_PY}[congrats] ?? "default") == "off" and "off" or "on"}}'
@@ -377,10 +383,12 @@ PYRAMID: tuple[Derived, ...] = (
         summary="Change a pyramid setting (moderators)",
         body=(
             f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
-            ' ( ifelse {arg.1 == "chance"}'
+            ' ( ifelse {arg.1 == "chance" or arg.1 == "chanceup" or arg.1 == "chancedown"}'
             " ( ifelse {0 <= (arg.2:int ?? -1) <= 100}"
-            f" ( var set {_PY}[chance] {{arg.2:int}} && echo pyramid break chance is now {{arg.2:int}}% per row )"
-            " ( fail 2 usage: pyramid chance <0-100> ) )"
+            f' ( ( ifelse {{arg.1 != "chancedown"}} ( var set {_PY}[chance_up] {{arg.2:int}} ) ( true ) )'
+            f' && ( ifelse {{arg.1 != "chanceup"}} ( var set {_PY}[chance_down] {{arg.2:int}} ) ( true ) )'
+            f" && echo pyramid break chance is now {_CHANCES} )"
+            " ( fail 2 usage: pyramid {arg.1} <0-100> ) )"
             ' ( ifelse {arg.1 == "minpeak"}'
             " ( ifelse {2 <= (arg.2:int ?? 0) <= 50}"
             f" ( var set {_PY}[min_peak] {{arg.2:int}} && echo pyramids now count from {{arg.2:int}} wide )"
@@ -394,11 +402,12 @@ PYRAMID: tuple[Derived, ...] = (
             f" ( ( var del {_PY}[congrats] || true ) && echo pyramid congratulations are back to the default )"
             f' ( var set {_PY}[congrats] {{arg.2+raw}} && ifelse {{arg.2 == "off"}}'
             " ( echo pyramid congratulations are off ) ( echo pyramid congratulations set ) ) )"
-            " ( fail 2 usage: pyramid <stats|top|fact|settings|chance|minpeak|exempt|congrats|sharedfacts"
+            " ( fail 2 usage: pyramid <stats|top|fact|settings|chance|chanceup|chancedown|minpeak|exempt|congrats"
+            "|sharedfacts"
             "|addfact|delfact> ) ) ) ) )"
         ),
         declarations=(
-            '1 name=setting required=yes "chance, minpeak, congrats or sharedfacts"',
+            '1 name=setting required=yes "chance, chanceup, chancedown, minpeak, congrats or sharedfacts"',
             '2+ name=value required=yes "the new value"',
         ),
         internal=True,

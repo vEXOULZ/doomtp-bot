@@ -95,10 +95,10 @@ async def test_install_writes_the_shared_facts_once(h: Harness) -> None:  # noqa
 
 
 async def test_chance_zero_watches_without_breaking(h: Harness) -> None:  # noqa: F811
-    await _setup(h)
+    await _setup(h, "chance 0")
     for width in (2, 3):
         assert await _event(h, "step", width=width, peak=width) is None
-    assert await _var(h, "pyramid") is None
+    assert "attempt" not in await _var(h, "pyramid")
 
 
 async def test_chance_hundred_breaks_once_per_pyramid_with_a_fact(h: Harness) -> None:  # noqa: F811
@@ -108,6 +108,15 @@ async def test_chance_hundred_breaks_once_per_pyramid_with_a_fact(h: Harness) ->
     assert await _event(h, "step", width=3, peak=3) is None  # its line is already out
     assert (await _var(h, "pyramid"))["attempt"] == "p1"
     assert await _event(h, "step", pyramid_id="p2") in PYRAMID_FACTS  # the next pyramid gets its own try
+
+
+async def test_going_up_and_going_down_roll_their_own_chance(h: Harness) -> None:  # noqa: F811
+    await _setup(h, "chanceup 0", "chancedown 100")
+    assert await _event(h, "step", width=3, peak=3) is None  # still rising: up is 0%
+    assert await _event(h, "step", direction="down", width=2, peak=3) in PYRAMID_FACTS
+    await _set(h, "chanceup 100", "chancedown 0")
+    assert await _event(h, "step", pyramid_id="p2", direction="down", width=2, peak=3) is None
+    assert await _event(h, "step", pyramid_id="p2", width=3, peak=3) in PYRAMID_FACTS
 
 
 async def test_a_bot_break_and_a_dodge_are_counted(h: Harness) -> None:  # noqa: F811
@@ -190,10 +199,16 @@ async def test_settings_take_moderator_rank_and_valid_values(h: Harness) -> None
     assert (
         await _say(h, "mod", "!pyramid exempt admins")
     ).send == "usage: pyramid exempt <off|sub|vip|mod|broadcaster>"
-    assert (await _say(h, "mod", "!pyramid chance 25")).send == "pyramid break chance is now 25% per row"
+    assert (await _say(h, "mod", "!pyramid chance 25")).send == (
+        "pyramid break chance is now 25% going up, 25% going down"
+    )
+    assert (await _say(h, "mod", "!pyramid chancedown 40")).send == (
+        "pyramid break chance is now 25% going up, 40% going down"
+    )
+    assert (await _say(h, "mod", "!pyramid chanceup 101")).send == "usage: pyramid chanceup <0-100>"
     assert (await _say(h, "mod", "!pyramid exempt vip")).send == "vip and up are exempt from pyramid breaks"
     assert (await _say(h, "alice", "!pyramid settings")).send == (
-        "break chance 25% per row, pyramids count from 3 wide, exempt: vip, shared facts: true,"
+        "break chance 25% going up, 40% going down, pyramids count from 3 wide, exempt: vip, shared facts: true,"
         " channel facts: 0, congratulations: on"
     )
 
@@ -208,4 +223,8 @@ async def test_settings_and_stats_are_per_channel(h: Harness) -> None:  # noqa: 
     await _setup(h, "chance 100")
     ctx = h.runtime.make_context(channel=_info(h, OTHER_CHANNEL), invoker=_chatter(h, "alice", OTHER_CHANNEL))
     other = await h.runtime.run("!pyramid settings", ctx)
-    assert other is not None and other.send is not None and other.send.startswith("break chance 0%")
+    assert (
+        other is not None
+        and other.send is not None
+        and other.send.startswith("break chance 25% going up, 75% going down")
+    )
