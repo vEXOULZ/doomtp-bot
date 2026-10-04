@@ -324,10 +324,14 @@ class TwitchService:
             self._subscribed.add(channel_id)
         return failed
 
-    async def use_broadcaster_token(self, access_token: str, refresh_token: str) -> bool:
+    async def use_broadcaster_token(self, user_id: str, access_token: str, refresh_token: str) -> bool:
         """Hand a broadcaster's token to the client so its own events can be subscribed to."""
         if self.client is None:
             return False
+        if user_id == self.bot_id:
+            # The client keeps one token per user: this one would replace the bot's, and chat would stop.
+            # The bot's own channel is served by the bot's token, which /auth/login grants both for.
+            return True
         try:
             await self.client.add_token(access_token, refresh_token)
         except Exception as exc:
