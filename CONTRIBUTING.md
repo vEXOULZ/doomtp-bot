@@ -119,6 +119,13 @@ Merging into `dev` deploys nothing. Production changes only when a release reach
    gh pr create --base dev --head main --title "Bring release vX.Y.Z back into dev"
    ```
 
+   Open it straight after the tag. If `dev` moves first, that pull request is out of date and can't be
+   updated, because its head is the protected `main`. Merge `main` into a branch cut from `dev` instead:
+
+   ```bash
+   git switch -c chore/back-merge-main origin/dev && git merge --no-ff origin/main
+   ```
+
 To roll back, set `BOT_IMAGE` on the server to the previous `:vX.Y.Z` and run the update unit (README).
 
 **A hotfix** branches from `main` (`hotfix/…`), merges into `main`, and then `main` merges back into
