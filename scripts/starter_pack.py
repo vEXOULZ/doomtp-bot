@@ -535,7 +535,16 @@ PYRAMID_FACTS: tuple[str, ...] = (
     "A pyramid's volume is a third of its base area times its height.",
     "A triangular pyramid with four equal equilateral faces is a regular tetrahedron.",
     "A triangular pyramid, or tetrahedron, has 4 faces, 6 edges and 4 corners.",
+    # Running jokes from the old bot's channels, not facts.
     "Shungite pyramids are said to protect from EMF, heal and balance your energy.",
+    "It's the Illuminati and Lizard Aliens who control everything.",
+    "I wonder what would happen if everyone suddenly woke up together and realized they'd been living in an invisible prison",
+    "I can't go into detail, but there's a reason why I went to the special meeting at the Pentagon",
+    "Mother Goddess of Depravity, Origin of Evil, The Indestructible, Brood Hive of Filth. I pray for the Goddess' loving grace.",
+    "NASA has a reason why we haven't gone back to the moon for so long. What won't they tell us?",
+    "I've set the stage, now the actors are moving. Why are they moving?",
+    "We have no safe place in the universe.",
+    "I'm almost behind you now. BroBalt",
 )
 
 
