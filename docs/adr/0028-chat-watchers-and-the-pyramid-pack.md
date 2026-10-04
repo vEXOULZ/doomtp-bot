@@ -73,7 +73,8 @@ exemptions. It reports every pyramid from width 2 up.
 | `by_bot` | on `broken`: the bot's own line broke it |
 | `self_broken` | on `broken`: the builder broke it with a wrong row |
 
-- The chatter of the trigger run is the builder, with badges.
+- The chatter of the trigger run is the builder, with badges, except on `broken`, where it is the
+  breaker. So per-chatter stats land on the right person, and `!var top` can rank breakers.
 - **A break counts when the bot's line arrives before the builder's last row.** If the last row arrives
   first, the pyramid is `complete`, and the bot's line after it is only a line. Both cases follow from
   the order the watcher sees.

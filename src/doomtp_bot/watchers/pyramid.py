@@ -82,6 +82,7 @@ class PyramidWatcher:
                 broken = self._event(
                     pyramid,
                     "broken",
+                    chatter=(breaker, frozenset(b.set_id for b in msg.badges)),
                     breaker=_person(breaker),
                     by_bot=msg.is_self,
                     self_broken=msg.user_id == pyramid.builder[0],
@@ -102,7 +103,14 @@ class PyramidWatcher:
         return []
 
     @staticmethod
-    def _event(pyramid: _Pyramid, phase: str, **extra: Any) -> WatchEvent:
+    def _event(
+        pyramid: _Pyramid,
+        phase: str,
+        chatter: tuple[tuple[str, str, str], frozenset[str]] | None = None,
+        **extra: Any,
+    ) -> WatchEvent:
+        """The run's chatter is the builder, except on `broken`, where it is the breaker."""
+        user, badges = chatter or (pyramid.builder, pyramid.badges)
         payload: dict[str, Any] = {
             "pyramid_id": pyramid.id,
             "phase": phase,
@@ -115,4 +123,4 @@ class PyramidWatcher:
             "self_broken": False,
             **extra,
         }
-        return WatchEvent(TYPE, pyramid.channel_id, payload, pyramid.builder, pyramid.badges)
+        return WatchEvent(TYPE, pyramid.channel_id, payload, user, badges)

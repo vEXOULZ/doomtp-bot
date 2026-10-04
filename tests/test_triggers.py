@@ -398,7 +398,7 @@ async def test_the_bots_own_line_breaks_a_pyramid_through_the_dispatcher(dbs: Da
     await dispatcher.handle(_line(4, "bot", "Fact: the bot was here", is_self=True))
     await dispatcher.drain()
     await dispatcher.writer.stop()
-    assert sender.sent == ["step 2 bot=false rank=80", "step 3 bot=false rank=80", "broken 3 bot=true rank=80"]
+    assert sender.sent == ["step 2 bot=false rank=80", "step 3 bot=false rank=80", "broken 3 bot=true rank=0"]
 
 
 async def test_backfilled_lines_are_never_watched(dbs: Databases) -> None:

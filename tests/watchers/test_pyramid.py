@@ -95,6 +95,16 @@ def test_another_chatter_breaks_it() -> None:
     assert broken["breaker"] == {"id": "401", "name": "bob", "display": "Bob"}
 
 
+def test_the_breaker_is_the_runs_chatter_on_broken() -> None:
+    w = PyramidWatcher()
+    events = feed(
+        w, line("alice", "LUL", badges=("vip",)), *rows("alice", "LUL", 2), line("bob", "no", badges=("moderator",))
+    )
+    assert events[0].user == ("400", "alice", "Alice") and events[0].badges == frozenset({"vip"})
+    assert events[-1].user == ("401", "bob", "Bob") and events[-1].badges == frozenset({"moderator"})
+    assert events[-1].payload["user"]["name"] == "alice"
+
+
 def test_the_builder_fumbles_with_a_wrong_row() -> None:
     w = PyramidWatcher()
     for wrong in ("LUL LUL LUL LUL LUL", "Kappa Kappa", "lol"):
