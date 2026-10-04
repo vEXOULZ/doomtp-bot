@@ -294,6 +294,8 @@ async def run(settings: Settings) -> None:
         if twitch is None:
             return
         for stored in await twitch.tokens.broadcasters():
+            if stored.user_id == twitch.bot_id:  # granted by the bot's own sign-in, which has no callback of its own
+                await probe.grant(stored.user_id, granted_by(stored.scopes))
             settings_of = policy.channel_settings(stored.user_id)
             capabilities = set(settings_of.capabilities) if settings_of else set()
             await use_broadcaster(stored.user_id, stored.login, stored, capabilities)
@@ -305,7 +307,7 @@ async def run(settings: Settings) -> None:
         if stored is None or not stored.refresh_token:
             await forget_broadcaster(channel_id, login, "no usable token is stored")
             return
-        if not await twitch.use_broadcaster_token(stored.access_token, stored.refresh_token):
+        if not await twitch.use_broadcaster_token(stored.user_id, stored.access_token, stored.refresh_token):
             await forget_broadcaster(channel_id, login, "Twitch would not take the token")
             return
         events = await twitch.subscribe_broadcaster(channel_id, capabilities)

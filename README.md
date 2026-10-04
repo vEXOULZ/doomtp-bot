@@ -18,7 +18,7 @@ so is the deploy path. What is left is running it against real chat — see
      `PUBLIC_BASE_URL` + `/auth/admin/callback` — for example `https://bot.example.com/auth/admin/callback`.
    - **Category:** Chat Bot. **Client type:** Confidential.
 2. Put the Client ID in `.env` as `TWITCH_CLIENT_ID`, and the client secret in `secrets/twitch_client_secret`. For local development you can use `TWITCH_CLIENT_SECRET` instead.
-3. Start the bot, then open `http://localhost:8080/auth/login` in a browser on the same machine. Sign in as the **bot account**, not your personal account.
+3. Start the bot, then open `http://localhost:8080/auth/login` in a browser on the same machine. Sign in as the **bot account**, not your personal account. This one sign-in also connects the bot's own channel, so don't open `/auth/connect` as the bot.
 4. The bot joins its own channel. A streamer types `!join` in the bot's chat and gets the `/auth/connect` link; connecting there adds the bot to their channel. The link is the same for every channel: the bot joins whichever channel signs in with it. A bot owner can add any channel without that with `!join basic <channel>` there. Set owners with `BOT_OWNER_IDS`.
 
 **Keep development and the server apart.** Give each its own Twitch bot account and its own Twitch
