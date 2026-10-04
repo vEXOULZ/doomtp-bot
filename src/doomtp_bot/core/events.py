@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-Source = Literal["eventsub", "recent-messages"]
+# recent-messages: what was backfilled before logs.ivr.fi (ADR-0008)
+Source = Literal["eventsub", "ivr-logs", "recent-messages"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,8 @@ class ChatMessage:
     #: for a live one, or the IRC line for a backfilled one.
     raw_event: dict[str, Any] | None = None
     raw_line: str | None = None
+    #: What backfill looked up that the line lacks (ADR-0024 §3, `history/enrich.py`).
+    enrichment: dict[str, Any] | None = None
 
     @property
     def reply_mentions(self) -> tuple[str, ...]:
@@ -66,7 +69,7 @@ class ChatNotification:
 class MessageDeleted:
     channel_id: str
     message_id: str
-    target_user_id: str
+    target_user_id: str | None  # None only for a backfilled delete whose message the log doesn't have
     at: int
     source: Source = "eventsub"
     raw_event: dict[str, Any] | None = None
@@ -83,6 +86,7 @@ class UserMessagesCleared:
     source: Source = "eventsub"
     raw_event: dict[str, Any] | None = None
     raw_line: str | None = None
+    duration_s: int | None = None  # IRC's `ban-duration`; EventSub's basic tier has none
 
 
 @dataclass(frozen=True, slots=True)

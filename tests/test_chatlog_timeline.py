@@ -37,11 +37,12 @@ async def _message(
     is_command: bool = False,
     deleted_at: int | None = None,
 ) -> None:
+    raw = {"message": {"text": text, "fragments": [{"type": "text", "text": text}]},
+           "badges": [{"set_id": "vip", "id": "1"}]}  # fmt: skip
     await chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, badges, fragments, is_self,"
-        " is_command, sent_at, received_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (message_id, CHANNEL_ID, *user, text, json.dumps([{"set_id": "vip", "id": "1"}]),
-         json.dumps([{"type": "text", "text": text}]), is_self, is_command, at, at + 5, deleted_at),
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, is_self, is_command, raw,"
+        " raw_format, sent_at, received_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'legacy', %s, %s, %s)",
+        (message_id, CHANNEL_ID, *user, text, is_self, is_command, json.dumps(raw), at, at + 5, deleted_at),
     )  # fmt: skip
 
 
@@ -71,14 +72,15 @@ async def chatlog(app_and_keys: tuple[Any, ApiKeyService]) -> Connection:
     await _message(conn, "m-c", T + 10, text="the deleted one", deleted_at=T + 20)
     await _message(conn, "m-d", T + 30, user=("200", "friend"), text="cafe au lait")
     await conn.execute(
-        "INSERT INTO chat_notifications (id, channel_id, user_id, type, payload, sent_at)"
-        " VALUES ('n-1', %s, '400', 'sub', %s, %s)",
-        (CHANNEL_ID, json.dumps({"tier": "1000"}), T),  # same instant as the messages: kind breaks the tie
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, raw, raw_format, sent_at)"
+        " VALUES ('n-1', %s, '400', 'sub', %s, 'legacy', %s)",
+        # same instant as the messages: kind breaks the tie
+        (CHANNEL_ID, json.dumps({"notice_type": "sub", "legacy": {"tier": "1000"}}), T),
     )
     await conn.execute(
-        "INSERT INTO mod_events (channel_id, type, message_id, target_user_id, moderator_user_id, duration_s,"
-        " reason, at) VALUES (%s, 'timeout', NULL, '400', '300', 60, 'spam', %s)",
-        (CHANNEL_ID, T + 10),
+        "INSERT INTO mod_events (channel_id, type, message_id, target_user_id, moderator_user_id, raw,"
+        " raw_format, at) VALUES (%s, 'timeout', NULL, '400', '300', %s, 'legacy', %s)",
+        (CHANNEL_ID, json.dumps({"duration_s": 60, "reason": "spam"}), T + 10),
     )
     return conn
 
@@ -88,9 +90,7 @@ async def _all(client: httpx.AsyncClient, key: str, **params: Any) -> list[dict[
     found: list[dict[str, Any]] = []
     cursor = None
     while True:
-        page = await client.get(
-            LOG, params={**params, **({"cursor": cursor} if cursor else {})}, headers=auth(key)
-        )
+        page = await client.get(LOG, params={**params, **({"cursor": cursor} if cursor else {})}, headers=auth(key))
         assert page.status_code == 200, page.text
         body = page.json()
         found += body["entries"]
@@ -128,6 +128,66 @@ async def test_the_log_is_one_timeline_newest_first(
     assert deleted["badges"] == [{"set_id": "vip", "id": "1"}] and deleted["fragments"][0]["type"] == "text"
 
 
+async def test_backfilled_rows_are_read_from_their_irc_lines(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    conn: Connection = app_and_keys[0].state.chatlog
+    await _users(conn)
+    message = (
+        "@id=m-irc;user-id=400;display-name=Alice;color=#FF0000;badges=vip/1;emotes=25:8-12;"
+        "reply-parent-msg-id=m-0;reply-parent-user-id=300;reply-parent-user-login=mod;"
+        f"reply-parent-display-name=Mod;tmi-sent-ts={T} :alice!alice@x PRIVMSG #{CHANNEL_LOGIN} :@Mod hi Kappa"
+    )
+    enrichment = {
+        "emotes": {"25": {"emote_set_id": "0", "owner_id": "0", "format": ["static"], "source": "helix"}},
+        "mentions": {"mod": {"user_id": "300", "user_login": "mod", "user_name": "Mod", "source": "reply"}},
+    }
+    await conn.execute(
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, is_self, is_command, raw,"
+        " raw_format, enrichment, source, sent_at, received_at)"
+        " VALUES ('m-irc', %s, '400', 'alice', '@Mod hi Kappa', false, false, %s, 'irc', %s, 'ivr-logs', %s, %s)",
+        (CHANNEL_ID, json.dumps({"line": message}), json.dumps(enrichment), T, T),
+    )
+    raid = (
+        f"@id=n-irc;user-id=400;login=alice;display-name=Alice;msg-id=raid;msg-param-viewerCount=8;"
+        f"msg-param-login=alice;msg-param-displayName=Alice;system-msg=8\\sraiders;tmi-sent-ts={T + 1}"
+        f" :tmi.twitch.tv USERNOTICE #{CHANNEL_LOGIN}"
+    )
+    await conn.execute(
+        "INSERT INTO chat_notifications (id, channel_id, user_id, type, raw, raw_format, source, sent_at)"
+        " VALUES ('n-irc', %s, '400', 'raid', %s, 'irc', 'ivr-logs', %s)",
+        (CHANNEL_ID, json.dumps({"line": raid}), T + 1),
+    )
+    clear = f"@ban-duration=600;target-user-id=400;tmi-sent-ts={T + 2} :tmi.twitch.tv CLEARCHAT #{CHANNEL_LOGIN} :alice"
+    await conn.execute(
+        "INSERT INTO mod_events (channel_id, type, target_user_id, raw, raw_format, source, at)"
+        " VALUES (%s, 'timeout', '400', %s, 'irc', 'ivr-logs', %s)",
+        (CHANNEL_ID, json.dumps({"line": clear}), T + 2),
+    )
+
+    timeout, notice, entry = (await client.get(LOG, headers=auth(write_key))).json()["entries"]
+    assert timeout["duration_s"] == 600 and timeout["reason"] is None
+    assert notice["payload"] == {
+        "system_message": "8 raiders",
+        "text": "",
+        "chatter": {"id": "400", "login": "alice"},
+        "detail": {"user_id": "400", "user_login": "alice", "user_name": "Alice", "viewer_count": 8,
+                   "profile_image_url": None},
+    }  # fmt: skip
+    assert entry["user"] == {"id": "400", "login": "alice", "display_name": "Alice"}
+    assert entry["color"] == "#FF0000"
+    assert entry["badges"] == [{"set_id": "vip", "id": "1", "info": ""}]
+    assert entry["reply_parent_id"] == "m-0"
+    assert entry["reply_parent_user"] == {"id": "300", "login": "mod", "display_name": "Mod"}
+    assert entry["fragments"] == [
+        {"type": "mention", "text": "@Mod",
+         "mention": {"id": "300", "login": "mod", "user_name": "Mod", "source": "reply"}},
+        {"type": "text", "text": " hi "},
+        {"type": "emote", "text": "Kappa", "emote_id": "25",
+         "emote": {"emote_set_id": "0", "owner_id": "0", "format": ["static"], "source": "helix"}},
+    ]  # fmt: skip
+
+
 @pytest.mark.parametrize("order", ["asc", "desc"])
 @pytest.mark.parametrize("limit", [1, 2, 4])
 async def test_pages_follow_on_without_gaps_or_repeats(
@@ -139,9 +199,7 @@ async def test_pages_follow_on_without_gaps_or_repeats(
     assert len(whole) == 6
 
 
-async def test_filters_narrow_the_timeline(
-    client: httpx.AsyncClient, chatlog: Connection, write_key: str
-) -> None:
+async def test_filters_narrow_the_timeline(client: httpx.AsyncClient, chatlog: Connection, write_key: str) -> None:
     async def ids(**params: Any) -> list[tuple[str, Any]]:
         return _ids(await _all(client, write_key, order="asc", **params))
 
@@ -248,7 +306,13 @@ async def test_coverage_names_every_hole_and_what_filled_it(
         (T + 120_000, T + 125_000, "between_sessions"),
         (T + 200_000, T + 210_000, "not_listening"),
     ]
-    assert whole["gaps"][1]["backfill"] == {"complete": True, "inserted": 10, "error": None}
+    assert whole["gaps"][1]["backfill"] == {
+        "complete": True,
+        "inserted": 10,
+        "error": None,
+        "provider": "ivr-logs",
+        "job_id": None,
+    }
     assert whole["gaps"][2]["backfill"] is None and whole["complete"] is False
     assert len(whole["sessions"]) == 3
 
@@ -265,8 +329,6 @@ async def test_coverage_names_every_hole_and_what_filled_it(
 async def test_coverage_of_a_channel_never_logged_is_one_hole(
     client: httpx.AsyncClient, chatlog: Connection, write_key: str
 ) -> None:
-    body = (
-        await client.get(f"{LOG}/coverage", params={"since": T, "until": T + 1}, headers=auth(write_key))
-    ).json()
+    body = (await client.get(f"{LOG}/coverage", params={"since": T, "until": T + 1}, headers=auth(write_key))).json()
     assert body["gaps"] == [{"from": T, "to": T + 1, "reason": "before_log", "backfill": None}]
     assert body["sessions"] == [] and body["complete"] is False

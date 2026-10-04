@@ -27,8 +27,8 @@ async def test_builtin_roles_seeded(dbs: Databases) -> None:
 async def _log(dbs: Databases, message_id: str, text: str) -> None:
     await execute(
         dbs.chatlog,
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES (%s, 'c1', 'u1', 'alice', %s, 1, 1)",
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES (%s, 'c1', 'u1', 'alice', %s, '{}', 'legacy', 1, 1)",
         (message_id, text),
     )
 
@@ -67,8 +67,8 @@ async def test_the_log_ignores_a_message_it_already_has(dbs: Databases) -> None:
     await _log(dbs, "m1", "first")
     await execute(
         dbs.chatlog,
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m1', 'c1', 'u1', 'alice', 'second', 2, 2) ON CONFLICT DO NOTHING",
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m1', 'c1', 'u1', 'alice', 'second', '{}', 'legacy', 2, 2) ON CONFLICT DO NOTHING",
     )
     assert await fetch_value(dbs.chatlog, "SELECT text FROM messages WHERE message_id = 'm1'") == "first"
 
@@ -78,8 +78,7 @@ async def test_transactions_sharing_a_connection_do_not_interleave(dbs: Database
         async with transaction(dbs.bot):
             await execute(
                 dbs.bot,
-                "INSERT INTO global_admins (user_id, user_login, granted_by, granted_at)"
-                " VALUES (%s, %s, 'system', 0)",
+                "INSERT INTO global_admins (user_id, user_login, granted_by, granted_at) VALUES (%s, %s, 'system', 0)",
                 (str(i), f"user{i}"),
             )
             await asyncio.sleep(0)  # let the other writers run mid-transaction

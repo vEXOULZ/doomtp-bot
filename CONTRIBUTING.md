@@ -1,77 +1,94 @@
 # Contributing
 
+<!-- conventions:begin: synced from vEXOULZ/conventions; edit it there, then run `conventions sync` -->
 ## Set up the hooks once per clone
 
 ```bash
-git config core.hooksPath .githooks
+git config core.hooksPath .conventions/githooks
 ```
 
-Git does not carry hooks in a clone, so this is the one step nothing can do for you. Without it the
-branch rules below are only enforced in CI, which is a slower way to hear about a typo.
+Git does not carry hooks in a clone, so this is the one step nothing can do for you (`conventions sync`
+does it as a side effect). Without it, the branch rules below are only enforced in CI, which is a slower
+way to hear about a typo. A repo's own extra checks live in `.githooks/local/pre-commit`, which the
+shared hook runs after its own.
 
 ## Branches
-
-Two long-lived branches, both merge-only (ADR-0021):
-
-- **`dev`** is where work integrates, and the default branch. Every feature, bugfix and chore pull
-  request goes here.
-- **`main`** is what production runs. It takes pull requests only from `dev` (a release), `release/*` or
-  `hotfix/*`.
-
-The `pre-commit` hook refuses a commit made on `main`, `dev`, `master` or `develop`. Work on a branch
-cut from `dev` and merge it:
-
-```bash
-git switch -c feature/what-you-are-doing origin/dev
-```
 
 Branch names follow [Conventional Branch](https://conventional-branch.github.io/): `<type>/<description>`,
 where the description is lowercase letters, digits and single hyphens.
 
 | Type | For |
 |------|-----|
-| `feature/` | a new capability — `feature/publish-packs-globally` |
-| `bugfix/` | a fix — `bugfix/issue-42-cooldown-off-by-one` |
-| `hotfix/` | a fix that can't wait for the usual path — `hotfix/token-refresh-loop` |
-| `release/` | preparing a version — `release/1-2-0` |
-| `chore/` | dependencies, tooling, docs, anything with no behaviour change — `chore/bump-twitchio` |
+| `feature/` | a new capability, e.g. `feature/part-mapping` |
+| `bugfix/` | a fix, e.g. `bugfix/issue-42-restricted-seek` |
+| `hotfix/` | a fix that can't wait for the usual path, e.g. `hotfix/broken-deploy` |
+| `release/` | preparing a version, e.g. `release/1-2-0` |
+| `chore/` | dependencies, tooling, docs, anything with no behaviour change, e.g. `chore/bump-vite` |
 
-A ticket number is just another word in the description. `.githooks/check-branch-name.sh <name>` says
-whether a name passes, and CI runs the same script against the branch a pull request comes from.
+A ticket number is just another word in the description.
+`.conventions/githooks/check-branch-name.sh <name>` says whether a name passes, and CI runs the same
+script (the `conventions / branch-name` check) against the branch a pull request comes from.
 
-Concluding a merge that hit conflicts is a commit on `main`, and the hook lets that one through — the
-rule is about where work starts, not where it lands. `git commit --no-verify` skips the hook entirely.
-It exists for the day you need it, not for the day you are in a hurry.
+### Release flow: dev → main
 
-GitHub enforces the same rule on the server, because a local hook protects only the person who
-installed it. `dev` and `main` on [github.com/vEXOULZ/doomtp-bot](https://github.com/vEXOULZ/doomtp-bot)
-accept changes only through a pull request, and a pull request merges only when all four CI jobs are
-green on a branch that is up to date with its base:
+Work integrates on `dev`, and `main` is what production runs. The `pre-commit` hook refuses a commit
+made on `main`, `master`, `dev` or `develop`.
 
-| Check | What it guards |
-|-------|----------------|
-| `branch-name` | the Conventional Branch rule above, and which branches may merge into `main` (`.githooks/check-pr-branches.sh`) |
-| `python (3.12)` | lint, types, the suite against Postgres 17, grammar and railroad checks |
-| `web-editor` | vitest, and that the committed editor bundle matches its source |
-| `docker` | the image builds and the server compose files parse together |
-
-No approvals are required — on a one-person project GitHub would not let you approve your own pull
-request, and requiring one would only mean switching the rule off to merge. Review conversations must be
-resolved. The rule applies to administrators too, so there is no quiet way around it; changing that is a
-visible settings change, which is the point. Force-pushes and deleting `main` are refused.
-
-The day-to-day flow is therefore: branch from `dev`, push the branch, open a pull request against `dev`,
-merge when it is green. `dev` is the default branch, so `gh pr create` targets it already.
+- Feature and bugfix branches start from `dev`, and their pull requests target `dev`.
+- A release is a pull request from `dev` (or a `release/*` branch) into `main`, then a `vX.Y.Z` tag on
+  `main`.
+- A `hotfix/*` branch starts from `main` and merges into `main`; `main` then merges back into `dev` so
+  `dev` never loses it.
+- The `conventions / branch-name` check refuses any other pull request into `main`.
 
 ```bash
-gh pr create --fill
+git switch dev && git pull && git switch -c feature/what-you-are-doing
 ```
+
+Concluding a merge that hit conflicts is a commit on the branch merged into, and the hook lets that one
+through: the rule is about where work starts, not where it lands. `git commit --no-verify` skips the
+hook entirely. It exists for the day you need it, not for the day you are in a hurry.
+
+## Checks
+
+Every pull request runs:
+
+- **`conventions / branch-name`:** the branch name, and in a `flow = "dev"` repo whether it may merge
+  into its base.
+- **`conventions / check`:** the synced files match the version pinned in `.conventions.toml`, and the
+  repo follows the conventions for its profile. A public repo is also checked for private
+  infrastructure (addresses, server paths).
+- **`ci / …`:** the repo's lint, tests and build, from the reusable workflows in
+  [vEXOULZ/conventions](https://github.com/vEXOULZ/conventions).
+
+They are required checks on `main`. The repo's settings, protection included, are set by
+`conventions repo-settings --apply`.
+
+## Shared conventions
+
+This section, `.conventions/`, `.gitattributes` and the other synced files come from
+[vEXOULZ/conventions](https://github.com/vEXOULZ/conventions), at the version pinned in
+`.conventions.toml`. Don't edit them here: change them there, release, and bump the pin (Renovate opens
+that pull request). After a bump, rewrite the copies and commit them:
+
+```bash
+uvx --from "git+https://github.com/vEXOULZ/conventions@$(sed -n 's/^version *= *"\(.*\)"/\1/p' .conventions.toml)" conventions sync
+```
+<!-- conventions:end -->
+
+## This repo
+
+The release flow above is ADR-0021. Besides the shared checks, every pull request runs **`web-editor`**:
+vitest, and that the committed editor bundle matches its source. It is a required check too
+(`extra_checks` in `.conventions.toml`).
+
+No approvals are required: on a one-person project GitHub would not let you approve your own pull
+request. Review conversations must be resolved, and the rules apply to administrators too. `dev` is the
+default branch, so `gh pr create --fill` targets it already. Merge with a merge commit:
 
 ```bash
 gh pr merge --merge --delete-branch
 ```
-
-Merge commits, not squashes: the history reads as branches landing, which is how it was written.
 
 ## Releases
 
@@ -124,11 +141,11 @@ Point `TEST_DATABASE_URL` elsewhere if you would rather use your own server. Eac
 of its own and drops it at the end, and each test rolls back, so nothing accumulates.
 
 ```bash
-.venv/Scripts/python -m ruff check src tests scripts && .venv/Scripts/python -m ruff format src tests scripts
+uv run ruff check && uv run ruff format --check && uv run mypy
 ```
 
 ```bash
-.venv/Scripts/python -m mypy && .venv/Scripts/python -m pytest -q
+uv run pytest -q
 ```
 
 Some tests need an external tool and skip without it, saying what to install. Two backup tests need a
@@ -139,7 +156,8 @@ would mean nothing is testing backups or the handshake while the run still goes 
 yourself to check that a machine has everything.
 
 CI runs those plus the web editor's tests, the committed-bundle check, the grammar and railroad diagram
-checks, and a Docker build. Nothing merges that CI hasn't agreed with.
+checks (`uv run python scripts/check_railroad.py`, `uv run python scripts/render_railroad.py --check`),
+and a Docker build. Nothing merges that CI hasn't agreed with.
 
 ## Schema changes
 

@@ -8,10 +8,13 @@ import sys
 
 import structlog
 import uvicorn
+from vex_platform.jobs import JobRuntime, Registry
 
 from doomtp_bot import __version__
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.audit.log import TABLE as AUDIT_TABLE
+from doomtp_bot.audit.log import copy_legacy_audit
 from doomtp_bot.chatlog.queries import latest_badges
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
@@ -31,8 +34,10 @@ from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.customcmds.system import CoreNotInstalled, require_core
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.history.backfill import BackfillService
-from doomtp_bot.history.provider import RecentMessagesProvider
-from doomtp_bot.history.queue import BackfillQueue
+from doomtp_bot.history.enrich import Enricher, TwitchCdn
+from doomtp_bot.history.jobs import BackfillJobs
+from doomtp_bot.history.jobs import register as register_backfill
+from doomtp_bot.history.provider import IvrLogsProvider
 from doomtp_bot.log import configure_logging
 from doomtp_bot.moderation.automod import AutoMod
 from doomtp_bot.moderation.index import ModerationIndex
@@ -62,6 +67,8 @@ log = structlog.get_logger("doomtp_bot")
 # How long to wait before starting the Twitch client again after it stopped on its own (ADR-0001).
 FIRST_RETRY_S = 5.0
 MAX_RETRY_S = 300.0
+# How long a stop waits for a running job: past the history service's request timeout (30s).
+JOBS_SHUTDOWN_S = 60.0
 
 
 class _NoSender:
@@ -71,6 +78,9 @@ class _NoSender:
 
 async def run(settings: Settings) -> None:
     dbs = await Databases.open(settings.database_dsn())
+    copied = await copy_legacy_audit(dbs.bot)  # what an image from before ADR-0027 wrote
+    if copied:
+        log.info("audit.legacy_copied", rows=copied)
     health = HealthRegistry()
 
     policy = PolicyService(dbs.bot, bot_owner_ids=settings.bot_owner_ids)
@@ -94,7 +104,7 @@ async def run(settings: Settings) -> None:
     except CoreNotInstalled:
         await dbs.close()
         raise
-    history = RecentMessagesProvider(settings.history_provider_url)
+    history = IvrLogsProvider(settings.ivr_logs_url)
     triggers = TriggerService(dbs.bot, filters=content_filter)
     await triggers.reload()
     activity = ChatActivity()
@@ -129,8 +139,24 @@ async def run(settings: Settings) -> None:
     # `!explain` links its full report only where chat can open it (architecture §4.4).
     explain_reports = ReportStore(settings.public_base_url if settings.public_web_ui else None)
     channels.on_joined = probe.probe  # a channel is probed as soon as its subscriptions are up
-    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy)
-    backfill_queue = BackfillQueue(backfill)  # `!backfill gaps` and the API queue jobs (ADR-0024 §5)
+    emote_cdn = TwitchCdn()
+    enricher = Enricher(dbs.chatlog, twitch, emote_cdn)  # what backfilled lines lack (ADR-0024 §3)
+    backfill = BackfillService(conn=dbs.chatlog, writer=writer, provider=history, policy=policy, enricher=enricher)
+    job_registry = Registry()
+    register_backfill(job_registry, backfill)
+    # Jobs keep their own pool, on the `jobs` schema (ADR-0027); a backfill still writes through `chatlog`.
+    jobs = JobRuntime(
+        job_registry,
+        settings.database_dsn(),
+        audit_table=AUDIT_TABLE,
+        concurrency=1,
+        max_concurrency=1,
+        worker_name="doomtp-bot",
+        shutdown_timeout=JOBS_SHUTDOWN_S,
+    )
+    await jobs.open()
+    backfill_queue = BackfillJobs(backfill, jobs)  # `!backfill` and the API queue jobs (ADR-0024 §5)
+    await backfill_queue.adopt_legacy()  # what an image from before ADR-0027 left queued
     services: dict[str, object] = {
         "policy": policy,
         "variable_store": store,
@@ -171,9 +197,7 @@ async def run(settings: Settings) -> None:
         settings_ = policy.channel_settings(channel_id)
         elevated = settings_ is not None and settings_.tier in ("moderator", "full")
         if not elevated and twitch is not None and twitch.bot_id is not None:
-            elevated = (
-                policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
-            )
+            elevated = policy.build_chatter(channel_id, twitch.bot_id, twitch.bot_login or "").rank >= MODERATOR_RANK
         return (90, 30.0) if elevated else (20, 30.0)
 
     bot_badges = BotBadges()
@@ -203,9 +227,7 @@ async def run(settings: Settings) -> None:
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
-    timers = TimerScheduler(
-        triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams
-    )
+    timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
         runtime=runtime,
         policy=policy,
@@ -217,9 +239,7 @@ async def run(settings: Settings) -> None:
         trigger_runner=trigger_runner,
         activity=activity,
         streams=streams,
-        automod=(
-            AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None
-        ),
+        automod=(AutoMod(policy=policy, filters=content_filter, moderator=twitch) if twitch is not None else None),
         customcmds=customcmds,
         bot_badges=bot_badges,
     )
@@ -250,9 +270,9 @@ async def run(settings: Settings) -> None:
                     poller.start()
                 queued = await backfill_queue.queue_startup()  # gaps since the last run (ADR-0008)
                 if queued:
-                    log.info("history.startup_backfill", gaps=len(queued))
-                backfill_queue.start()
-                backfill.start_keep_warm()
+                    log.info("history.startup_backfill", channels=len(queued))
+                if not jobs.running:
+                    await jobs.start()  # first queues again what the last stop cut short
         except Exception:
             log.exception("twitch.start_failed")
 
@@ -275,9 +295,7 @@ async def run(settings: Settings) -> None:
             capabilities = set(settings_of.capabilities) if settings_of else set()
             await use_broadcaster(stored.user_id, stored.login, stored, capabilities)
 
-    async def use_broadcaster(
-        channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]
-    ) -> None:
+    async def use_broadcaster(channel_id: str, login: str, stored: StoredToken | None, capabilities: set[str]) -> None:
         """Subscribe to a channel's own events with the broadcaster's token, and notice when it's gone."""
         if twitch is None:
             return
@@ -368,9 +386,7 @@ async def run(settings: Settings) -> None:
 
     async def chatlog_check() -> ComponentHealth:
         status = Status.OK if writer.queue_depth < 5_000 else Status.DEGRADED
-        return ComponentHealth(
-            status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms}
-        )
+        return ComponentHealth(status, {"queue_depth": writer.queue_depth, "last_flush_ms": writer.last_flush_ms})
 
     async def twitch_check() -> ComponentHealth:
         if twitch is None:
@@ -408,6 +424,7 @@ async def run(settings: Settings) -> None:
         },
         admin_password=settings.admin_password_value(),
         admin_password_networks=settings.admin_password_networks,
+        jobs=jobs,
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -432,9 +449,9 @@ async def run(settings: Settings) -> None:
         await probe.stop()
         if poller is not None:
             await poller.stop()
-        await backfill_queue.stop()
-        await backfill.stop()
+        await jobs.close()  # a running backfill stops before its next request, and resumes at the next start
         await history.close()
+        await emote_cdn.close()
         twitch_start.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await twitch_start

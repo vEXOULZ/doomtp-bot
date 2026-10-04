@@ -183,9 +183,7 @@ async def test_a_callback_belongs_to_the_run_that_raised_it() -> None:
     # The callback runs inside the same trigger (so its cooldowns are that trigger's buckets) and inside the
     # same `!explain --run` (nothing it writes is kept, spec §9).
     policy = SeesCallbackRuns()
-    r = await run(
-        make_runtime(policy=policy, callbacks=EchoCallback()), "!ping", trigger_id="7", dry_run=True
-    )
+    r = await run(make_runtime(policy=policy, callbacks=EchoCallback()), "!ping", trigger_id="7", dry_run=True)
     assert (r.result.code, r.send) == (128, "resting")
     assert policy.seen == [("ping", "7", True), ("echo", "7", True)]
 
@@ -275,9 +273,7 @@ async def test_fallbacks_and_types() -> None:
 
 async def test_context_fields() -> None:
     rt = make_runtime()
-    r = await run(
-        rt, "!echo {$chatter.display} in {$channel.name} rank {$chatter.rank} sub={$chatter.is_sub}"
-    )
+    r = await run(rt, "!echo {$chatter.display} in {$channel.name} rank {$chatter.rank} sub={$chatter.is_sub}")
     assert r.send == "Alice in doomtp rank 20 sub=true"
 
 
@@ -359,9 +355,7 @@ async def test_writes_commit_even_when_final_code_fails() -> None:
 async def test_publisher_namespaces_only_in_custom_commands() -> None:
     rt = make_runtime()
     r = await run(rt, "!echo x -> publisher.y")
-    assert r.result.code == ErrorCode.E_BAD_REFERENCE and "only available inside custom commands" in (
-        r.send or ""
-    )
+    assert r.result.code == ErrorCode.E_BAD_REFERENCE and "only available inside custom commands" in (r.send or "")
     pub = Publisher(id="p9", login="bob")
     store = InMemoryVariableStore()
     rt = make_runtime(store=store)

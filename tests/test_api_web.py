@@ -25,6 +25,12 @@ from doomtp_bot.runtime.explain import ReportStore
 from doomtp_bot.storage.db import Databases
 from tests.fakes import policy_with_channels
 
+# Example addresses: a LAN host, its neighbour, its /24, and Docker's default gateway.
+LAN_HOST = "192.168.1.5"  # conventions:allow-infra
+LAN_NEIGHBOUR = "192.168.1.6"  # conventions:allow-infra
+LAN_RANGE = "192.168.1.0/24"  # conventions:allow-infra
+DOCKER_GATEWAY = "172.18.0.1"  # conventions:allow-infra
+
 CHANNEL_ID, CHANNEL_LOGIN = "100", "doomtp"
 PASSWORD = "correct horse battery staple"
 
@@ -99,9 +105,7 @@ async def test_logging_in_and_out(client: httpx.AsyncClient) -> None:
     assert (await client.get("/api/v1/channels")).status_code == 200
 
     assert (await client.delete("/api/v1/session")).status_code == 403  # no CSRF token: a cross-site page
-    assert (
-        await client.delete("/api/v1/session", headers={"X-CSRF-Token": session["csrf"]})
-    ).status_code == 204
+    assert (await client.delete("/api/v1/session", headers={"X-CSRF-Token": session["csrf"]})).status_code == 204
     assert (await client.get("/api/v1/session")).json()["authenticated"] is False
     assert (await client.get("/api/v1/channels")).status_code == 401
 
@@ -164,14 +168,12 @@ def _from(app: Any, address: str) -> httpx.AsyncClient:
 
 async def test_the_password_works_only_from_the_local_network(app: Any) -> None:
     """The password is the way in when Twitch is down, not a second front door on the public site."""
-    async with _from(app, "192.168.1.5") as lan:
+    async with _from(app, LAN_HOST) as lan:
         assert (await lan.get("/api/v1/session")).json()["admin_enabled"] is True
         assert (await lan.post("/api/v1/session", json={"password": PASSWORD})).status_code == 200
 
     async with _from(app, "203.0.113.9") as outside:
-        assert (await outside.get("/api/v1/session")).json()[
-            "admin_enabled"
-        ] is False  # the site hides the form
+        assert (await outside.get("/api/v1/session")).json()["admin_enabled"] is False  # the site hides the form
         for _ in range(6):  # refused before the password is checked, so it never counts as a failure
             refused = await outside.post("/api/v1/session", json={"password": PASSWORD})
             assert refused.status_code == 403 and "local network" in refused.json()["detail"]
@@ -180,8 +182,8 @@ async def test_the_password_works_only_from_the_local_network(app: Any) -> None:
 
 async def test_an_untrusted_proxy_never_makes_a_visitor_local(app: Any) -> None:
     """Behind a proxy uvicorn doesn't trust, the address is the proxy's: Docker's gateway, a private one."""
-    async with _from(app, "172.18.0.1") as proxied:
-        for visitor in ("203.0.113.9", "192.168.1.5"):  # can't tell which is true, so neither is taken
+    async with _from(app, DOCKER_GATEWAY) as proxied:
+        for visitor in ("203.0.113.9", LAN_HOST):  # can't tell which is true, so neither is taken
             headers = {"X-Forwarded-For": visitor}
             assert (await proxied.get("/api/v1/session", headers=headers)).json()["admin_enabled"] is False
             login = await proxied.post("/api/v1/session", json={"password": PASSWORD}, headers=headers)
@@ -190,8 +192,8 @@ async def test_an_untrusted_proxy_never_makes_a_visitor_local(app: Any) -> None:
         assert (await proxied.post("/api/v1/session", json={"password": PASSWORD})).status_code == 200
 
     # A trusted proxy: uvicorn has already made the client the visitor named in the header.
-    async with _from(app, "192.168.1.5") as rewritten:
-        headers = {"X-Forwarded-For": "192.168.1.5"}
+    async with _from(app, LAN_HOST) as rewritten:
+        headers = {"X-Forwarded-For": LAN_HOST}
         assert (
             await rewritten.post("/api/v1/session", json={"password": PASSWORD}, headers=headers)
         ).status_code == 200
@@ -202,19 +204,17 @@ async def test_the_password_networks_can_be_widened_or_narrowed() -> None:
     async with _from(anywhere, "203.0.113.9") as outside:
         assert (await outside.post("/api/v1/session", json={"password": PASSWORD})).status_code == 200
 
-    one_host = create_app(
-        HealthRegistry(), None, admin_password=PASSWORD, admin_password_networks="192.168.1.5"
-    )
-    async with _from(one_host, "192.168.1.6") as neighbour:
+    one_host = create_app(HealthRegistry(), None, admin_password=PASSWORD, admin_password_networks=LAN_HOST)
+    async with _from(one_host, LAN_NEIGHBOUR) as neighbour:
         assert (await neighbour.post("/api/v1/session", json={"password": PASSWORD})).status_code == 403
 
     with pytest.raises(ValueError):
-        parse_networks("192.168.1.0/24, lan")  # a typo stops the bot, rather than letting nobody in
+        parse_networks(f"{LAN_RANGE}, lan")  # a typo stops the bot, rather than letting nobody in
 
 
 def test_an_ipv4_address_seen_as_ipv6_is_the_same_address() -> None:
     networks = parse_networks(LOCAL_NETWORKS)
-    assert address_in("::ffff:192.168.1.5", networks) and not address_in("::ffff:203.0.113.9", networks)
+    assert address_in(f"::ffff:{LAN_HOST}", networks) and not address_in("::ffff:203.0.113.9", networks)
     assert address_in("::1", networks) and not address_in("unknown", networks)
     assert address_in("anything", None)
 
@@ -235,16 +235,12 @@ async def test_keys_are_managed_with_a_session_and_shown_once(client: httpx.Asyn
     listed = (await client.get("/api/v1/keys")).json()["keys"]
     assert [k["name"] for k in listed] == ["grafana"] and "secret" not in listed[0]
 
-    bad = await client.post(
-        "/api/v1/keys", json={"name": "x", "scopes": ["admin"]}, headers={"X-CSRF-Token": csrf}
-    )
+    bad = await client.post("/api/v1/keys", json={"name": "x", "scopes": ["admin"]}, headers={"X-CSRF-Token": csrf})
     assert bad.status_code == 400
 
     revoked = await client.delete(f"/api/v1/keys/{key['id']}", headers={"X-CSRF-Token": csrf})
     assert revoked.json() == {"id": key["id"], "revoked": True}
-    assert (
-        await client.delete(f"/api/v1/keys/{key['id']}", headers={"X-CSRF-Token": csrf})
-    ).status_code == 404
+    assert (await client.delete(f"/api/v1/keys/{key['id']}", headers={"X-CSRF-Token": csrf})).status_code == 404
     assert (await client.get("/api/v1/keys")).json()["keys"] == []
 
 
@@ -355,13 +351,11 @@ async def test_published_packs_are_public(client: httpx.AsyncClient, app: Any) -
 async def test_a_channel_page_summary_is_public(client: httpx.AsyncClient) -> None:
     channel = (await client.get(f"/api/v1/site/channels/{CHANNEL_LOGIN}")).json()
     assert channel == {"login": CHANNEL_LOGIN, "prefix": channel["prefix"], "tier": channel["tier"],
-                       "status": "joined", "active": True}  # fmt: skip
+                       "status": "joined", "active": True, "channel_id": CHANNEL_ID}  # fmt: skip
     assert (await client.get("/api/v1/site/channels/nobody")).status_code == 404
 
 
-async def test_command_listings_carry_what_the_command_table_shows(
-    client: httpx.AsyncClient, app: Any
-) -> None:
+async def test_command_listings_carry_what_the_command_table_shows(client: httpx.AsyncClient, app: Any) -> None:
     builtins = {c["name"]: c for c in (await client.get("/api/v1/commands")).json()["commands"]}
     assert all({"toggleable", "fixed_policy"} <= set(c) for c in builtins.values())
     assert all("choices" in p for c in builtins.values() for p in c["params"])

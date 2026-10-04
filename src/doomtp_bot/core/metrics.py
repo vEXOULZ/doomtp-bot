@@ -79,17 +79,16 @@ MESSAGES_LOGGED = Counter(
 BACKFILL_INSERTED = Counter(
     "backfill_inserted_total", "Messages and moderation events recovered from the history service."
 )
-BACKFILL_INCOMPLETE = Counter(
-    "backfill_incomplete_total", "Backfill runs that could not cover their whole gap."
+BACKFILL_INCOMPLETE = Counter("backfill_incomplete_total", "Backfill runs that could not cover their whole gap.")
+BACKFILL_JOBS = Counter(
+    "backfill_jobs_total", "What happened to chat_backfill jobs, from the job runtime's hooks.", ("event",)
 )
 RUNS = Counter("runs_total", "Command runs finished, by exit code.", ("code",))
 RUNS_CANCELLED = Counter("runs_cancelled_total", "Runs whose writes were discarded, by why.", ("reason",))
 COOLDOWN_REJECTIONS = Counter(
     "cooldown_rejections_total", "Invocations refused because a cooldown was running, by tier.", ("tier",)
 )
-FILTER_HITS = Counter(
-    "filter_hits_total", "Badword filter matches in what the bot sends, by action.", ("action",)
-)
+FILTER_HITS = Counter("filter_hits_total", "Badword filter matches in what the bot sends, by action.", ("action",))
 OUTBOX_DROPPED = Counter("outbox_dropped_total", "Outgoing messages not sent, by reason.", ("reason",))
 EVENTSUB_WELCOMES = Counter(
     "eventsub_welcomes_total",

@@ -41,6 +41,7 @@ from doomtp_bot.api.access import (
     check_area,
     check_setting_role,
     current_session,
+    platform_actor,
 )
 from doomtp_bot.api.routes.session import client_address
 from doomtp_bot.audit.log import read_audit
@@ -53,7 +54,7 @@ from doomtp_bot.customcmds.resolution import system_specs
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
-from doomtp_bot.history.queue import BackfillQueue, BackfillRefused
+from doomtp_bot.history.jobs import BackfillJobs, BackfillRefused
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.policy.snapshot import ChannelSettings
@@ -195,9 +196,10 @@ async def part_channel(request: Request, login: str, caller: Caller = BROADCASTE
     return {"login": settings.login, "status": "parted"}
 
 
+# ADR-0026
 @router.post("/me/channel", status_code=201)
 async def join_own_channel(request: Request, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
-    """Add the bot to the signed-in user's own channel, the way `!join` does (ADR-0026). Signing in with
+    """Add the bot to the signed-in user's own channel, the way `!join` does. Signing in with
     Twitch proved the channel is theirs. The session manages it from now on, without waiting for a refresh."""
     if caller.user_id is None or caller.login is None:
         raise HTTPException(status_code=400, detail="sign in with Twitch to add the bot to your channel")
@@ -215,9 +217,7 @@ async def join_own_channel(request: Request, caller: Caller = PERSONAL_WRITE) ->
 
 
 @router.patch("/channels/{login}")
-async def patch_channel(
-    request: Request, login: str, body: ChannelPatch, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def patch_channel(request: Request, login: str, body: ChannelPatch, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     policy = _policy(request)
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in SETTABLE}
@@ -249,7 +249,7 @@ class BackfillRequest(BaseModel):
     gaps: bool = False
 
 
-def _backfill(request: Request) -> BackfillQueue:
+def _backfill(request: Request) -> BackfillJobs:
     return _state(request, "backfill")  # type: ignore[no-any-return]
 
 
@@ -273,11 +273,15 @@ async def queue_backfill(
         raise HTTPException(status_code=400, detail="send from_ms (and to_ms), or gaps: true")
     try:
         if body.gaps:
-            jobs = await queue.queue_gaps(settings.channel_id, caller.label)
+            # The channel's one job for its gaps; one already waiting is answered rather than refused.
+            job, _ = await queue.queue_gaps(settings.channel_id, caller.label, actor=platform_actor(caller))
+            jobs = [] if job is None else [job]
         else:
             assert body.from_ms is not None
             to_ms = now_ms() if body.to_ms is None else body.to_ms
-            job = await queue.queue_range(settings.channel_id, body.from_ms, to_ms, caller.label)
+            job = await queue.queue_range(
+                settings.channel_id, body.from_ms, to_ms, caller.label, actor=platform_actor(caller)
+            )
             if job is None:
                 raise HTTPException(status_code=409, detail="that range is already queued")
             jobs = [job]
@@ -290,11 +294,12 @@ async def queue_backfill(
 async def cancel_backfill(
     request: Request, login: str, job_id: int, caller: Caller = BROADCASTER_WRITE
 ) -> dict[str, Any]:
-    """Only a queued job can be cancelled: a running one is already asking the provider."""
+    """A queued job is cancelled at once; a running one stops before its next request, and is answered
+    still `running` if that takes more than a moment."""
     settings = _channel(request, login)
-    job = await _backfill(request).cancel(settings.channel_id, job_id)
+    job = await _backfill(request).cancel(settings.channel_id, job_id, actor=platform_actor(caller))
     if job is None:
-        raise HTTPException(status_code=409, detail=f"job {job_id} isn't queued in {settings.login}")
+        raise HTTPException(status_code=409, detail=f"job {job_id} isn't queued or running in {settings.login}")
     return job.to_json()
 
 
@@ -305,9 +310,7 @@ async def _module_specs(request: Request, channel_id: str) -> dict[str, tuple[Co
         c.spec.module: (c.spec, "builtin") for c in _state(request, "runtime").registry.all()
     }
     services = request.app.state
-    found = await custom_modules(
-        channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None)
-    )
+    found = await custom_modules(channel_id, getattr(services, "packs", None), getattr(services, "customcmds", None))
     for name, kind in found.items():
         specs.setdefault(name, (CommandSpec(name="", module=name, summary=""), kind))
     return specs
@@ -326,12 +329,13 @@ async def toggle_module(
     return {"module": module, "enabled": enabled}
 
 
+# ADR-0012
 @router.get("/channels/{login}/modules")
 async def list_modules(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
     """Each module, whether it is on here, and whether it can be turned off at all.
 
     `kind` says where it comes from: `builtin`, a `pack` published here or globally (its name is its
-    module name, ADR-0012), or `custom`, which holds the commands published one by one and appears when
+    module name), or `custom`, which holds the commands published one by one and appears when
     there are any. `enabled` follows the rules chat applies: this channel's toggle, then the global one,
     then on. Turn any of them off with `PUT …/modules/{module}`, as `!module disable` does in chat.
     """
@@ -412,9 +416,7 @@ async def ignored_users(request: Request, login: str, caller: Caller = READ) -> 
 
 
 @router.post("/channels/{login}/ignored", status_code=201)
-async def add_ignored(
-    request: Request, login: str, body: IgnoreBody, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def add_ignored(request: Request, login: str, body: IgnoreBody, caller: Caller = WRITE) -> dict[str, Any]:
     """Ignore a user here, or everywhere with `everywhere: true` (admins only). Audited as `ignore.add`,
     like chat."""
     if body.everywhere:
@@ -453,12 +455,8 @@ async def remove_ignored(
     if own and not caller.manages(login) and (entry is None or entry.added_by != user_id):
         raise HTTPException(status_code=403, detail="only a moderator can lift an ignore someone else set")
     if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"{user_id} isn't ignored {'everywhere' if everywhere else 'here'}"
-        )
-    await policy.mutate(
-        lambda repo: repo.set_ignored(scope, user_id, entry.user_login or "", False, caller.actor)
-    )
+        raise HTTPException(status_code=404, detail=f"{user_id} isn't ignored {'everywhere' if everywhere else 'here'}")
+    await policy.mutate(lambda repo: repo.set_ignored(scope, user_id, entry.user_login or "", False, caller.actor))
     return {"user_id": user_id, "removed": True, "everywhere": everywhere}
 
 
@@ -522,8 +520,7 @@ def rule_json(policy: PolicyService, scope: str, spec: CommandSpec) -> dict[str,
         "required_role": required,
         "allowed_roles": list(allowed) if allowed else None,
         "cooldowns": {
-            role: {"tier_s": cd.tier_s, "user_s": cd.user_s}
-            for role, cd in policy.cooldown_rules(scope, spec).items()
+            role: {"tier_s": cd.tier_s, "user_s": cd.user_s} for role, cd in policy.cooldown_rules(scope, spec).items()
         },
         "log_level": policy.log_level(scope, spec).value,
     }
@@ -671,9 +668,7 @@ async def list_filters(request: Request, login: str, caller: Caller = READ) -> d
 
 
 @router.post("/channels/{login}/filters", status_code=201)
-async def add_filter(
-    request: Request, login: str, body: FilterBody, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def add_filter(request: Request, login: str, body: FilterBody, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     return await add_filter_to(request, settings.channel_id, body, caller)
 
@@ -740,9 +735,7 @@ async def patch_filter_in(
 
 
 @router.delete("/channels/{login}/filters/{entry_id}")
-async def remove_filter(
-    request: Request, login: str, entry_id: int, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def remove_filter(request: Request, login: str, entry_id: int, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     return await remove_filter_from(request, settings.channel_id, entry_id, caller)
 
@@ -812,9 +805,7 @@ async def list_triggers(request: Request, login: str, caller: Caller = READ) -> 
 
 
 @router.post("/channels/{login}/triggers", status_code=201)
-async def add_trigger(
-    request: Request, login: str, body: TriggerBody, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def add_trigger(request: Request, login: str, body: TriggerBody, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
     if body.type not in TRIGGER_TYPES:
@@ -849,9 +840,7 @@ async def patch_trigger(
         raise HTTPException(status_code=400, detail="nothing to change")
     missing = HTTPException(status_code=404, detail=f"no trigger {trigger_id} here")
     if fields - {"enabled"}:
-        run_as = (
-            None if body.run_as_rank is None else _run_as(request, caller, settings.login, body.run_as_rank)
-        )
+        run_as = None if body.run_as_rank is None else _run_as(request, caller, settings.login, body.run_as_rank)
         try:
             updated = await triggers.update(
                 channel_id=settings.channel_id,
@@ -881,9 +870,7 @@ async def patch_trigger(
 
 
 @router.delete("/channels/{login}/triggers/{trigger_id}")
-async def remove_trigger(
-    request: Request, login: str, trigger_id: int, caller: Caller = WRITE
-) -> dict[str, Any]:
+async def remove_trigger(request: Request, login: str, trigger_id: int, caller: Caller = WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     triggers: TriggerService = _state(request, "triggers")
     if not await triggers.remove(
@@ -920,11 +907,10 @@ def _custom_json(command: Any) -> dict[str, Any]:
     }
 
 
+# ADR-0012
 @router.get("/custom-commands")
-async def custom_commands(
-    request: Request, owner: str | None = Query(default=None, max_length=40)
-) -> dict[str, Any]:
-    """Public: what is published everywhere (ADR-0012), or one owner's shared commands."""
+async def custom_commands(request: Request, owner: str | None = Query(default=None, max_length=40)) -> dict[str, Any]:
+    """Public: what is published everywhere, or one owner's shared commands."""
     service: CustomCommandService = _state(request, "customcmds")
     if owner is None:
         published = await service.publications_in(GLOBAL)
@@ -965,9 +951,7 @@ async def set_publication(
 ) -> dict[str, Any]:
     """`cc enable|disable`: for whoever reaches the channel's `publish_min_role`, as in chat."""
     settings = _channel(request, login)
-    check_setting_role(
-        request, caller, settings.login, "publish_min_role", "turn published commands on or off"
-    )
+    check_setting_role(request, caller, settings.login, "publish_min_role", "turn published commands on or off")
     service: CustomCommandService = _state(request, "customcmds")
     changed = await service.set_publication_status(
         channel_id=settings.channel_id,
@@ -984,21 +968,29 @@ async def set_publication(
 # ── variables, logs and the audit trail ─────────────────────────────────────
 @router.get("/channels/{login}/variables")
 async def channel_variables(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """The channel's own variables. Writing them belongs to the runtime, where the access rules live."""
+    """The channel's own variables, with the login of whoever last set each when it's known."""
     settings = _channel(request, login)
     store = _state(request, "variable_store")
     entries = await store.entries(Space("channel", settings.channel_id, "", ""))
+    known = {c.channel_id: c.login for c in _policy(request).channels()}
     return {
         "variables": [
-            {"name": e.key.name, "value": e.value, "updated_at": e.updated_at, "updated_by": e.updated_by}
+            {
+                "name": e.key.name,
+                "value": e.value,
+                "updated_at": e.updated_at,
+                "updated_by": e.updated_by,
+                "updated_by_login": await _login_of(request, e.updated_by, known),
+            }
             for e in entries
         ]
     }
 
 
+# ADR-0019
 @router.get("/channels/{login}/storage")
 async def channel_storage(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """How much of its quota the channel uses, per namespace (ADR-0019), like `!var usage channel`."""
+    """How much of its quota the channel uses, per namespace, like `!var usage channel`."""
     settings = _channel(request, login)
     store = _state(request, "variable_store")
     used = await store.usage("channel", settings.channel_id)
@@ -1047,9 +1039,7 @@ async def variable_limits(request: Request, caller: Caller = ADMIN_READ) -> dict
 
 
 @router.patch("/variable-limits/default")
-async def set_default_limits(
-    request: Request, body: LimitsBody, caller: Caller = ADMIN_WRITE
-) -> dict[str, Any]:
+async def set_default_limits(request: Request, body: LimitsBody, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     await _apply_limits(request, "*", "*", body, caller)
     defaults = await _state(request, "variable_store").defaults()
     return _limits_json(defaults)
@@ -1135,9 +1125,7 @@ async def set_http_secret(
 ) -> dict[str, Any]:
     secret = Secret(body.kind, body.name, body.value)
     try:
-        entry = await _hosts(request).set_secret(
-            pattern, secret, actor=caller.actor.user_id, via=caller.actor.via
-        )
+        entry = await _hosts(request).set_secret(pattern, secret, actor=caller.actor.user_id, via=caller.actor.via)
     except HostError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return entry.public()
@@ -1146,18 +1134,14 @@ async def set_http_secret(
 @router.delete("/http-hosts/{pattern}/secret")
 async def clear_http_secret(request: Request, pattern: str, caller: Caller = ADMIN_WRITE) -> dict[str, Any]:
     try:
-        entry = await _hosts(request).set_secret(
-            pattern, None, actor=caller.actor.user_id, via=caller.actor.via
-        )
+        entry = await _hosts(request).set_secret(pattern, None, actor=caller.actor.user_id, via=caller.actor.via)
     except HostError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return entry.public()
 
 
 @router.patch("/http-limits")
-async def set_http_limits(
-    request: Request, body: HttpLimitsBody, caller: Caller = ADMIN_WRITE
-) -> dict[str, int]:
+async def set_http_limits(request: Request, body: HttpLimitsBody, caller: Caller = ADMIN_WRITE) -> dict[str, int]:
     limits = await _hosts(request).set_limits(
         channel_per_minute=body.channel_per_minute,
         host_per_minute=body.host_per_minute,
@@ -1219,6 +1203,7 @@ async def command_runs(
         return {"runs": [dict(row) for row in await cur.fetchall()]}
 
 
+# architecture §3.3
 @router.get("/channels/{login}/messages")
 async def search_messages(
     request: Request,
@@ -1227,7 +1212,7 @@ async def search_messages(
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
     caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """Full-text search over the channel's log (architecture §3.3). The public see no removed messages."""
+    """Full-text search over the channel's log. The public see no removed messages."""
     settings = _channel(request, login)
     rows = await queries.search_messages(
         _state(request, "chatlog_db"), settings.channel_id, q, limit=limit, visible_only=_is_public(caller)
@@ -1239,6 +1224,7 @@ async def search_messages(
 _KINDS_QUERY = Query(default=None, description="message, notification or moderation; repeat for several")
 
 
+# ADR-0025, ADR-0026
 @router.get("/channels/{login}/log")
 async def channel_log(
     request: Request,
@@ -1254,9 +1240,9 @@ async def channel_log(
     limit: int = Query(default=100, ge=1, le=MAX_ROWS),
     caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """The channel's log as one timeline of messages, notifications and moderation, a page at a time
-    (ADR-0025). Pass `next` back as `cursor`, with the same filters, for the page after. The public get
-    messages and notifications only, without removed messages (ADR-0026)."""
+    """The channel's log as one timeline of messages, notifications and moderation, a page at a time.
+    Pass `next` back as `cursor`, with the same filters, for the page after. The public get
+    messages and notifications only, without removed messages."""
     settings = _channel(request, login)
     kinds = list(kind or timeline.KINDS)
     if _is_public(caller):
@@ -1281,6 +1267,7 @@ async def channel_log(
     }
 
 
+# ADR-0025
 @router.get("/channels/{login}/log/coverage")
 async def channel_log_coverage(
     request: Request,
@@ -1289,27 +1276,26 @@ async def channel_log_coverage(
     until: int | None = Query(default=None, ge=0, description="ms since the epoch; now by default"),
     caller: Caller = LOG_READ,
 ) -> dict[str, Any]:
-    """When the bot was listening between `since` and `until`, and which holes backfill filled (ADR-0025)."""
+    """When the bot was listening between `since` and `until`, and which holes backfill filled."""
     if until is not None and until <= since:
         raise HTTPException(status_code=422, detail="until must be after since")
     settings = _channel(request, login)
     return await timeline.coverage(_state(request, "chatlog_db"), settings.channel_id, since, until)
 
 
+# ADR-0026
 @router.get("/audit")
 async def audit(
     request: Request,
     channel: str | None = Query(default=None, max_length=40),
     actor: str | None = Query(default=None, max_length=40, description="a login, or `me`"),
-    action: str | None = Query(
-        default=None, max_length=64, description="`cc.edit`, or `cc.` for every cc one"
-    ),
+    action: str | None = Query(default=None, max_length=64, description="`cc.edit`, or `cc.` for every cc one"),
     before: int | None = Query(default=None, ge=1, description="the `next` of the page before"),
     limit: int = Query(default=50, ge=1, le=MAX_ROWS),
     caller: Caller = PERSONAL_READ,
 ) -> dict[str, Any]:
     """The newest changes first, a page at a time: pass `next` back as `before`. A moderator sees the
-    channels they manage; anyone signed in sees their own changes everywhere with `actor=me` (ADR-0026)."""
+    channels they manage; anyone signed in sees their own changes everywhere with `actor=me`."""
     conn, policy = _state(request, "bot_db"), _policy(request)
     known = {c.channel_id: c.login for c in policy.channels()}
     own = actor == "me"
@@ -1336,9 +1322,7 @@ async def audit(
             actor_id = caller.user_id
         else:
             scope["channel_ids"] = [c.channel_id for c in policy.channels() if caller.manages(c.login)]
-    found = await read_audit(
-        conn, limit=limit, before_id=before, actor_user_id=actor_id, action=action, **scope
-    )
+    found = await read_audit(conn, limit=limit, before_id=before, actor_user_id=actor_id, action=action, **scope)
     for entry in found:
         entry["channel_login"] = known.get(entry.get("channel_id") or "")
         entry["actor_login"] = await _login_of(request, entry.get("actor_user_id"), known)

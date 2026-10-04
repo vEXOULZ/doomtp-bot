@@ -38,9 +38,7 @@ def as_user(client: httpx.AsyncClient, app: Any) -> dict[str, str]:
 
 
 def as_mod(client: httpx.AsyncClient, app: Any) -> dict[str, str]:
-    return sign_in(
-        client, app, role="moderator", user_id="300", user_login="mod", channels=frozenset({CHANNEL_LOGIN})
-    )
+    return sign_in(client, app, role="moderator", user_id="300", user_login="mod", channels=frozenset({CHANNEL_LOGIN}))
 
 
 def as_broadcaster(client: httpx.AsyncClient, app: Any) -> dict[str, str]:
@@ -54,9 +52,7 @@ def as_broadcaster(client: httpx.AsyncClient, app: Any) -> dict[str, str]:
     )
 
 
-def as_admin(
-    client: httpx.AsyncClient, app: Any, user_id: str = "400", login: str = "alice"
-) -> dict[str, str]:
+def as_admin(client: httpx.AsyncClient, app: Any, user_id: str = "400", login: str = "alice") -> dict[str, str]:
     return sign_in(client, app, role="admin", user_id=user_id, user_login=login)
 
 
@@ -75,9 +71,7 @@ async def _command(client: httpx.AsyncClient, csrf: dict[str, str], name: str, b
 
 
 # ── my commands ─────────────────────────────────────────────────────────────
-async def test_someone_who_manages_nothing_writes_their_own_commands(
-    client: httpx.AsyncClient, app: Any
-) -> None:
+async def test_someone_who_manages_nothing_writes_their_own_commands(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_user(client, app)
     made = await client.post(
         "/api/v1/me/custom-commands",
@@ -93,9 +87,7 @@ async def test_someone_who_manages_nothing_writes_their_own_commands(
     versions = (await client.get("/api/v1/me/custom-commands/hello/versions")).json()["versions"]
     assert len(versions) == 2
     oldest = min(v["version"] for v in versions)
-    reverted = await client.post(
-        "/api/v1/me/custom-commands/hello/revert", json={"version": oldest}, headers=csrf
-    )
+    reverted = await client.post("/api/v1/me/custom-commands/hello/revert", json={"version": oldest}, headers=csrf)
     assert reverted.status_code == 200 and reverted.json()["body"] == "echo hi"
 
     bad = await client.patch("/api/v1/me/custom-commands/hello", json={"body": "echo {"}, headers=csrf)
@@ -198,9 +190,7 @@ async def test_roles_follow_the_rank_rules_of_role_in_chat(client: httpx.AsyncCl
 
 async def test_replies_and_readouts_are_checked_like_chat(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_mod(client, app)
-    set_ = await client.put(
-        f"{OWN}/callbacks/on_cooldown/channel", json={"expr": "echo slow down"}, headers=csrf
-    )
+    set_ = await client.put(f"{OWN}/callbacks/on_cooldown/channel", json={"expr": "echo slow down"}, headers=csrf)
     assert set_.status_code == 200
     assert (await client.get(f"{OWN}/callbacks")).json()["callbacks"] == [
         {"scope": "channel", "kind": "on_cooldown", "expr": "echo slow down"}
@@ -210,9 +200,7 @@ async def test_replies_and_readouts_are_checked_like_chat(client: httpx.AsyncCli
     assert (await client.delete(f"{OWN}/callbacks/on_cooldown/channel", headers=csrf)).status_code == 200
     assert (await client.delete(f"{OWN}/callbacks/on_cooldown/channel", headers=csrf)).status_code == 404
 
-    echo = await client.put(
-        f"{OWN}/customecho/uptime", json={"text": "live for {$channel.uptime:human}"}, headers=csrf
-    )
+    echo = await client.put(f"{OWN}/customecho/uptime", json={"text": "live for {$channel.uptime:human}"}, headers=csrf)
     assert echo.status_code == 200, echo.text
     assert (await client.get(f"{OWN}/customecho")).json()["customecho"] == [
         {"command": "uptime", "template": "live for {$channel.uptime:human}"}
@@ -221,9 +209,7 @@ async def test_replies_and_readouts_are_checked_like_chat(client: httpx.AsyncCli
     assert (await client.delete(f"{OWN}/customecho/uptime", headers=csrf)).status_code == 404
 
 
-async def test_channel_variables_are_written_by_the_role_the_channel_names(
-    client: httpx.AsyncClient, app: Any
-) -> None:
+async def test_channel_variables_are_written_by_the_role_the_channel_names(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_user(client, app)
     assert (await client.put(f"{OWN}/variables/goal", json={"value": 5}, headers=csrf)).status_code == 403
     csrf = as_mod(client, app)
@@ -291,15 +277,11 @@ async def test_bot_wide_toggles_filters_and_publications(client: httpx.AsyncClie
     assert (await client.get("/api/v1/ignored")).json()["ignored"] == []
 
     await _command(client, csrf, "hi", "echo hi")
-    assert (
-        await client.post("/api/v1/global/publications", json={"command": "hi"}, headers=csrf)
-    ).status_code == 201
+    assert (await client.post("/api/v1/global/publications", json={"command": "hi"}, headers=csrf)).status_code == 201
     assert "hi" in str((await client.get("/api/v1/custom-commands")).json())
     assert (await client.delete("/api/v1/global/publications/hi", headers=csrf)).status_code == 200
 
-    assert (await client.post(f"{OWN}/capabilities/probe", headers=csrf)).json()["capabilities"] == [
-        "moderate"
-    ]
+    assert (await client.post(f"{OWN}/capabilities/probe", headers=csrf)).json()["capabilities"] == ["moderate"]
 
     as_broadcaster(client, app)
     assert (await client.get("/api/v1/global/modules")).status_code == 403

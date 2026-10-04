@@ -42,7 +42,7 @@ start from an empty database (`docker compose down -v` throws the dev volume awa
 
 ## Local development
 
-Requires Python 3.12+.
+Requires Python 3.13+.
 
 ```bash
 python -m venv .venv
@@ -113,6 +113,13 @@ See [.env.example](.env.example).
 cp .env.example .env
 ```
 
+`compose.yaml` runs the published image, as a server does. To build from your tree instead, add
+`compose.dev.yaml` on top: put this line in `.env`, and every `docker compose` command below uses both.
+
+```
+COMPOSE_FILE=compose.yaml:compose.dev.yaml
+```
+
 ```bash
 mkdir -p secrets data && printf '%s' 'your-client-secret' > secrets/twitch_client_secret
 ```
@@ -170,8 +177,8 @@ with `!cc grant deaths channel.deaths`.
 
 ## Deploying an update
 
-The chat log records when the bot was listening, and fills what it missed from the recent-messages
-service when it comes back (ADR-0008). That only works if the old process is allowed to finish: stop it
+The chat log records when the bot was listening, and fills what it missed from logs.ivr.fi when it
+comes back (ADR-0008). That only works if the old process is allowed to finish: stop it
 with a signal, never with a kill.
 
 ```bash
@@ -194,9 +201,9 @@ It prints how each channel's last session ended and, for channels with backfill 
 week with whether it was filled. A gap a job is still to fill shows as `OPEN — queued as backfill job #N`
 (or `running`), and `--wait` checks again every few seconds until no gap is waiting or the time is up.
 `!backfill queue` in chat and `GET /api/v1/channels/{login}/backfill` show the same queue. Exit code 1
-means a gap is still open — the usual causes are the
-recent-messages service being down or the outage being longer than its 800-message reach, and both are
-worth seeing in the log before you assume the history is complete.
+means a gap is still open — the usual causes are
+logs.ivr.fi being down, the bot's own daily request budget for it being spent (the job waits for the next
+day), or a channel it doesn't log, and all are worth seeing in the log before you assume the history is complete.
 
 ## Deploying to a server, step by step
 
@@ -261,15 +268,15 @@ docker compose version && docker run --rm hello-world
 ### 4. Put the files on the guest
 
 ```bash
-sudo mkdir -p /srv/doomtp-bot && sudo chown "$USER" /srv/doomtp-bot && git clone <repo-url> /srv/doomtp-bot
+sudo mkdir -p /opt/doomtp-bot && sudo chown "$USER" /opt/doomtp-bot && git clone <repo-url> /opt/doomtp-bot
 ```
 
-Everything from here happens in `/srv/doomtp-bot`.
+Everything from here happens in `/opt/doomtp-bot`.
 
 ### 5. Configure it
 
 ```bash
-cd /srv/doomtp-bot && cp .env.example .env && mkdir -p secrets data
+cd /opt/doomtp-bot && cp .env.example .env && mkdir -p secrets data
 ```
 
 Edit `.env`: `TWITCH_CLIENT_ID` and `TWITCH_BOT_ID` from the Twitch console, `BOT_OWNER_IDS` with your
@@ -305,7 +312,7 @@ init, so a change means `ALTER ROLE doomtp PASSWORD …` inside the running data
 ### 6. Start it
 
 ```bash
-docker compose -f compose.yaml -f compose.prod.yaml up -d
+docker compose up -d
 ```
 
 It pulls the image, starts Postgres, waits for it to report healthy, then creates both schemas and
@@ -362,7 +369,7 @@ Then point the bot at the public address. In `.env`:
 PUBLIC_BASE_URL=https://bot.example.com
 PUBLIC_WEB_UI=true
 WEB_SITE_URL=https://bot.example.com
-WEB_FORWARDED_ALLOW_IPS=172.18.0.1
+WEB_FORWARDED_ALLOW_IPS=172.18.0.1  # conventions:allow-infra
 ```
 
 `WEB_SITE_URL` is where the site's pages open. `!help` ends with a link to the channel's page there
@@ -381,7 +388,7 @@ On the **server's** Twitch app, add both redirect URLs for the new address:
 `https://bot.example.com/auth/admin/callback` (signing in to the web admin). Then restart:
 
 ```bash
-docker compose -f compose.yaml -f compose.prod.yaml up -d
+docker compose up -d
 ```
 
 The bot token you stored in step 7 stays valid; nothing needs signing in again. Open
@@ -415,7 +422,7 @@ A Proxmox backup of a running VM snapshots a disk, which is not the same as a co
 database that was mid-write — so run the job that is, from the guest's own crontab (`crontab -e`):
 
 ```bash
-15 4 * * * cd /srv/doomtp-bot && docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm backup >> data/backups/cron.log 2>&1
+15 4 * * * cd /opt/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
 ```
 
 Keep a copy off the guest. The snapshots sit on the same disk as the originals, so they survive mistakes,
@@ -427,11 +434,11 @@ not drive failures.
 |---|---|
 | Is it healthy? | `curl -s localhost:8080/readyz` |
 | How often does it happen? | `curl -s localhost:8080/metrics` — counters in Prometheus text (ADR-0015); point a scraper on the LAN at it |
-| What is it doing? | `docker compose -f compose.yaml -f compose.prod.yaml logs -f doomtp-bot` |
-| Did the log lose anything? | `docker compose -f compose.yaml -f compose.prod.yaml --profile tools run --rm coverage --wait 300` |
+| What is it doing? | `docker compose logs -f doomtp-bot` |
+| Did the log lose anything? | `docker compose --profile tools run --rm coverage --wait 300` |
 | Deploy now | `sudo systemctl start doomtp-bot-update` |
-| Upgrade the schema and install `core` and the starter commands | `docker compose -f compose.yaml -f compose.prod.yaml run --rm migrate` |
-| Where does the schema stand? | `docker compose -f compose.yaml -f compose.prod.yaml run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
+| Upgrade the schema and install `core` and the starter commands | `docker compose run --rm migrate` |
+| Where does the schema stand? | `docker compose run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
 
 To **roll back**, run `deploy/rollback.sh ghcr.io/<owner>/doomtp-bot:vX.Y.Z` (or any `:<sha>` tag). It takes
 a backup, downgrades the schema to what that image expects using the image running now, points `BOT_IMAGE`
@@ -442,15 +449,15 @@ back to that data. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR
 An image from before ADR-0022 has no migrate step. After rolling back to one, start it with `up -d --no-deps
 doomtp-bot`, not a bare `up -d`, which would run the step and fail.
 
-Both scripts use `compose.yaml` and `compose.prod.yaml`. A server with an override file of its own lists
-all of them in `COMPOSE_FILE` in `.env` (`COMPOSE_FILE=compose.yaml:compose.prod.yaml:compose.local.yaml`),
+Both scripts use `compose.yaml`. A server with an override file of its own lists both in `COMPOSE_FILE`
+in `.env` (`COMPOSE_FILE=compose.yaml:compose.local.yaml`),
 which the scripts and a bare `docker compose` both read, so a rollback keeps the override.
 
 ### If something is wrong
 
 | Symptom | Cause |
 |---------|-------|
-| `up -d` tries to build | `BOT_IMAGE` is unset, or `compose.prod.yaml` was left off the command |
+| `up -d` tries to build | `COMPOSE_FILE` in `.env` names `compose.dev.yaml`, which is for development |
 | The bot logs `bot.schema_mismatch` and says to run `db upgrade` | It was started without the migrate step: `docker compose ... run --rm migrate`, then start it |
 | The bot logs `bot.schema_mismatch` and says a newer build wrote the schema | An older image was started on a newer schema: use `deploy/rollback.sh`, which downgrades first |
 | `migrate` fails and the bot isn't replaced | Working as intended: the old bot keeps running. `docker compose ... logs migrate` says why |
@@ -470,7 +477,8 @@ which the scripts and a bare `docker compose` both read, so a rollback keeps the
 The pages, public and admin, are [doomtp-web](https://github.com/vEXOULZ/doomtp-web): a separate Vue site
 over this bot's JSON API, served from the same hostname (ADR-0016; step 8 above). The bot serves the API,
 `/auth/*`, `/static/*` (the expression editor and the railroad diagrams the site loads) and Swagger at
-`/docs`, and no pages of its own. Anything the site needs that the API doesn't return is added to the API
+`/docs`, and no pages of its own. `/api/v2` (ADR-0027) holds the jobs and audit routes shared with the
+archive, and the chat log in v2's shape, with Swagger of its own at `/api/v2/docs`. Anything the site needs that the API doesn't return is added to the API
 here.
 
 To work on the site without Twitch, run `scripts/dev_api.py` here. It serves the same API with made-up
@@ -488,20 +496,21 @@ came through a proxy the bot doesn't trust is never local, since its address is 
 ## Backups
 
 The `bot` schema holds the OAuth refresh tokens and every channel's configuration; the `chatlog` schema
-holds the message history. One script dumps both, using `pg_dump`, which takes its snapshot inside a
-single transaction and is therefore safe to run while the bot is writing:
+holds the message history; `public.audit_log` holds who changed what (ADR-0027). One script dumps all
+three, using `pg_dump`, which takes its snapshot inside a single transaction and is therefore safe to run
+while the bot is writing:
 
 ```bash
 docker compose --profile tools run --rm backup
 ```
 
-Each run writes `<schema>-<timestamp>.dump` into `data/backups/` and keeps the newest 7 of each
-(`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
+Each run writes `bot-`, `chatlog-` and `audit-<timestamp>.dump` into `data/backups/` and keeps the newest
+7 of each (`--keep`). The two schemas are dumped separately on purpose: the state you cannot lose and the log that
 grows without bound do not have to share a retention policy. For a nightly copy, add it to the host's
 crontab (`crontab -e`):
 
 ```bash
-15 4 * * * cd /srv/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
+15 4 * * * cd /opt/doomtp-bot && docker compose --profile tools run --rm backup >> data/backups/cron.log 2>&1
 ```
 
 To restore, stop the bot, drop the schema and let `pg_restore` put it back:

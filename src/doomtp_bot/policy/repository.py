@@ -37,14 +37,10 @@ class PolicyRepository:
         )
 
     # ── channels ────────────────────────────────────────────────────────────
-    async def ensure_channel(
-        self, channel_id: str, login: str, actor: Actor, prefix: str = DEFAULT_PREFIX
-    ) -> bool:
+    async def ensure_channel(self, channel_id: str, login: str, actor: Actor, prefix: str = DEFAULT_PREFIX) -> bool:
         """Create the channel row if missing. Returns True if it was created."""
         async with transaction(self.conn):
-            existing = await fetch_one(
-                self.conn, "SELECT login FROM channels WHERE channel_id = %s", (channel_id,)
-            )
+            existing = await fetch_one(self.conn, "SELECT login FROM channels WHERE channel_id = %s", (channel_id,))
             ts = now_ms()
             if existing is not None:
                 if existing["login"] != login:
@@ -106,9 +102,7 @@ class PolicyRepository:
             if row is None:
                 return
             await self.conn.execute("DELETE FROM roles WHERE id = %s", (role_id,))
-            await self._audit(
-                actor, "role.delete", row["channel_id"], row["name"], {"rank": row["rank"]}, None
-            )
+            await self._audit(actor, "role.delete", row["channel_id"], row["name"], {"rank": row["rank"]}, None)
 
     async def add_member(
         self,
@@ -137,17 +131,13 @@ class PolicyRepository:
                 {"login": user_login, "expires_at": expires_at},
             )
 
-    async def remove_member(
-        self, role_id: int, channel_id: str, role_name: str, user_id: str, actor: Actor
-    ) -> bool:
+    async def remove_member(self, role_id: int, channel_id: str, role_name: str, user_id: str, actor: Actor) -> bool:
         async with transaction(self.conn):
             cur = await self.conn.execute(
                 "DELETE FROM role_members WHERE role_id = %s AND user_id = %s", (role_id, user_id)
             )
             if cur.rowcount:
-                await self._audit(
-                    actor, "role.revoke", channel_id, f"{role_name}:{user_id}", {"member": True}, None
-                )
+                await self._audit(actor, "role.revoke", channel_id, f"{role_name}:{user_id}", {"member": True}, None)
             return bool(cur.rowcount)
 
     async def members(self, role_id: int) -> list[tuple[str, str | None, int | None]]:
@@ -179,9 +169,7 @@ class PolicyRepository:
             )
 
     # ── toggles, rules, cooldowns ───────────────────────────────────────────
-    async def set_module_toggle(
-        self, channel_id: str, module: str, enabled: bool | None, actor: Actor
-    ) -> None:
+    async def set_module_toggle(self, channel_id: str, module: str, enabled: bool | None, actor: Actor) -> None:
         async with transaction(self.conn):
             if enabled is None:
                 await self.conn.execute(
@@ -212,9 +200,7 @@ class PolicyRepository:
                 (channel_id, command),
             )
             new_enabled = (
-                None
-                if clear_enabled
-                else (enabled if enabled is not None else (row["enabled"] if row else None))
+                None if clear_enabled else (enabled if enabled is not None else (row["enabled"] if row else None))
             )
             new_level = log_level if log_level is not None else (row["log_level"] if row else None)
             if new_enabled is None and new_level is None:

@@ -168,7 +168,5 @@ async def test_store_into_a_path_creates_maps() -> None:
 
 
 async def test_store_into_a_non_collection_fails() -> None:
-    r = await run(
-        make_runtime(store=InMemoryVariableStore()), "!echo a -> channel.s && echo b -> channel.s[k]"
-    )
+    r = await run(make_runtime(store=InMemoryVariableStore()), "!echo a -> channel.s && echo b -> channel.s[k]")
     assert r.result.code == ErrorCode.E_NOT_A_MAP

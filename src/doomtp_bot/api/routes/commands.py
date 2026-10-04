@@ -86,9 +86,7 @@ async def my_commands(request: Request, caller: Caller = PERSONAL_READ) -> dict[
                 "links": links,
                 "publications": [
                     {
-                        "channel": "global"
-                        if p.channel_id == GLOBAL
-                        else logins.get(p.channel_id, p.channel_id),
+                        "channel": "global" if p.channel_id == GLOBAL else logins.get(p.channel_id, p.channel_id),
                         "name": p.name,
                         "status": p.status,
                     }
@@ -114,9 +112,7 @@ class NewCommand(BaseModel):
 
 
 @router.post("/me/custom-commands", status_code=201)
-async def create_command(
-    request: Request, body: NewCommand, caller: Caller = PERSONAL_WRITE
-) -> dict[str, Any]:
+async def create_command(request: Request, body: NewCommand, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
     user_id, login = _me(caller)
     settings = _channel(request, body.channel)
     check_setting_role(request, caller, settings.login, "create_min_role", "create commands")
@@ -259,9 +255,7 @@ async def declare_param(
 
 
 @router.delete("/me/custom-commands/{name}/params/{position}")
-async def remove_param(
-    request: Request, name: str, position: str, caller: Caller = PERSONAL_WRITE
-) -> dict[str, Any]:
+async def remove_param(request: Request, name: str, position: str, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
     user_id, _ = _me(caller)
     command = await _own(request, user_id, name)
     rows = params.remove(command.params, position)
@@ -281,9 +275,7 @@ class LinkBody(BaseModel):
 
 
 @router.put("/me/links/{alias}")
-async def link_command(
-    request: Request, alias: str, body: LinkBody, caller: Caller = PERSONAL_WRITE
-) -> dict[str, Any]:
+async def link_command(request: Request, alias: str, body: LinkBody, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
     user_id, _ = _me(caller)
     service = _commands(request)
     if (body.owner is None) == (body.channel is None):
@@ -292,9 +284,7 @@ async def link_command(
         owner = await _state(request, "twitch").resolve_user(body.owner.lstrip("@"))
         command = await service.by_owner(owner["id"], body.command) if owner else None
         if command is None or not command.shareable:
-            raise HTTPException(
-                status_code=404, detail=f"@{body.owner} has no shared command named {body.command}"
-            )
+            raise HTTPException(status_code=404, detail=f"@{body.owner} has no shared command named {body.command}")
     else:
         settings = _channel(request, body.channel or "")
         found = await service.publication(settings.channel_id, body.command)
@@ -325,17 +315,14 @@ async def _pack_json(request: Request, pack: Pack) -> dict[str, Any]:
     members = await packs.members(pack.id)
     internal = await packs.internal_names(pack.id)
     published = [
-        "global" if scope == GLOBAL else logins.get(scope, scope)
-        for scope in await _pack_scopes(request, pack)
+        "global" if scope == GLOBAL else logins.get(scope, scope) for scope in await _pack_scopes(request, pack)
     ]
     return {
         "id": pack.id,
         "name": pack.name,
         "summary": pack.summary,
         "system": pack.is_system,
-        "commands": [
-            {"name": c.name, "internal": c.name in internal, "shareable": c.shareable} for c in members
-        ],
+        "commands": [{"name": c.name, "internal": c.name in internal, "shareable": c.shareable} for c in members],
         "shareable": bool(members) and all(c.shareable for c in members),
         "published": published,
     }
@@ -389,9 +376,7 @@ class PackPatch(BaseModel):
 
 
 @router.patch("/me/packs/{name}")
-async def share_pack(
-    request: Request, name: str, body: PackPatch, caller: Caller = PERSONAL_WRITE
-) -> dict[str, Any]:
+async def share_pack(request: Request, name: str, body: PackPatch, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
     """`cc pack share`: every member becomes shareable (or private), so others may publish the pack."""
     user_id, _ = _me(caller)
     pack = await _own_pack(request, user_id, name)
@@ -490,9 +475,7 @@ class PublishBody(BaseModel):
     name: str | None = Field(default=None, max_length=32)  # `as <name>`
 
 
-async def publish_in(
-    request: Request, scope: str, body: PublishBody, caller: Caller, check_in: str
-) -> dict[str, Any]:
+async def publish_in(request: Request, scope: str, body: PublishBody, caller: Caller, check_in: str) -> dict[str, Any]:
     """Publish the caller's command or alias to a channel, or everywhere (`scope` GLOBAL)."""
     user_id, _ = _me(caller)
     service = _commands(request)
@@ -533,9 +516,7 @@ async def publish_command(
 
 
 @router.delete("/channels/{login}/publications/{name}")
-async def unpublish_command(
-    request: Request, login: str, name: str, caller: Caller = PERSONAL_WRITE
-) -> dict[str, Any]:
+async def unpublish_command(request: Request, login: str, name: str, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     check_setting_role(request, caller, settings.login, "publish_min_role", "unpublish commands")
     return await unpublish_in(request, settings.channel_id, name, caller)
@@ -560,9 +541,7 @@ async def _resolve_pack(request: Request, caller: Caller, name: str, owner: str 
     if user and user["id"] != user_id:
         members = await packs.members(pack.id)
         if not members or not all(c.shareable for c in members):
-            raise HTTPException(
-                status_code=403, detail=f"@{owner} hasn't shared every command in {pack.name}"
-            )
+            raise HTTPException(status_code=403, detail=f"@{owner} hasn't shared every command in {pack.name}")
     return pack
 
 
@@ -597,9 +576,7 @@ async def unpublish_pack_in(
 
 
 @router.post("/channels/{login}/packs", status_code=201)
-async def publish_pack(
-    request: Request, login: str, body: PackRef, caller: Caller = PERSONAL_WRITE
-) -> dict[str, Any]:
+async def publish_pack(request: Request, login: str, body: PackRef, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
     settings = _channel(request, login)
     check_setting_role(request, caller, settings.login, "publish_min_role", "publish packs")
     return await publish_pack_in(request, settings.channel_id, body, caller)
@@ -626,9 +603,7 @@ def _channel_writes(request: Request, command: CustomCommand, prefix: str) -> li
         node = parse(command.body, Context.BODY, runtime.parser_params(prefix))
     except ParseError:
         return []
-    return sorted(
-        {f"{s.target.namespace}.{s.target.name}" for s in stores(node) if s.target.namespace in GRANTABLE}
-    )
+    return sorted({f"{s.target.namespace}.{s.target.name}" for s in stores(node) if s.target.namespace in GRANTABLE})
 
 
 def _missing_grants(request: Request, scope: str, commands: list[CustomCommand]) -> dict[str, list[str]]:

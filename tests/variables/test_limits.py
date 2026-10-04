@@ -54,9 +54,7 @@ class Harness:
         u = USERS[who]
         channel = dataclasses.replace(self.policy.channel_info(CHANNEL_ID, CHANNEL_LOGIN), prefix="!")
         chatter = self.policy.build_chatter(CHANNEL_ID, u["id"], u["name"], u["display"], frozenset())
-        return self.runtime.make_context(
-            channel=channel, invoker=chatter, context=Context.LINE, rng=random.Random(3)
-        )
+        return self.runtime.make_context(channel=channel, invoker=chatter, context=Context.LINE, rng=random.Random(3))
 
     async def run(self, who: str, text: str) -> RunReport:
         report = await self.runtime.run(text, self.ctx(who))
@@ -146,9 +144,7 @@ async def test_the_value_cap_is_per_owner(h: Harness) -> None:
     await h.store.set_limit("channel", CHANNEL_ID, "value_cap_bytes", 10, actor="1", via="chat")
     ctx = h.ctx("alice")
     with pytest.raises(VariableError) as exc:
-        await h.store.commit(
-            [WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, "400", name="n"), "x" * 10)], ctx
-        )
+        await h.store.commit([WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, "400", name="n"), "x" * 10)], ctx)
     assert exc.value.code == ErrorCode.E_VALUE_TOO_BIG
     await h.store.commit([WriteOp("set", VarKey("chatter", "400", name="n"), "x" * 10)], ctx)
 
@@ -164,12 +160,8 @@ async def test_an_override_falls_back_to_the_default_field_by_field(h: Harness) 
 
 # ── commands ────────────────────────────────────────────────────────────────
 async def test_admin_quota_sets_shows_and_resets(h: Harness) -> None:
-    assert (
-        await h.run("owner", "!admin quota channel doomtp")
-    ).send == "channel Doomtp quota: 1 MB (default)"
-    assert (
-        await h.run("owner", "!admin quota channel doomtp 2MB")
-    ).send == "channel Doomtp quota is now 2 MB"
+    assert (await h.run("owner", "!admin quota channel doomtp")).send == "channel Doomtp quota: 1 MB (default)"
+    assert (await h.run("owner", "!admin quota channel doomtp 2MB")).send == "channel Doomtp quota is now 2 MB"
     assert await h.store.limits_for("channel", CHANNEL_ID) == Limits(2 * 1024 * 1024, 256 * 1024)
     assert (await h.run("owner", "!admin quota channel doomtp")).send == "channel Doomtp quota: 2 MB"
     assert (await h.run("owner", "!admin quota channel doomtp reset")).send == (
@@ -217,12 +209,8 @@ async def test_a_run_over_quota_fails_with_e_quota(h: Harness) -> None:
 
 async def test_admin_sets_the_list_and_name_limits_as_counts(h: Harness) -> None:
     assert (await h.run("owner", "!admin listitems default")).send == "default list limit: 100"
-    assert (
-        await h.run("owner", "!admin listitems channel doomtp 3")
-    ).send == "channel Doomtp list limit is now 3"
-    assert (
-        await h.run("owner", "!admin names chatter alice 2")
-    ).send == "chatter Alice variable limit is now 2"
+    assert (await h.run("owner", "!admin listitems channel doomtp 3")).send == "channel Doomtp list limit is now 3"
+    assert (await h.run("owner", "!admin names chatter alice 2")).send == "chatter Alice variable limit is now 2"
     assert await h.store.limits_for("chatter", "400") == Limits(names_per_space=2)
     assert "whole number" in ((await h.run("owner", "!admin names default 1KB")).send or "")
     assert "at most 10000" in ((await h.run("owner", "!admin listitems default 20000")).send or "")

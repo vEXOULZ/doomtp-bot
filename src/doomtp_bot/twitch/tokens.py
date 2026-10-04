@@ -33,9 +33,7 @@ class TokenStore:
 
     async def broadcasters(self) -> list[StoredToken]:
         """Every broadcaster token, to hand to the Twitch client when it starts."""
-        async with await self.conn.execute(
-            "SELECT * FROM oauth_tokens WHERE identity LIKE 'broadcaster:%'"
-        ) as cur:
+        async with await self.conn.execute("SELECT * FROM oauth_tokens WHERE identity LIKE 'broadcaster:%'") as cur:
             return [_token(row) for row in await cur.fetchall()]
 
     async def forget(self, identity: str) -> bool:
@@ -44,9 +42,7 @@ class TokenStore:
         return bool(cur.rowcount)
 
     async def get(self, identity: str = BOT_IDENTITY) -> StoredToken | None:
-        async with await self.conn.execute(
-            "SELECT * FROM oauth_tokens WHERE identity = %s", (identity,)
-        ) as cur:
+        async with await self.conn.execute("SELECT * FROM oauth_tokens WHERE identity = %s", (identity,)) as cur:
             row = await cur.fetchone()
         return _token(row) if row is not None else None
 
@@ -82,9 +78,7 @@ class TokenStore:
                 ),
             )
 
-    async def update_refreshed(
-        self, user_id: str, access_token: str, refresh_token: str, expires_in: int
-    ) -> None:
+    async def update_refreshed(self, user_id: str, access_token: str, refresh_token: str, expires_in: int) -> None:
         now = now_ms()
         async with transaction(self.conn):
             await self.conn.execute(

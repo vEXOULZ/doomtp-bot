@@ -143,7 +143,7 @@ async def test_entries_are_stored_audited_and_applied(service: FilterService, db
     added = await service.add(channel_id=CHANNEL, pattern="bad", actor_user_id="300", via="chat")
     assert service.apply(CHANNEL, "you bad person") == ("you *** person", ["bad"])
 
-    async with await dbs.bot.execute("SELECT action, target FROM audit_log") as cur:
+    async with await dbs.bot.execute("SELECT action, target FROM public.audit_log") as cur:
         assert [tuple(r.values()) for r in await cur.fetchall()] == [("filter.add", "bad")]
 
     assert await service.set_enabled(

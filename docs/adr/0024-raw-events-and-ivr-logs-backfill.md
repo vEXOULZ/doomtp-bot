@@ -1,6 +1,7 @@
 # ADR-0024: Keep every event as Twitch sent it, and backfill older gaps from logs.ivr.fi
 
-**Status:** Accepted — 2026-09-28; amended 2026-09-29 (the migration in §1; §5)
+**Status:** Accepted — 2026-09-28; amended 2026-09-29 (the migration in §1; §5, three times; §4:
+logs.ivr.fi is the only provider, see ADR-0008's amendment)
 **Date:** 2026-09-28
 **Deciders:** Project owner
 
@@ -20,7 +21,7 @@ Two things now want more than we keep:
   later.
 - **Backfill** only reaches as far back as recent-messages does: at most 800 lines, recent ones only
   (ADR-0008). A gap older than that, or longer, stays open. **logs.ivr.fi** keeps whole days of chat
-  for many channels, this one included.
+  for many channels, this one included. *(2026-09-29: it has replaced recent-messages, see §4.)*
 
 ### Service facts (logs.ivr.fi, checked 2026-09-28)
 
@@ -133,43 +134,60 @@ never mixed into it. Each looked-up value records where it came from.
 - **Cheermote tiers** are computed from the bits and Twitch's published tier thresholds.
 - The **moderator and reason** of a backfilled timeout are not recoverable, and stay empty.
 
-### 4. logs.ivr.fi as a second history provider
+### 4. logs.ivr.fi as the history provider
 
-- **`IvrLogsProvider`** implements `HistoryProvider` (ADR-0008), which gains an upper bound
-  (`before_ms`) so a provider can be asked for exactly a gap. It asks
-  `/channelid/{id}?from=&to=&ndjson=true` for the gap's range and returns the `raw` lines, which go
-  through the existing `parse_line` and `to_events`.
-- **Order:** recent-messages first. ivr.fi is asked only for the part of a gap recent-messages could not
-  fill — older than its reach, or past its 800 lines.
-- **Self-imposed limits,** since the service publishes none:
-  - at most **one request every 10 seconds**, and **200 a day**;
-  - only the range a job asks for (§5), never whole days or a whole channel;
-  - a `User-Agent` naming the bot and where to reach its owner;
-  - on 429 or 5xx, back off exponentially, and stop for the day after three failures in a row;
-  - never ask for a range already fetched.
-- **Completeness:** `backfill_runs` gains a `provider` column. A gap ivr.fi filled is **filled but not
-  `complete`**: its log has its own holes and opt-outs, and we cannot tell them from a quiet channel.
-  `/log/coverage` reports the provider with each backfill run.
-- **Consent:** as with recent-messages (ADR-0008 item 3), backfill from ivr.fi is per channel, opt-in,
-  and the `!backfill` prompt names the service.
-- **Config:** `IVR_LOGS_URL`. Empty turns the provider off.
+*(2026-09-29: first written as a second provider, after recent-messages. It is now the only one;
+recent-messages is gone, see ADR-0008's amendment.)*
+
+- **`IvrLogsProvider`** implements `HistoryProvider` (ADR-0008), asked by channel id for a range
+  (`from_ms` inclusive, `to_ms` exclusive) with `limit` and `offset`. It asks
+  `/channelid/{id}?from=&to=&raw=true` and returns the IRC lines, oldest first, which go through the
+  existing `parse_line` and `to_events`. `GET /channels` (cached for 6 hours) tells a channel it doesn't
+  log (`channel_not_logged`) from a range with no chat, since both answer 404.
+- **Self-imposed limits,** since the service publishes none. The owner chose generous ones, with backoff:
+  - at most **one request every 10 seconds**, and **200 a day** (UTC);
+  - only the gaps a job asks for (§5), never whole days or a whole channel;
+  - a `User-Agent` naming the bot and its repository;
+  - on 429, 5xx or a network error, wait 30 s, then 2 min, and after three failures in a row ask nothing
+    more until the next day;
+  - never ask for lines already fetched: `backfill_runs.reached_ms` records the newest line stored for a
+    gap a fill was stopped in, and the next fill resumes there.
+- **Completeness:** `backfill_runs` records the `provider`. A gap is `complete` once the service's last
+  page for it came back short. Its log has its own holes and opt-outs, which we cannot tell from a quiet
+  channel, so `complete` means "the service had nothing more". `/log/coverage` reports the provider with
+  each backfill run.
+- **Consent:** per channel, on for a new channel since 2026-09-30 (ADR-0008), and the `!backfill` prompt names the service.
+- **Config:** `IVR_LOGS_URL`, default `https://logs.ivr.fi`.
 
 ### 5. Backfill runs as queued jobs, which can also be started by hand
 
 Today a backfill runs only at startup, inline, for every open gap. With a rate-limited second provider
 a backfill can take minutes or days, so it becomes a **job in a queue**:
 
-- **`chatlog.backfill_jobs`**: the channel, the range (`from_ms`, `to_ms`), who asked (`startup`, a
-  chatter or an API caller), when, and the state: `queued`, `running`, `done`, `failed` or
-  `cancelled`, with what it fetched and stored, whether the range is `complete`, and any error.
-- **One worker** takes the oldest queued job, fills its range (recent-messages, then ivr.fi for what
-  that could not reach, §4) and records a `backfill_runs` row per provider, as today. It wakes when a
-  job is queued. A job still `running` when the bot stops goes back to `queued` at startup, and a job
-  that has spent the day's ivr.fi budget goes back to `queued` until the next day.
-- **Startup** queues a job for each open gap instead of filling it inline. A range already queued or
-  running is not queued again.
+- **`chatlog.backfill_jobs`**: the channel, the kind (`gaps` or `range`), the range (`from_ms`, `to_ms`),
+  who asked (`startup`, a chatter or an API caller), when, and the state: `queued`, `running`, `done`,
+  `failed` or `cancelled`, with what it fetched and stored, whether the range is `complete`, and any error.
+- **One job per channel for its gaps.** A job per gap meant a request per gap, and a gap older than the
+  service's history was queued at every startup, for good. Instead:
+  - a **`gaps`** job looks up the channel's open gaps when it runs, and fills them oldest first, **each
+    with its own requests**, from 5 s before it starts to its end, paged by `offset` until a page comes
+    back short. Gaps can lie months apart, and the chat between them is in the live log already. Its range
+    only says what was open when it was queued. *(2026-09-29: with recent-messages, one request spanned
+    all the gaps, paged back in time, and a gap older than that service's day of history was recorded
+    `out_of_reach` and no longer counted as open. Those gaps are open again, for ivr.fi to fill.)*
+  - a channel has **at most one `gaps` job waiting**: startup, a reconnect and `!backfill gaps` join it
+    (its range widens) instead of queueing another;
+  - a gap stays open until a run fills it completely. An error stops the job, and the gaps after it are
+    recorded with the same error, without being asked for;
+  - a **`range`** job is one asked for by hand, and is filled the same way; the same range can be queued
+    or running only once.
+- **One worker** takes the oldest queued job, fills its range (§4) and records a `backfill_runs` row per
+  gap. It wakes when a job is queued. A job still `running` when the bot stops goes back to `queued` at
+  startup. When the provider pauses (the day's budget is spent, or three failures in a row), the job goes
+  back to `queued` with the `paused` error, and the worker waits until the time the provider gave.
+- **Startup** queues the channel's `gaps` job instead of filling gaps inline.
 - **By hand**, in the channel, by the broadcaster:
-  - `!backfill gaps` queues every open gap;
+  - `!backfill gaps` queues the channel's `gaps` job, or names the one already waiting;
   - `!backfill <duration>`, e.g. `!backfill 6h`, queues the range from that long ago until now;
   - `!backfill queue` lists the channel's queued and running jobs;
   - `!backfill cancel <id>` cancels a queued job.
@@ -177,7 +195,8 @@ a backfill can take minutes or days, so it becomes a **job in a queue**:
   `!backfill`, `!backfill on` and `!backfill off` keep their meaning.
 - **API** (`admin` area, like the setting itself): `GET /channels/{login}/backfill` lists the
   channel's jobs; `POST /channels/{login}/backfill` queues `{"from_ms", "to_ms"}` or `{"gaps": true}`;
-  `DELETE /channels/{login}/backfill/{job_id}` cancels a queued job. The admin page is a doomtp-web
+  `DELETE /channels/{login}/backfill/{job_id}` cancels a queued job. `{"gaps": true}` answers the
+  waiting `gaps` job when there is one, and no job when no gap is open. The admin page is a doomtp-web
   change on top of this.
 - **Consent** does not change: a channel with backfill off can queue nothing.
 - A range asked for by hand can overlap the live log; message ids keep a message from being stored
@@ -201,8 +220,9 @@ and missing fields become guesses stored as if Twitch had sent them. A mistake i
 written into history.
 
 ### Option D: backfill only from recent-messages
-**Pros:** no second third-party service. **Cons:** any gap longer or older than recent-messages reaches
-stays open for good.
+**Pros:** designed for this. **Cons:** any gap longer or older than recent-messages reaches (about a day,
+800 lines) stays open for good. It was what the bot first ran, and why a February range came back empty;
+ivr.fi replaced it (ADR-0008's amendment).
 
 ## Consequences
 
@@ -224,15 +244,35 @@ stays open for good.
    the other rows as `legacy`.
 2. [x] Capture the EventSub `event` JSON in the adapter and store it for live messages, notifications
    and moderation events.
-3. [ ] `chatlog/events.py`: the one reader from `eventsub`, `irc` and `legacy` to the EventSub shape,
-   with golden tests from real recent-messages and ivr.fi lines; `/log` built from it.
-4. [ ] Enrichment on backfill: the emote cache and lookups, mention resolution by time, cheermote tiers.
-5. [ ] `IvrLogsProvider`, the `before_ms` bound, the self-imposed limits, and running it after
-   recent-messages for what that could not fill.
+3. [x] `chatlog/events.py`: the one reader from `eventsub`, `irc` and `legacy` to the EventSub shape,
+   with golden tests from real recent-messages and ivr.fi lines; `/log` built from it. *(2026-09-29:
+   `history/irc_convert.py` turns a PRIVMSG into `channel.chat.message`, a USERNOTICE into
+   `channel.chat.notification` (the notice's object by EventSub's field names, the `msg-param-*` tags it
+   has no field for under `irc` by their IRC names) and CLEARMSG/CLEARCHAT into the moderation events.
+   Golden tests use ivr.fi lines. `/log` reads every entry from `raw`, so a message entry now also has
+   `color` and `reply_parent_user`, and a chat notice's `detail` uses EventSub's names, e.g. `sub_tier`
+   and `is_prime`.)*
+4. [x] Enrichment on backfill: the emote cache and lookups, mention resolution by time, cheermote tiers.
+   *(2026-09-29: `history/enrich.py`. Emotes: the channel's EventSub rows, then Helix channel and global
+   emotes, then the CDN, cached in `emotes`; one the CDN can't answer for is asked again next fill.
+   Mentions: the reply's parent, then someone who spoke earlier in the fill, then `user_names` nearest
+   the time, then Helix for a valid login. Cheermotes in a message with bits: prefixes and tiers from
+   Helix. A failed lookup leaves the value out and never stops the fill. Notice text is not enriched.)*
+5. [x] `IvrLogsProvider` and the self-imposed limits. *(2026-09-29: the only provider; recent-messages
+   removed. `backfill_runs.reached_ms` resumes a stopped fill, and old `out_of_reach` gaps are open
+   again.)*
 6. [ ] Check whether ivr.fi logs `CLEARCHAT` and `CLEARMSG` for this channel, and contact its
-   maintainers about the integration. **Do this before enabling it for a real channel.**
-7. [ ] The `!backfill` prompt, the admin page and the channels API name ivr.fi and set it per channel.
-8. [ ] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
-   later: see the migration in §1).
+   maintainers about the integration. **Do this before enabling it for a real channel.** *(2026-09-29:
+   checked. It logs `CLEARCHAT`: a day of #forsen had 292, every one a timeout or ban that converts with
+   its `ban-duration`. It does not log `CLEARMSG`: none in 100,000 lines of that day, nor in two months
+   of #vexoulz. So a backfilled message a moderator deleted is not marked deleted. Contacting the
+   maintainers is still open, for the owner.)*
+7. [x] The `!backfill` prompt, the admin page and the channels API name ivr.fi and set it per channel.
+   *(2026-09-29: the prompt names `IVR_LOGS_URL`; the per-channel setting is `history_backfill`, which
+   the admin page and the channels API already set.)*
+8. [x] With item 3, drop the columns that moved into `raw` and make `raw` required (not one release
+   later: see the migration in §1). *(2026-09-29: chatlog revision 0006. Search reads the display name
+   and the bot's badge seed reads its badges from `raw`; downgrade refills the columns from `raw` where
+   it is EventSub-shaped.)*
 9. [x] The backfill queue (§5): `backfill_jobs`, the worker, startup queueing, the `!backfill`
    subcommands and the API.

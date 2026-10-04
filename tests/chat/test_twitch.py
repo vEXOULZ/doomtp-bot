@@ -74,14 +74,19 @@ def test_map_chat_message() -> None:
     assert mapping.chat_message(fake_chat_message(chatter=user("999", "doomtp_bot")), bot_id="999").is_self
 
 
+def test_a_gif_fragment_keeps_its_url() -> None:
+    url = "https://media1.giphy.com/media/Xcif4OzprDr4PZ7jY0/giphy.gif"
+    gif = NS(type="gif", text="[Cat GIF]", mention=None, emote=None, cheermote=None, gif=NS(url=url))
+    event = mapping.chat_message(fake_chat_message(fragments=[gif]), bot_id=None)
+    assert event.fragments == ({"type": "gif", "text": "[Cat GIF]", "gif": {"url": url}},)
+
+
 def test_map_moderation_and_notification() -> None:
     deleted = mapping.message_deleted(
         NS(broadcaster=user("100", "c"), user=user("400", "a"), message_id="m1", timestamp=WHEN)
     )
     assert (deleted.message_id, deleted.target_user_id) == ("m1", "400")
-    cleared = mapping.user_messages_cleared(
-        NS(broadcaster=user("100", "c"), user=user("400", "a"), timestamp=None)
-    )
+    cleared = mapping.user_messages_cleared(NS(broadcaster=user("100", "c"), user=user("400", "a"), timestamp=None))
     assert cleared.target_user_id == "400" and cleared.at > 0
     raid = NS(user=user("500", "raider"), viewer_count=42, profile_image=None)
     note = mapping.chat_notification(
@@ -259,9 +264,7 @@ async def test_oauth_flow_stores_token_and_notifies(dbs: Databases) -> None:
 
 
 async def test_oauth_rejects_missing_chat_scopes(dbs: Databases) -> None:
-    auth = TwitchAuth(
-        client_id="cid", redirect_uri="r", tokens=TokenStore(dbs.bot), http=FakeOAuthHttp(["user:bot"])
-    )
+    auth = TwitchAuth(client_id="cid", redirect_uri="r", tokens=TokenStore(dbs.bot), http=FakeOAuthHttp(["user:bot"]))
     state = parse_qs(urlsplit(auth.login_url()).query)["state"][0]
     with pytest.raises(OAuthError, match="user:read:chat"):
         await auth.complete("code", state)
@@ -269,9 +272,7 @@ async def test_oauth_rejects_missing_chat_scopes(dbs: Databases) -> None:
 
 async def test_oauth_rejects_wrong_account(dbs: Databases) -> None:
     tokens = TokenStore(dbs.bot)
-    auth = TwitchAuth(
-        client_id="cid", redirect_uri="r", tokens=tokens, http=FakeOAuthHttp(), expected_bot_id="123"
-    )
+    auth = TwitchAuth(client_id="cid", redirect_uri="r", tokens=tokens, http=FakeOAuthHttp(), expected_bot_id="123")
     state = parse_qs(urlsplit(auth.login_url()).query)["state"][0]
     with pytest.raises(OAuthError, match="sign in as the bot account"):
         await auth.complete("code", state)
@@ -291,9 +292,7 @@ async def test_auth_routes(dbs: Databases) -> None:
         assert ok.status_code == 200 and "doomtp_bot" in ok.text
 
     unconfigured = create_app(HealthRegistry())
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=unconfigured), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=unconfigured), base_url="http://test") as client:
         assert (await client.get("/auth/login")).status_code == 503
 
 
@@ -401,9 +400,7 @@ async def test_what_comes_of_subscribing_with_a_broadcaster_token() -> None:
 
     happy = FakeSubscriptions()
     service.client = happy  # type: ignore[assignment]
-    assert await service.subscribe_broadcaster("100", {"chat", "redemptions", "bits"}) == (
-        BroadcasterEvents()
-    )
+    assert await service.subscribe_broadcaster("100", {"chat", "redemptions", "bits"}) == (BroadcasterEvents())
     assert happy.made == [
         ("channel.channel_points_custom_reward_redemption.add", "100"),
         ("channel.cheer", "100"),
@@ -411,9 +408,7 @@ async def test_what_comes_of_subscribing_with_a_broadcaster_token() -> None:
 
     service.client = FakeSubscriptions(RuntimeError("HTTPException: 401 Unauthorized"))  # type: ignore[assignment]
     refused = await service.subscribe_broadcaster("100", {"redemptions"})
-    assert refused == BroadcasterEvents(
-        ("channel.channel_points_custom_reward_redemption.add",), unauthorized=True
-    )
+    assert refused == BroadcasterEvents(("channel.channel_points_custom_reward_redemption.add",), unauthorized=True)
 
     service.client = FakeSubscriptions(RuntimeError("409 Conflict: subscription already exists"))  # type: ignore[assignment]
     assert await service.subscribe_broadcaster("100", {"bits"}) == BroadcasterEvents()

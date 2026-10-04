@@ -77,9 +77,7 @@ class Harness:
             channel = dataclasses.replace(channel, prefix=prefix)
         elif channel.prefix == DEFAULT_PREFIX:  # these tests type the ASCII sign, unless one was set
             channel = dataclasses.replace(channel, prefix="!")
-        return self.runtime.make_context(
-            channel=channel, invoker=self.chatter(who), rng=random.Random(1), **ctx_kwargs
-        )
+        return self.runtime.make_context(channel=channel, invoker=self.chatter(who), rng=random.Random(1), **ctx_kwargs)
 
     async def say(self, who: str, text: str, **ctx_kwargs: Any) -> RunReport | None:
         return await self.runtime.run(text, self.context(who, **ctx_kwargs))
@@ -90,7 +88,7 @@ class Harness:
         return report.send
 
     async def audit_actions(self) -> list[str]:
-        async with await self.dbs.bot.execute("SELECT action FROM audit_log ORDER BY id") as cur:
+        async with await self.dbs.bot.execute("SELECT action FROM public.audit_log ORDER BY id") as cur:
             return [r["action"] for r in await cur.fetchall()]
 
 
@@ -104,9 +102,7 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = await policy_with_channels(dbs.bot, bot_owner_ids=frozenset({OWNER_ID}), clock=clock)
     registry: CommandRegistry = builtin_registry()
     registry.extend((dice, caps, ping))
-    runtime = Runtime(
-        registry, policy=policy, callbacks=policy, resolve_user=resolve_user, services={"policy": policy}
-    )
+    runtime = Runtime(registry, policy=policy, callbacks=policy, resolve_user=resolve_user, services={"policy": policy})
     yield Harness(dbs, policy, runtime, clock)
 
 
@@ -124,14 +120,10 @@ async def test_custom_role_membership_and_expiry(h: Harness) -> None:
     actor = Actor(CHANNEL_ID)
     await h.policy.mutate(lambda r: r.ensure_channel(CHANNEL_ID, CHANNEL_LOGIN, actor))
     role_id = await h.policy.mutate(lambda r: r.create_role(CHANNEL_ID, "ambassador", 50, actor))
-    await h.policy.mutate(
-        lambda r: r.add_member(role_id, CHANNEL_ID, "ambassador", "400", "viewer", None, actor)
-    )  # type: ignore[arg-type]
+    await h.policy.mutate(lambda r: r.add_member(role_id, CHANNEL_ID, "ambassador", "400", "viewer", None, actor))  # type: ignore[arg-type]
     assert h.chatter("viewer").rank == 50 and "ambassador" in h.chatter("viewer").roles
     expired = int(time.time() * 1000) - 1
-    await h.policy.mutate(
-        lambda r: r.add_member(role_id, CHANNEL_ID, "ambassador", "400", "viewer", expired, actor)
-    )  # type: ignore[arg-type]
+    await h.policy.mutate(lambda r: r.add_member(role_id, CHANNEL_ID, "ambassador", "400", "viewer", expired, actor))  # type: ignore[arg-type]
     assert h.chatter("viewer").rank == 0
 
 
@@ -164,10 +156,7 @@ async def test_unknown_required_role_fails_closed(h: Harness) -> None:
 
 
 async def test_mods_cannot_change_admin_command_permissions(h: Harness) -> None:
-    assert (
-        await h.reply("mod", "!perm set role everyone")
-        == "only bot admins can change admin command permissions"
-    )
+    assert await h.reply("mod", "!perm set role everyone") == "only bot admins can change admin command permissions"
 
 
 async def test_role_grant_rules(h: Harness) -> None:
@@ -202,25 +191,16 @@ async def test_module_and_command_toggles(h: Harness) -> None:
     assert await h.reply("mod", "!cmd enable dice") == "dice enabled"
     assert await h.reply("viewer", "!dice") == "rolled"
     assert await h.reply("mod", "!module disable core") == "core can't be turned off"
-    assert (
-        await h.reply("mod", "!module disable games global") == "only bot admins can change global settings"
-    )
+    assert await h.reply("mod", "!module disable games global") == "only bot admins can change global settings"
     assert await h.reply("owner", "!module disable games global") == "games disabled everywhere"
     h.clock.now += 100
     report = await h.say("viewer", "!dice")
-    assert (
-        report is not None and report.result.code == Code.UNKNOWN
-    )  # global kill switch beats channel enable
+    assert report is not None and report.result.code == Code.UNKNOWN  # global kill switch beats channel enable
 
 
 async def test_help_lists_only_runnable_commands(h: Harness) -> None:
     viewer_help = await h.reply("viewer", "!help")
-    assert (
-        viewer_help is not None
-        and "ping" in viewer_help
-        and "role" not in viewer_help
-        and "true" not in viewer_help
-    )
+    assert viewer_help is not None and "ping" in viewer_help and "role" not in viewer_help and "true" not in viewer_help
     h.clock.now += 100
     mod_help = await h.reply("mod", "!help")
     assert mod_help is not None and "role" in mod_help and "admin" not in mod_help
@@ -247,9 +227,7 @@ async def test_help_takes_a_name_with_any_form_of_the_emoji_sign(h: Harness, sav
 
 
 @pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
-async def test_admin_commands_take_a_name_with_any_form_of_the_emoji_sign(
-    h: Harness, saved: str, typed: str
-) -> None:
+async def test_admin_commands_take_a_name_with_any_form_of_the_emoji_sign(h: Harness, saved: str, typed: str) -> None:
     report = await h.say("mod", f'{saved}perm show "{typed}ping"', prefix=saved)
     assert report is not None and report.result.code == 0 and report.send is not None
     assert report.send.startswith("ping: requires ")
@@ -400,9 +378,7 @@ async def test_sentinels_cannot_be_restricted_or_cooled_down(h: Harness) -> None
     assert await h.reply("mod", "!module disable core") == "core can't be turned off"
     h.clock.now += 100
     # Even a rule written straight to the database doesn't apply to a sentinel.
-    await h.policy.mutate(
-        lambda repo: repo.set_cooldown(CHANNEL_ID, "true", "everyone", 600, 600, Actor("2", "chat"))
-    )
+    await h.policy.mutate(lambda repo: repo.set_cooldown(CHANNEL_ID, "true", "everyone", 600, 600, Actor("2", "chat")))
     for _ in range(2):
         assert await h.reply("viewer", "!false || true") is None  # allowed, silent, never on cooldown
 
@@ -420,10 +396,7 @@ async def test_anyone_may_ignore_themselves_but_only_moderators_manage_the_list(
     assert h.policy.ignored_only_by_self(CHANNEL_ID, "400")
 
     await h.reply("mod", "!ignore add @viewer2")
-    assert (
-        await h.reply("viewer2", "!unignore me")
-        == "a moderator set that ignore; only a moderator can lift it"
-    )
+    assert await h.reply("viewer2", "!unignore me") == "a moderator set that ignore; only a moderator can lift it"
     assert await h.reply("viewer", "!unignore me") == "welcome back, Viewer"
     assert await h.reply("viewer", "!unignore me") == "you aren't ignored here"
     assert (await h.audit_actions())[-2:] == ["ignore.add", "ignore.remove"]

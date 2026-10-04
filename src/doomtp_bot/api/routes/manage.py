@@ -82,9 +82,7 @@ async def test_filter(request: Request, login: str, body: TextBody, caller: Call
 
 
 @router.post("/channels/{login}/triggers/test")
-async def test_listeners(
-    request: Request, login: str, body: TextBody, caller: Caller = READ
-) -> dict[str, Any]:
+async def test_listeners(request: Request, login: str, body: TextBody, caller: Caller = READ) -> dict[str, Any]:
     """Which listeners a chat line would set off, and what each would capture. Nothing runs."""
     settings = _channel(request, login)
     matched = _state(request, "triggers").listeners_matching(settings.channel_id, body.text)
@@ -148,9 +146,7 @@ async def create_role(request: Request, login: str, body: RoleBody, caller: Call
     settings, policy = _channel(request, login), _policy(request)
     name = body.name.lower()
     if not ROLE_NAME_RE.match(name) or name in BUILTIN_RANKS:
-        raise HTTPException(
-            status_code=400, detail="role names: lowercase letters, digits, _ (not a built-in role)"
-        )
+        raise HTTPException(status_code=400, detail="role names: lowercase letters, digits, _ (not a built-in role)")
     if name in policy.roles_in(settings.channel_id):
         raise HTTPException(status_code=409, detail=f"role {name} already exists")
     rank = caller.rank_in(policy, settings.login)
@@ -231,9 +227,7 @@ async def list_callbacks(request: Request, login: str, caller: Caller = READ) ->
     settings = _channel(request, login)
     found = _policy(request).callbacks_in(settings.channel_id)
     return {
-        "callbacks": [
-            {"scope": scope, "kind": kind, "expr": expr} for (scope, kind), expr in sorted(found.items())
-        ]
+        "callbacks": [{"scope": scope, "kind": kind, "expr": expr} for (scope, kind), expr in sorted(found.items())]
     }
 
 
@@ -249,9 +243,7 @@ async def set_callback(
     except ParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await policy.mutate(
-        lambda repo: repo.set_callback(
-            settings.channel_id, scope, kind, body.expr, SYNTAX_VERSION, caller.actor
-        )
+        lambda repo: repo.set_callback(settings.channel_id, scope, kind, body.expr, SYNTAX_VERSION, caller.actor)
     )
     return {"scope": scope, "kind": kind, "expr": body.expr}
 
@@ -304,9 +296,10 @@ async def _customecho(request: Request, settings: ChannelSettings, caller: Calle
     return ctx, key, current
 
 
+# ADR-0019
 @router.get("/channels/{login}/customecho")
 async def list_customecho(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """The channel's own wording for readout commands, by command (ADR-0019)."""
+    """The channel's own wording for readout commands, by command."""
     settings = _channel(request, login)
     _, _, current = await _customecho(request, settings, caller)
     found = current if isinstance(current, dict) else {}
@@ -329,9 +322,7 @@ async def set_customecho(
     _filter_check(request, settings.channel_id, template)
     ctx, key, current = await _customecho(request, settings, caller)
     if current is not MISSING and not isinstance(current, dict):
-        raise HTTPException(
-            status_code=409, detail="channel.customecho isn't a map: delete that variable first"
-        )
+        raise HTTPException(status_code=409, detail="channel.customecho isn't a map: delete that variable first")
     await commit(request, ctx, WriteOp("set", key, template, (name,)))
     return {"command": name, "template": template}
 

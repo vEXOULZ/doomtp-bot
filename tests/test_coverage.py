@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from psycopg.types.json import Jsonb
 
 import scripts.coverage
 from doomtp_bot.storage.db import Databases, fetch_value
@@ -16,8 +17,7 @@ NOW = int(time.time() * 1000)
 
 async def _channel(dbs: Databases, channel_id: str, login: str, *, backfill: bool) -> None:
     await dbs.bot.execute(
-        "INSERT INTO channels (channel_id, login, history_backfill, added_at, updated_at)"
-        " VALUES (%s, %s, %s, %s, %s)",
+        "INSERT INTO channels (channel_id, login, history_backfill, added_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
         (channel_id, login, backfill, NOW, NOW),
     )
 
@@ -87,11 +87,12 @@ async def _queued_gap(dbs: Databases) -> int:
     await _channel(dbs, "c5", "erin", backfill=True)
     await _session(dbs, "c5", NOW - 5 * HOUR, NOW - 4 * HOUR, "shutdown")
     await _session(dbs, "c5", NOW - 3 * HOUR, None, "")
+    payload = {"channel_id": "c5", "kind": "gaps", "from_ms": NOW - 5 * HOUR, "to_ms": NOW - 3 * HOUR}
     job_id = await fetch_value(
-        dbs.chatlog,
-        "INSERT INTO backfill_jobs (channel_id, from_ms, to_ms, requested_by, requested_at)"
-        " VALUES ('c5', %s, %s, 'startup', %s) RETURNING id",
-        (NOW - 5 * HOUR, NOW - 3 * HOUR, NOW),
+        dbs.bot,
+        "INSERT INTO jobs.job_runs (kind, subject, state, payload, actor_kind, via)"
+        " VALUES ('chat_backfill', 'channel:c5', 'queued', %s, 'system', 'system') RETURNING id",
+        (Jsonb(payload),),
     )
     return int(job_id)
 

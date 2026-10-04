@@ -262,9 +262,7 @@ class HttpFetcher:
             async with asyncio.timeout(self.timeout_s):
                 return await self._follow(url)
         except TimeoutError:
-            raise HttpError(
-                "E_HTTP_TIMEOUT", f"{url.raw_host} didn't answer in time", host=url.raw_host
-            ) from None
+            raise HttpError("E_HTTP_TIMEOUT", f"{url.raw_host} didn't answer in time", host=url.raw_host) from None
 
     async def _follow(self, url: URL) -> Fetched:
         for _ in range(MAX_REDIRECTS + 1):
@@ -293,9 +291,7 @@ class HttpFetcher:
                         host=url.raw_host,
                     ) from None
                 log.info("http.unreachable", host=url.raw_host, error=type(exc).__name__)
-                raise HttpError(
-                    "E_HTTP_UNREACHABLE", f"couldn't reach {url.raw_host}", host=url.raw_host
-                ) from None
+                raise HttpError("E_HTTP_UNREACHABLE", f"couldn't reach {url.raw_host}", host=url.raw_host) from None
         raise HttpError("E_HTTP_NOT_ALLOWED", f"more than {MAX_REDIRECTS} redirects", host=url.raw_host)
 
     def _with_secret(self, url: URL, rule: HostRule) -> tuple[URL, dict[str, str]]:
@@ -310,20 +306,14 @@ class HttpFetcher:
     async def _read(self, url: URL, response: aiohttp.ClientResponse) -> Fetched:
         host = url.raw_host or ""
         if not 200 <= response.status < 300:
-            raise HttpError(
-                "E_HTTP_STATUS", f"{host} answered {response.status}", host=host, status=response.status
-            )
+            raise HttpError("E_HTTP_STATUS", f"{host} answered {response.status}", host=host, status=response.status)
         if (response.content_length or 0) > self.max_bytes:
-            raise HttpError(
-                "E_HTTP_TOO_BIG", f"{host}'s answer is over {self.max_bytes // 1024} KB", host=host
-            )
+            raise HttpError("E_HTTP_TOO_BIG", f"{host}'s answer is over {self.max_bytes // 1024} KB", host=host)
         body = bytearray()
         async for chunk in response.content.iter_chunked(16 * 1024):
             body += chunk
             if len(body) > self.max_bytes:
-                raise HttpError(
-                    "E_HTTP_TOO_BIG", f"{host}'s answer is over {self.max_bytes // 1024} KB", host=host
-                )
+                raise HttpError("E_HTTP_TOO_BIG", f"{host}'s answer is over {self.max_bytes // 1024} KB", host=host)
         try:
             value = json.loads(body.decode(response.get_encoding() if response.charset else "utf-8"))
         except (ValueError, LookupError):

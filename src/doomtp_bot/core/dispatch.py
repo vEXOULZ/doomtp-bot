@@ -137,9 +137,7 @@ class Dispatcher:
         prefix = settings.prefix if settings else DEFAULT_PREFIX
         is_command = looks_like_command(msg.text, prefix, msg.reply_mentions)
         if settings is None or settings.log_enabled:
-            await self.writer.message(
-                msg, is_command=is_command
-            )  # logged first, always — including ignored users
+            await self.writer.message(msg, is_command=is_command)  # logged first, always — including ignored users
         if self.activity is not None and not msg.is_self:
             self.activity.saw_message(msg.channel_id)
         if msg.is_self:
@@ -150,9 +148,7 @@ class Dispatcher:
             return
         if self.policy.is_ignored(msg.channel_id, msg.user_id):
             # Someone who ignored themselves can still take it back; nobody else gets past (§5.4).
-            if is_unignore_me(msg.text, prefix) and self.policy.ignored_only_by_self(
-                msg.channel_id, msg.user_id
-            ):
+            if is_unignore_me(msg.text, prefix) and self.policy.ignored_only_by_self(msg.channel_id, msg.user_id):
                 self._spawn(self._run(msg), f"run-{msg.message_id}")
             return
         if self.automod is not None:  # architecture §9.3: incoming chat the filter would block
@@ -251,9 +247,7 @@ class Dispatcher:
                 channel = self.policy.channel_info(
                     msg.channel_id, msg.channel_login, **live_fields(self.streams, msg.channel_id)
                 )
-                invalidated = self.moderation.checker(
-                    msg.channel_id, msg.message_id, msg.user_id, msg.sent_at
-                )
+                invalidated = self.moderation.checker(msg.channel_id, msg.message_id, msg.user_id, msg.sent_at)
                 ctx = self.runtime.make_context(
                     channel=channel,
                     invoker=chatter,

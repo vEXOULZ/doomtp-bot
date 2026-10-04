@@ -35,9 +35,7 @@ def test_bot_badges_follow_the_latest_message() -> None:
     assert badges.may_link("1")
     badges.saw("1", (Badge("subscriber", "3"),))  # the VIP was taken away
     assert not badges.may_link("1")
-    badges.load(
-        [("2", json.dumps([{"set_id": "moderator", "id": "1", "info": ""}])), ("3", None), ("4", "{bad")]
-    )
+    badges.load([("2", json.dumps([{"set_id": "moderator", "id": "1", "info": ""}])), ("3", None), ("4", "{bad")])
     assert badges.may_link("2") and not badges.may_link("3") and not badges.may_link("4")
 
 
@@ -49,9 +47,9 @@ async def test_latest_badges_reads_the_newest_message_per_channel(dbs: Databases
     ]
     for message_id, channel_id, badge, at in rows:
         await dbs.chatlog.execute(
-            "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, badges, sent_at,"
-            " received_at, is_self) VALUES (%s, %s, '9', 'bot', 'hi', %s, %s, %s, true)",
-            (message_id, channel_id, json.dumps([{"set_id": badge, "id": "1"}]), at, at),
+            "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+            " received_at, is_self) VALUES (%s, %s, '9', 'bot', 'hi', %s, 'eventsub', %s, %s, true)",
+            (message_id, channel_id, json.dumps({"badges": [{"set_id": badge, "id": "1"}]}), at, at),
         )
     badges = BotBadges()
     badges.load(await latest_badges(dbs.chatlog, "9"))

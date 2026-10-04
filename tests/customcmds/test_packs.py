@@ -277,7 +277,7 @@ async def test_pack_writes_are_audited_with_the_source_they_came_from(h: Harness
     await h.say("alice", "!cc pack create cards")
 
     async with await h.dbs.bot.execute(
-        "SELECT action, via FROM audit_log WHERE action LIKE 'pack.%%' ORDER BY id"
+        "SELECT action, via FROM public.audit_log WHERE action LIKE 'pack.%%' ORDER BY id"
     ) as cur:
         rows = [(r["action"], r["via"]) for r in await cur.fetchall()]
     assert rows == [

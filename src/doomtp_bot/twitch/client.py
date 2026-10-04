@@ -142,9 +142,7 @@ class _BotClient(twitchio.Client):
     """TwitchIO client wired to our token store and event sink."""
 
     def __init__(self, service: TwitchService, *, client_id: str, client_secret: str, bot_id: str) -> None:
-        super().__init__(
-            client_id=client_id, client_secret=client_secret, bot_id=bot_id, fetch_client_user=False
-        )
+        super().__init__(client_id=client_id, client_secret=client_secret, bot_id=bot_id, fetch_client_user=False)
         self.service = service
 
     async def load_tokens(self, path: str | None = None, /) -> None:
@@ -321,9 +319,7 @@ class TwitchService:
                 )
             except Exception as exc:
                 failed.append(subscription.type)
-                log.warning(
-                    "twitch.subscribe_failed", channel=channel_id, type=subscription.type, error=repr(exc)
-                )
+                log.warning("twitch.subscribe_failed", channel=channel_id, type=subscription.type, error=repr(exc))
         if not failed:
             self._subscribed.add(channel_id)
         return failed
@@ -373,9 +369,7 @@ class TwitchService:
                 try:
                     await self.client.delete_websocket_subscription(sub_id, force=True)
                 except Exception as exc:
-                    log.warning(
-                        "twitch.unsubscribe_failed", channel=channel_id, type=sub.type, error=repr(exc)
-                    )
+                    log.warning("twitch.unsubscribe_failed", channel=channel_id, type=sub.type, error=repr(exc))
 
     # ── Helix ───────────────────────────────────────────────────────────────
     async def send_chat(self, channel_id: str, text: str, reply_to: str | None) -> SendResult:
@@ -383,9 +377,7 @@ class TwitchService:
             return SendResult(None, "not_connected")
         channel = self.client.create_partialuser(channel_id)
         try:
-            sent = await channel.send_message(
-                text, self.bot_id, token_for=self.bot_id, reply_to_message_id=reply_to
-            )
+            sent = await channel.send_message(text, self.bot_id, token_for=self.bot_id, reply_to_message_id=reply_to)
         except twitchio.HTTPException as exc:
             # Send Chat Message answers 403 when "the sender is not permitted to send chat messages to
             # the broadcaster's chat room": a ban. Anything else stays an ordinary failure.
@@ -454,17 +446,13 @@ class TwitchService:
         except Exception as exc:
             # No token for the broadcaster, most likely: the channel was never connected.
             log.warning("twitch.action_failed", action=what, channel=channel_id, error=repr(exc))
-            return "Twitch didn't take it" + (
-                "" if as_bot else ": is the channel connected at /auth/connect?"
-            )
+            return "Twitch didn't take it" + ("" if as_bot else ": is the channel connected at /auth/connect?")
         return None
 
     async def ban_user(self, channel_id: str, user_id: str, reason: str) -> str | None:
         return await self._act(
             "ban",
-            lambda c: c.ban_user(
-                moderator=self.bot_id, user=user_id, reason=reason or None, token_for=self.bot_id
-            ),
+            lambda c: c.ban_user(moderator=self.bot_id, user=user_id, reason=reason or None, token_for=self.bot_id),
             channel_id,
         )
 
@@ -479,18 +467,14 @@ class TwitchService:
     async def warn_user(self, channel_id: str, user_id: str, reason: str) -> str | None:
         return await self._act(
             "warn",
-            lambda c: c.warn_user(
-                moderator=self.bot_id, user_id=user_id, reason=reason, token_for=self.bot_id
-            ),
+            lambda c: c.warn_user(moderator=self.bot_id, user_id=user_id, reason=reason, token_for=self.bot_id),
             channel_id,
         )
 
     async def announce(self, channel_id: str, text: str, color: str | None) -> str | None:
         return await self._act(
             "announce",
-            lambda c: c.send_announcement(
-                moderator=self.bot_id, message=text, color=color, token_for=self.bot_id
-            ),
+            lambda c: c.send_announcement(moderator=self.bot_id, message=text, color=color, token_for=self.bot_id),
             channel_id,
         )
 
@@ -511,9 +495,7 @@ class TwitchService:
     async def shield_mode(self, channel_id: str, active: bool) -> str | None:
         return await self._act(
             "shield",
-            lambda c: c.update_shield_mode_status(
-                moderator=self.bot_id, active=active, token_for=self.bot_id
-            ),
+            lambda c: c.update_shield_mode_status(moderator=self.bot_id, active=active, token_for=self.bot_id),
             channel_id,
         )
 
@@ -575,9 +557,7 @@ class TwitchService:
         )
 
     async def start_raid(self, channel_id: str, to_user_id: str) -> str | None:
-        return await self._act(
-            "raid", lambda c: c.start_raid(to_broadcaster=to_user_id), channel_id, as_bot=False
-        )
+        return await self._act("raid", lambda c: c.start_raid(to_broadcaster=to_user_id), channel_id, as_bot=False)
 
     async def fetch_live(self, channel_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
         """Helix `Get Streams` for up to 100 channels (ADR-0007). Raises if the request fails."""
@@ -625,6 +605,55 @@ class TwitchService:
             return []
         return sorted(upcoming, key=lambda s: s["start"])
 
+    async def fetch_emotes(self, channel_id: str) -> list[dict[str, Any]]:
+        """The channel's own emotes and the global ones from Helix, as {id, set_id, owner_id, formats}, for
+        backfill's enrichment (ADR-0024 §3). A channel's own emotes are its own; Helix names no set or owner
+        for a global emote. Raises if a request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        found: list[dict[str, Any]] = [
+            {"id": e.id, "set_id": e.set_id, "owner_id": channel_id, "formats": list(e.format)}
+            for e in await self.client.create_partialuser(channel_id).fetch_channel_emotes()
+        ]
+        found += [
+            {"id": e.id, "set_id": None, "owner_id": None, "formats": list(e.format)}
+            for e in await self.client.fetch_emotes()
+        ]
+        return found
+
+    async def fetch_badges(self, channel_id: str) -> dict[str, list[dict[str, Any]]]:
+        """The channel's chat badge sets and the global ones from Helix, as Helix shapes them
+        (`{set_id, versions: [{id, image_url_1x, image_url_2x, image_url_4x, title}]}`), for the web's chat
+        log to draw a chatter's badges. Raises if a request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+
+        def sets(badges: Sequence[Any]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "set_id": b.set_id,
+                    "versions": [
+                        {"id": v.id, "image_url_1x": v.image_url_1x, "image_url_2x": v.image_url_2x,
+                         "image_url_4x": v.image_url_4x, "title": v.title}
+                        for v in b.versions
+                    ],
+                }
+                for b in badges
+            ]  # fmt: skip
+
+        channel = await self.client.create_partialuser(channel_id).fetch_badges()
+        return {"channel": sets(channel), "global": sets(await self.client.fetch_badges())}
+
+    async def fetch_cheermotes(self, channel_id: str) -> dict[str, list[int]]:
+        """The cheermote prefixes usable in the channel, lower case, each with its tiers' minimum bits in
+        ascending order. Raises if the request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        return {
+            c.prefix.lower(): sorted(t.min_bits for t in c.tiers)
+            for c in await self.client.fetch_cheermotes(broadcaster_id=channel_id)
+        }
+
     async def try_moderator_subscription(self, channel_id: str) -> bool:
         """Subscribe to `channel.follow`, which only a moderator may. Success *is* the mod check.
 
@@ -635,9 +664,7 @@ class TwitchService:
             return False
         try:
             await self.client.subscribe_websocket(
-                eventsub.ChannelFollowSubscription(
-                    broadcaster_user_id=channel_id, moderator_user_id=self.bot_id
-                ),
+                eventsub.ChannelFollowSubscription(broadcaster_user_id=channel_id, moderator_user_id=self.bot_id),
                 token_for=self.bot_id,
             )
         except Exception as exc:

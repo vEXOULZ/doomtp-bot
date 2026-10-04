@@ -255,11 +255,7 @@ class PolicyService:
         merged.setdefault("moderator", Cooldown(0, 0))
         rank = self.effective_rank(ctx)
         candidates = sorted(
-            (
-                (r, name, rule)
-                for name, rule in merged.items()
-                if (r := self.rank_of(channel_id, name)) is not None
-            ),
+            ((r, name, rule) for name, rule in merged.items() if (r := self.rank_of(channel_id, name)) is not None),
             key=lambda c: (-c[0], c[1]),
         )
         for role_rank, name, rule in candidates:
@@ -305,9 +301,7 @@ class PolicyService:
             return Decision(False, Code.UNKNOWN, "disabled", {"command": spec.name})
         missing = set(spec.requires) - set(ctx.channel.capabilities)
         if missing:
-            return Decision(
-                False, Code.UNKNOWN, "unavailable", {"command": spec.name, "missing": sorted(missing)}
-            )
+            return Decision(False, Code.UNKNOWN, "unavailable", {"command": spec.name, "missing": sorted(missing)})
         return self.permission(ctx, spec)
 
     def check(self, ctx: ExecContext, spec: CommandSpec) -> Decision:
@@ -337,9 +331,7 @@ class PolicyService:
         """The bot admins added with `!admin add`; the owners (`BOT_OWNER_IDS`) are `owners`."""
         return self._snapshot.global_admins
 
-    def callback_expr(
-        self, ctx: ExecContext, command: str | None, module: str | None, kind: str
-    ) -> str | None:
+    def callback_expr(self, ctx: ExecContext, command: str | None, module: str | None, kind: str) -> str | None:
         """Find a callback (command → module → channel, then the same globally) and apply its rate limit."""
         scopes = [
             s
@@ -363,9 +355,7 @@ class PolicyService:
         if now - self._callback_sent.get(key, -CALLBACK_RATE_LIMIT_S) < CALLBACK_RATE_LIMIT_S:
             return None
         if len(self._callback_sent) >= CALLBACK_PRUNE_AT:
-            self._callback_sent = {
-                k: t for k, t in self._callback_sent.items() if now - t < CALLBACK_RATE_LIMIT_S
-            }
+            self._callback_sent = {k: t for k, t in self._callback_sent.items() if now - t < CALLBACK_RATE_LIMIT_S}
         self._callback_sent[key] = now
         return expr
 

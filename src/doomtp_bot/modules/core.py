@@ -79,9 +79,7 @@ def _said(value: Any) -> Result:
             "Succeeds if the expression is true, fails with code 1 if it is false. The data is its value. "
             "Falsy: false, 0, empty text, [] and {}. Text is read like an argument, so the text false is false."
         ),
-        params=(
-            Param("1+", "value", required=True, description="An expression, e.g. {channel.deaths} > 10"),
-        ),
+        params=(Param("1+", "value", required=True, description="An expression, e.g. {channel.deaths} > 10"),),
         examples=(Example("{sign}check {channel.deaths ?? 0} > 10 && echo rough day", "rough day"),),
     )
 )

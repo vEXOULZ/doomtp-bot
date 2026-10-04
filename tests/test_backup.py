@@ -70,8 +70,8 @@ def test_the_client_major_is_read_from_its_version_line(line: str, major: int) -
 async def test_a_dump_can_be_restored(tmp_path: Path, committed_database: tuple[str, Databases]) -> None:
     dsn, dbs = committed_database
     await dbs.chatlog.execute(
-        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, sent_at, received_at)"
-        " VALUES ('m1', 'c1', 'u1', 'alice', 'hello', 1, 1)"
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('m1', 'c1', 'u1', 'alice', 'hello', '{}', 'legacy', 1, 1)"
     )
 
     written = backup_schema(dsn, "chatlog", tmp_path / "backups")
@@ -88,14 +88,20 @@ async def test_a_dump_can_be_restored(tmp_path: Path, committed_database: tuple[
 
 
 @needs_pg_dump
-async def test_each_schema_is_dumped_separately(
-    tmp_path: Path, committed_database: tuple[str, Databases]
-) -> None:
-    """ADR-0003 split state from the log so their retention could differ; that survives the port."""
+async def test_each_schema_is_dumped_separately(tmp_path: Path, committed_database: tuple[str, Databases]) -> None:
+    """ADR-0003 split state from the log so their retention could differ; that survives the port. The audit
+    log, in vex-platform's `public.audit_log` (ADR-0027), is a dump of its own."""
     dsn, _ = committed_database
     assert run(dsn, tmp_path, keep=7) == 0
     dumped = sorted(p.name.split("-")[0] for p in tmp_path.iterdir())  # noqa: ASYNC240 — as above
-    assert dumped == ["bot", "chatlog"]
+    assert dumped == ["audit", "bot", "chatlog"]
+    (audit,) = tmp_path.glob("audit-*.dump")  # noqa: ASYNC240 — as above
+    listing = subprocess.run(  # noqa: ASYNC221 — as above
+        [shutil.which("pg_restore") or "pg_restore", "--list", str(audit)],
+        capture_output=True,
+        encoding="utf-8",
+    )
+    assert "TABLE public audit_log" in listing.stdout and "job_runs" not in listing.stdout
 
 
 def test_an_unreachable_database_is_a_failure_not_a_crash(tmp_path: Path) -> None:
@@ -104,7 +110,7 @@ def test_an_unreachable_database_is_a_failure_not_a_crash(tmp_path: Path) -> Non
         with pytest.raises(BackupError, match="not installed"):
             backup_schema(dsn, "bot", tmp_path)
         return
-    assert run(dsn, tmp_path, keep=7) == 2  # both schemas failed, and it said so rather than raising
+    assert run(dsn, tmp_path, keep=7) == 3  # every dump failed, and it said so rather than raising
     assert list(tmp_path.iterdir()) == []  # no half-written file left looking like a backup
 
 

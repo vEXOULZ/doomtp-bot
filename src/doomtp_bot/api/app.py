@@ -7,8 +7,10 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from vex_platform.jobs import JobRuntime
 
 from doomtp_bot import __version__
+from doomtp_bot.api import v2
 from doomtp_bot.api.routes import auth, bot, commands, data, health, language, manage, session, site
 from doomtp_bot.api.sessions import LOCAL_NETWORKS, AdminAuth, LoginLimiter, ReadLimiter, parse_networks
 from doomtp_bot.core.health import HealthRegistry
@@ -27,7 +29,9 @@ def create_app(
     services: dict[str, Any] | None = None,
     admin_password: str | None = None,
     admin_password_networks: str = LOCAL_NETWORKS,
+    jobs: JobRuntime | None = None,
 ) -> FastAPI:
+    """With `jobs`, the job runtime, the app also serves /api/v2 (ADR-0027)."""
     app = FastAPI(title="doomtp-bot", version=__version__, docs_url="/docs", redoc_url=None)
     app.state.health = health_registry
     app.state.twitch_auth = twitch_auth
@@ -48,5 +52,7 @@ def create_app(
     app.include_router(bot.router)
     app.include_router(session.router)
     app.include_router(site.router)
+    if jobs is not None:
+        v2.mount(app, jobs)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

@@ -1,9 +1,9 @@
 [project]
 name = "doomtp-bot"
-version = "0.5.0"
+version = "0.8.1"
 description = "Multi-channel Twitch chat bot with a composable command language"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "twitchio>=3,<4",
     "aiohttp>=3.9",
@@ -16,6 +16,9 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "structlog>=24.1",
+    # Shared job runtime, /api/v2 conventions and audit log with twitch-archive (ADR-0027). A tarball, since
+    # the image has no git.
+    "vex-platform @ https://github.com/vEXOULZ/vex-platform/archive/refs/tags/v0.6.0.tar.gz",
     # Moderators write regexes that run on every chat line; `re` can't be stopped once it backtracks.
     "regex>=2024.11.6",
     # Windows has no system timezone database, and cron schedules run in the channel's own timezone.
@@ -41,6 +44,10 @@ doomtp-bot = "doomtp_bot.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+# vex-platform is a tarball URL, not a PyPI release (ADR-0027).
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/doomtp_bot"]
 
@@ -54,12 +61,12 @@ asyncio_mode = "auto"
 xfail_strict = true
 
 [tool.ruff]
-line-length = 110
-target-version = "py312"
+extend = ".conventions/ruff.toml"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM"]
-ignore = ["E501"]  # line length is enforced by `ruff format`; long docstrings/comments are allowed
+extend-select = ["W", "ASYNC", "SIM"]
+# Long SQL literals and docstrings read better unwrapped; the formatter still wraps code at 120.
+ignore = ["E501"]
 
 [tool.ruff.format]
 # ruff formats fenced Python in Markdown; docs/ shows illustrative, hand-aligned code that isn't ours to
@@ -67,12 +74,15 @@ ignore = ["E501"]  # line length is enforced by `ruff format`; long docstrings/c
 exclude = ["*.md"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
+strict = true
 packages = ["doomtp_bot"]
 mypy_path = "src"
-ignore_missing_imports = true
-warn_unused_ignores = true
+
+[tool.uv]
+required-version = ">=0.5"
 
 [[tool.mypy.overrides]]
-module = ["doomtp_bot.lang.*", "doomtp_bot.runtime.*", "doomtp_bot.core.*"]
-strict = true
+# No type information: vex-platform v0.6.0 ships no py.typed.
+module = ["vex_platform.*"]
+ignore_missing_imports = true

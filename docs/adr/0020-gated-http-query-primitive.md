@@ -8,12 +8,12 @@
 
 ADR-0019 left `weather` and similar commands waiting for a way to read a web API from the language, and
 asked for this ADR before any code. Today the only outbound HTTP the bot makes is its own: Helix, the
-recent-messages service (ADR-0008) and Twitch sign-in. None of those takes a URL from a user.
+logs.ivr.fi history service (ADR-0008) and Twitch sign-in. None of those takes a URL from a user.
 
 A command that fetches a URL someone typed or stored is the riskiest thing the language could offer:
 
 - **SSRF.** The bot runs next to Postgres, its own API and whatever else is on the host's network. A
-  URL that resolves to `127.0.0.1`, `10.0.0.5`, `169.254.169.254` or `[::1]` must never be fetched,
+  URL that resolves to `127.0.0.1`, `10.0.0.5`, `169.254.169.254` or `[::1]` must never be fetched,  <!-- conventions:allow-infra -->
   including through redirects and DNS answers that change between the check and the connect.
 - **Abuse of third parties.** A popular channel's command could turn chat into a load generator against
   a site that never agreed to it.

@@ -101,9 +101,7 @@ STARTER: tuple[Derived, ...] = (
         summary="How long the stream has been live",
         body=(
             "ifelse {$channel.live} ( "
-            + echo_or_custom(
-                "uptime", "{$channel.display} has been live for {$channel.uptime:human ?? a moment}"
-            )
+            + echo_or_custom("uptime", "{$channel.display} has been live for {$channel.uptime:human ?? a moment}")
             + " ) ( echo {$channel.display} isn't live right now )"
         ),
     ),
@@ -246,9 +244,7 @@ def check_core() -> None:
         check_sentinel_body(derived.name, body, registry, names)
 
 
-async def install(
-    conn: Connection, *, owner_user_id: str, owner_login: str, dry_run: bool = False
-) -> list[str]:
+async def install(conn: Connection, *, owner_user_id: str, owner_login: str, dry_run: bool = False) -> list[str]:
     """Create or update `core` and the starter commands, and publish the starter pack globally. Returns
     what it did. Raises NotASentinel before changing anything if a `core` body isn't a sentinel's."""
     check_core()
@@ -257,9 +253,7 @@ async def install(
     commands = CustomCommandService(conn, filters=filters)
     packs = PackService(conn, commands)
     owner = (owner_user_id, owner_login)
-    done = await _install(
-        commands, packs, owner, CORE, CORE_SUMMARY, CORE_COMMANDS, CORE_VERSION, dry_run=dry_run
-    )
+    done = await _install(commands, packs, owner, CORE, CORE_SUMMARY, CORE_COMMANDS, CORE_VERSION, dry_run=dry_run)
     done += await _install(commands, packs, owner, PACK, PACK_SUMMARY, STARTER, None, dry_run=dry_run)
     done += await _install(commands, packs, owner, QUOTES_PACK, QUOTES_SUMMARY, QUOTES, None, dry_run=dry_run)
     return done
@@ -371,8 +365,7 @@ async def run(args: argparse.Namespace) -> int:
         owner = owner or await bot_account(conn)
         if owner is None:
             print(
-                "no bot account in this database yet: sign the bot in first, or pass --owner-id"
-                " and --owner-login",
+                "no bot account in this database yet: sign the bot in first, or pass --owner-id and --owner-login",
                 file=sys.stderr,
             )
             return 2
@@ -393,12 +386,8 @@ async def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)"
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--database-url", default=None, help="Postgres URL (default: the bot's own DATABASE_URL)")
     parser.add_argument("--owner-id", default="", help="Twitch user ID to own the commands")
     parser.add_argument("--owner-login", default="", help="that account's login")
     parser.add_argument("--dry-run", action="store_true", help="say what would change, change nothing")

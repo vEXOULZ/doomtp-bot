@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -111,12 +110,8 @@ async def test_store_commit_is_atomic_and_rolls_back(h: Harness) -> None:
 async def test_store_top_and_entries(h: Harness) -> None:
     ctx = h.ctx("mod")
     for user, points in (("400", 10), ("401", 30), ("402", 20)):
-        await h.store.commit(
-            [WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, user, name="points"), points)], ctx
-        )
-    await h.store.commit(
-        [WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, "403", name="points"), "lots")], ctx
-    )
+        await h.store.commit([WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, user, name="points"), points)], ctx)
+    await h.store.commit([WriteOp("set", VarKey("channel.chatter", CHANNEL_ID, "403", name="points"), "lots")], ctx)
     assert await h.store.top("channel.chatter", CHANNEL_ID, "", "points", 2) == [("401", 30), ("402", 20)]
 
 
@@ -207,9 +202,7 @@ async def test_grants_do_not_follow_the_published_name(h: Harness) -> None:
     granted = _actor_ctx(h, "foreign_pub")
     assert h.access.can_write(granted, "channel.chatter", "points") is True
 
-    other = h.ctx(
-        "alice", Context.BODY, publisher=Publisher("998", "other", command_id="cc_2", publication="pts")
-    )
+    other = h.ctx("alice", Context.BODY, publisher=Publisher("998", "other", command_id="cc_2", publication="pts"))
     assert h.access.can_write(other, "channel.chatter", "points") is False
 
 
@@ -223,13 +216,9 @@ async def test_store_operator_denied_for_viewer_on_channel(h: Harness) -> None:
 
 
 async def test_foreign_command_cannot_touch_invokers_chatter_vars(h: Harness) -> None:
-    report = await h.run(
-        "alice", "echo evil -> chatter.location", Context.BODY, publisher=Publisher("999", "mallory")
-    )
+    report = await h.run("alice", "echo evil -> chatter.location", Context.BODY, publisher=Publisher("999", "mallory"))
     assert report.result.code == Code.DENIED
-    ok = await h.run(
-        "alice", "echo 3 -> publisher.chatter.save", Context.BODY, publisher=Publisher("999", "mallory")
-    )
+    ok = await h.run("alice", "echo 3 -> publisher.chatter.save", Context.BODY, publisher=Publisher("999", "mallory"))
     assert ok.result.ok and await h.value("publisher.chatter", "999", "400", name="save") == "3"
 
 
@@ -305,14 +294,11 @@ async def test_var_delete_own_and_admin_reset(h: Harness) -> None:
     refused = await h.run("bob", "!var del channel.chatter.points @alice")
     assert (refused.result.code, refused.send) == (Code.DENIED, None)  # silent denial (spec §6.6)
     assert refused.result.message == "you can't delete channel.chatter.points for Alice"
-    assert (
-        await h.reply("mod", "!var del channel.chatter.points @alice")
-        == "deleted channel.chatter.points for Alice"
-    )
+    assert await h.reply("mod", "!var del channel.chatter.points @alice") == "deleted channel.chatter.points for Alice"
     assert await h.value("channel.chatter", CHANNEL_ID, "400", name="points") is MISSING
     await h.reply("alice", "!var set chatter.location here")
     assert await h.reply("alice", "!var del chatter.location") == "deleted chatter.location"
-    async with await h.dbs.bot.execute("SELECT action, target FROM audit_log ORDER BY id") as cur:
+    async with await h.dbs.bot.execute("SELECT action, target FROM public.audit_log ORDER BY id") as cur:
         audited = [(r["action"], r["target"]) for r in await cur.fetchall()]
     assert ("variable.delete", "channel.chatter.points@400") in audited  # admin reset of another user's row
     assert all(not t.startswith("chatter.") for _, t in audited)  # own chatter writes aren't audited
@@ -332,8 +318,7 @@ async def test_channel_writes_audited_with_values(h: Harness) -> None:
     await h.reply("mod", "!var set channel.deaths 3")
     await h.reply("mod", "!var incr channel.deaths")
     async with await h.dbs.bot.execute(
-        "SELECT action, before, after FROM audit_log WHERE target = 'channel.deaths'"
+        "SELECT action, before, after FROM public.audit_log WHERE target = 'channel.deaths'"
     ) as cur:
         rows = [(r["action"], r["before"], r["after"]) for r in await cur.fetchall()]
-    assert rows == [("variable.set", None, "3"), ("variable.incr", "3", "4")]
-    assert json.loads(rows[1][2]) == 4
+    assert rows == [("variable.set", None, 3), ("variable.incr", 3, 4)]

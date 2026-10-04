@@ -63,9 +63,7 @@ class CommandRegistry:
         return command.spec.raw_tail_from if command.spec.raw_tail_from is not None else RawTail.NONE
 
 
-def command(
-    spec: CommandSpec, *, raw_tail_subcommands: Sequence[tuple[str, int]] = ()
-) -> Callable[[Handler], Command]:
+def command(spec: CommandSpec, *, raw_tail_subcommands: Sequence[tuple[str, int]] = ()) -> Callable[[Handler], Command]:
     """Decorator turning a handler into a registrable Command."""
 
     def wrap(handler: Handler) -> Command:

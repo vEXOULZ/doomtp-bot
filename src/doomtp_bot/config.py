@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     vexoulz_auth_client_id: str = "dtp"
     vexoulz_auth_client_secret: SecretStr | None = None
     vexoulz_auth_client_secret_file: Path | None = None
-    history_provider_url: str = "https://recent-messages.robotty.de/api/v2"
+    ivr_logs_url: str = "https://logs.ivr.fi"  # where chat history is backfilled from (ADR-0008)
 
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "console"

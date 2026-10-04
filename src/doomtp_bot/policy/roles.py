@@ -46,9 +46,7 @@ def roles_from_badges(badges: frozenset[str] | set[str]) -> set[str]:
     return {BADGE_ROLES[b] for b in badges if b in BADGE_ROLES}
 
 
-def can_manage_role(
-    actor_rank: int, role_rank: int, *, actor_is_broadcaster: bool, role_is_channel: bool
-) -> bool:
+def can_manage_role(actor_rank: int, role_rank: int, *, actor_is_broadcaster: bool, role_is_channel: bool) -> bool:
     """Grant rule: only roles ranked strictly below your own. The broadcaster manages all channel custom roles."""
     if actor_is_broadcaster and role_is_channel and CUSTOM_RANK_MIN <= role_rank <= CUSTOM_RANK_MAX:
         return True

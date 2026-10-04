@@ -73,9 +73,7 @@ def _channel(request: Request, login: str | None) -> Any:
     settings = policy.channel_by_login(login)
     if settings is not None:
         streams = getattr(request.app.state, "streams", None)
-        return policy.channel_info(
-            settings.channel_id, settings.login, **live_fields(streams, settings.channel_id)
-        )
+        return policy.channel_info(settings.channel_id, settings.login, **live_fields(streams, settings.channel_id))
     raise HTTPException(status_code=404, detail=f"unknown channel {login}")
 
 
@@ -101,9 +99,10 @@ def _spans(node: Node) -> list[dict[str, Any]]:
     ]
 
 
+# ADR-0011
 @router.post("/parse")
 async def parse_expression(request: Request, body: ParseRequest) -> dict[str, Any]:
-    """Parse text and return the AST or the first error, with its span (ADR-0011)."""
+    """Parse text and return the AST or the first error, with its span."""
     runtime = _runtime(request)
     channel = _channel(request, body.channel)
     context = Context(body.context)
@@ -152,14 +151,13 @@ async def chatter_for(request: Request, channel: Any, login: str, badges: frozen
     return policy.build_chatter(channel.id, user["id"], user["name"], user["display"], badges)
 
 
+# ADR-0011
 @router.get("/language")
 async def language(request: Request) -> dict[str, Any]:
-    """Everything the editor needs for autocomplete and hover docs (ADR-0011)."""
+    """Everything the editor needs for autocomplete and hover docs."""
     runtime = getattr(request.app.state, "runtime", None)
     raw_tail = (
-        {c.spec.name: c.spec.raw_tail_from for c in runtime.registry.all() if c.spec.raw_tail_from}
-        if runtime
-        else {}
+        {c.spec.name: c.spec.raw_tail_from for c in runtime.registry.all() if c.spec.raw_tail_from} if runtime else {}
     )
     if runtime:
         raw_tail.update(
@@ -189,9 +187,10 @@ async def language(request: Request) -> dict[str, Any]:
     }
 
 
+# architecture §4.2
 @router.get("/commands")
 async def commands(request: Request) -> dict[str, Any]:
-    """Every built-in command with its usage, parameters and examples (architecture §4.2)."""
+    """Every built-in command with its usage, parameters and examples."""
     runtime = _runtime(request)
     listing = []
     for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver):
@@ -221,8 +220,7 @@ async def commands(request: Request) -> dict[str, Any]:
                     for e in (ex.rendered(DEFAULT_PREFIX) for ex in spec.examples)
                 ],
                 "default_cooldowns": {
-                    role: {"tier_s": c.tier_s, "user_s": c.user_s}
-                    for role, c in spec.default_cooldowns.items()
+                    role: {"tier_s": c.tier_s, "user_s": c.user_s} for role, c in spec.default_cooldowns.items()
                 },
                 "toggleable": spec.toggleable,  # False: "always on", no channel can switch it off
                 "fixed_policy": spec.fixed_policy,  # no role and no cooldown to configure

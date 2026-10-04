@@ -19,13 +19,9 @@ from tests.customcmds.test_packs import OTHER_CHANNEL, Harness, h  # noqa: F401
 from tests.test_starter_pack import OWNER, _install
 
 
-async def _run(
-    harness: Harness, who: str, text: str, *, live: bool = False, channel: str = CHANNEL_ID
-) -> RunReport:
+async def _run(harness: Harness, who: str, text: str, *, live: bool = False, channel: str = CHANNEL_ID) -> RunReport:
     login = CHANNEL_LOGIN if channel == CHANNEL_ID else "other"
-    info = dataclasses.replace(
-        harness.policy.channel_info(channel, login), prefix="!", live=live, game="Doom"
-    )
+    info = dataclasses.replace(harness.policy.channel_info(channel, login), prefix="!", live=live, game="Doom")
     user = USERS[who]
     chatter = harness.policy.build_chatter(
         channel, user["id"], user["name"], user["display"], frozenset(BADGES.get(who, set()))
@@ -38,8 +34,7 @@ async def _run(
 async def _stored(harness: Harness, channel: str = CHANNEL_ID) -> dict[str, dict[str, str]]:
     value = await fetch_value(
         harness.dbs.bot,
-        "SELECT value FROM variables WHERE ns = 'publisher.channel' AND key1 = %s AND key2 = %s"
-        " AND name = 'quotes'",
+        "SELECT value FROM variables WHERE ns = 'publisher.channel' AND key1 = %s AND key2 = %s AND name = 'quotes'",
         (OWNER["id"], channel),
     )
     return {} if value is None else json.loads(value)
@@ -58,9 +53,7 @@ async def test_quotes_are_numbered_and_read_back(h: Harness) -> None:  # noqa: F
     assert (await _run(h, "mod", r"!quote add second \| one")).send == "added #2"
 
     first = await _run(h, "alice", "!quote 1")
-    assert first.send is not None and re.fullmatch(
-        r'#1: I meant   to do "that" \[Doom, \d{4}-\d\d-\d\d\]', first.send
-    )
+    assert first.send is not None and re.fullmatch(r'#1: I meant   to do "that" \[Doom, \d{4}-\d\d-\d\d\]', first.send)
     second = await _run(h, "alice", "!quote 2")  # not live when added: the date alone
     assert second.send is not None and re.fullmatch(r"#2: second \\\| one \[\d{4}-\d\d-\d\d\]", second.send)
     assert (await _run(h, "alice", "!quote")).send in (first.send, second.send)

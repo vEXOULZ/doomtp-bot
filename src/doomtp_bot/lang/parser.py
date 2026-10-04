@@ -49,9 +49,7 @@ MAX_EXPR_DEPTH = 32  # parentheses, brackets, unary operators and placeholders, 
 MAX_INT_DIGITS = 18
 MAX_NAME_CHARS = 32
 MAX_VAR_NAME_CHARS = 32
-DEFAULT_PREFIX = (
-    "\U0001f3dc"  # \ud83c\udfdc \u2014 the default command sign; channels change it with `prefix`
-)
+DEFAULT_PREFIX = "\U0001f3dc"  # \ud83c\udfdc \u2014 the default command sign; channels change it with `prefix`
 VARIATION_SELECTOR = "\ufe0f"  # emoji presentation selector, optional around an emoji prefix
 
 # The fields the bot supplies, read as `{$root.field}` (ADR-0018 item 5). Read-only, and never a variable.
@@ -66,8 +64,7 @@ BOT_FIELDS: dict[str, frozenset[str]] = {
 }
 # Roots a placeholder may start with, besides variables and `_`/`_N` (spec §2.7).
 REGISTERED_ROOTS = frozenset(
-    {"$" + root for root in BOT_FIELDS}
-    | {"arg", "args", "cmd", "event", "match", "cooldown", "denied", "run"}
+    {"$" + root for root in BOT_FIELDS} | {"arg", "args", "cmd", "event", "match", "cooldown", "denied", "run"}
 )
 # Roots whose dots walk a structure the bot defines, as deep as it goes.
 PATH_ROOTS = frozenset({"event", "match", "cooldown", "denied", "run", "cmd"})
@@ -241,9 +238,7 @@ def preprocess_line(text: str, reply_parent_login: str | Sequence[str] | None = 
 
 def looks_like_command(text: str, prefix: str, reply_parent_login: str | Sequence[str] | None = None) -> bool:
     """Cheap Line-context check (spec §2.1 step 4): would this chat message be parsed as a command?"""
-    return _Parser(
-        preprocess_line(text, reply_parent_login), ParserParams(prefix=prefix), Context.LINE
-    ).line_start()
+    return _Parser(preprocess_line(text, reply_parent_login), ParserParams(prefix=prefix), Context.LINE).line_start()
 
 
 def parse(text: str, context: Context, params: ParserParams) -> Node:
@@ -297,9 +292,7 @@ def parse_template(text: str, params: ParserParams | None = None) -> tuple[Part,
                 if isinstance(expr, Subst):
                     raise ParseError(ParseErrorCode.BAD_PLACEHOLDER, at, hint="a template can't run {!…}")
                 if isinstance(expr, Access) and expr.name == "template":
-                    raise ParseError(
-                        ParseErrorCode.BAD_PLACEHOLDER, at, hint="a template can't use :template"
-                    )
+                    raise ParseError(ParseErrorCode.BAD_PLACEHOLDER, at, hint="a template can't use :template")
             parts.append(ph)
         else:
             start = parser.pos
@@ -544,9 +537,7 @@ class _Parser:
         cond = self.word()
         self.require_operand("ifelse")
         if self.operator_at(self.pos) != "(":
-            raise self._error(
-                ParseErrorCode.EXPR_SYNTAX, hint="ifelse needs ( a command ) after its condition"
-            )
+            raise self._error(ParseErrorCode.EXPR_SYNTAX, hint="ifelse needs ( a command ) after its condition")
         then = self.group()
         save = self.pos
         if self.ws() and self.operator_at(self.pos) == "(":
@@ -583,12 +574,7 @@ class _Parser:
     def arg(self) -> tuple[Arg, ArgSource] | None:
         """Arg <- WS !OperatorToken Word    (with its source text, for `{arg.N+raw}`)"""
         save = self.pos
-        if (
-            self.ws()
-            and not self.eof()
-            and self.operator_at(self.pos) is None
-            and not self.subst_end(self.pos)
-        ):
+        if self.ws() and not self.eof() and self.operator_at(self.pos) is None and not self.subst_end(self.pos):
             start = self.pos
             word = self.word()
             if self.line and self.s[start : self.pos] in (">", ">>"):
@@ -619,9 +605,7 @@ class _Parser:
             after += 1
         if any(self.s.startswith(ns + ".", after) for ns in VAR_NAMESPACES):
             new = "->" if op == ">" else "-->"
-            raise self._error(
-                ParseErrorCode.UNEXPECTED_OPERATOR, at, hint=f"{op} is plain text now: store with {new}"
-            )
+            raise self._error(ParseErrorCode.UNEXPECTED_OPERATOR, at, hint=f"{op} is plain text now: store with {new}")
 
     def invocation(self) -> Invocation:
         """Invocation <- CmdPrefix? '@'? Name (ExprArgs / Arg* RawCheck)"""
@@ -796,9 +780,7 @@ class _Parser:
             self.in_subst -= 1
         self.opt_ws()
         if not self.s.startswith("}", self.pos):
-            raise self._error(
-                ParseErrorCode.BAD_PLACEHOLDER, start + 1, hint="{!…} runs one command and ends with }"
-            )
+            raise self._error(ParseErrorCode.BAD_PLACEHOLDER, start + 1, hint="{!…} runs one command and ends with }")
         self.pos += 1
         self.substs += 1
         return Subst(dataclasses.replace(inv, index=-self.substs))
@@ -810,9 +792,7 @@ class _Parser:
             return
         n, path = m.group(1), [p for p in m.group(2).split(".") if p]
         new = f"_{n}" + (
-            "".join(f".{p}" for p in path)
-            if all(p in RESULT_FIELDS for p in path)
-            else "".join(f"[{p}]" for p in path)
+            "".join(f".{p}" for p in path) if all(p in RESULT_FIELDS for p in path) else "".join(f"[{p}]" for p in path)
         )
         raise self._error(ParseErrorCode.BAD_PLACEHOLDER, start, hint=f"a result is {{{new}}} now")
 
@@ -1104,9 +1084,7 @@ class _Parser:
         whole, frac, exp = m.groups()
         if frac is None and exp is None:
             if len(whole.lstrip("0")) > MAX_INT_DIGITS:
-                raise self._error(
-                    ParseErrorCode.EXPR_SYNTAX, hint=f"numbers have at most {MAX_INT_DIGITS} digits"
-                )
+                raise self._error(ParseErrorCode.EXPR_SYNTAX, hint=f"numbers have at most {MAX_INT_DIGITS} digits")
             self.pos = m.end()
             return Lit(int(whole))
         value = float(m.group())
@@ -1143,11 +1121,7 @@ class _Parser:
     def _segments(self) -> list[str]:
         """('.' (Ident / Digits))*"""
         segments: list[str] = []
-        while (
-            self.s.startswith(".", self.pos)
-            and self.pos + 1 < self.n
-            and _is_ident_char(self.s[self.pos + 1])
-        ):
+        while self.s.startswith(".", self.pos) and self.pos + 1 < self.n and _is_ident_char(self.s[self.pos + 1]):
             self.pos += 1
             segments.append(self._ident())
         return segments
@@ -1202,14 +1176,10 @@ class _Parser:
         """ArgSeg <- '.' (Digits ('+raw' / '+' &End)? / Ident)    `{arg.1+1}` is a sum, `{arg.2+}` the rest."""
         m = re.compile(r"\.(?:(\d+)(\+raw(?!\w)|\+(?=[\s}:\])]|$))?|([A-Za-z_]\w*))").match(self.s, self.pos)
         if m is None:
-            raise self._error(
-                ParseErrorCode.BAD_PLACEHOLDER, start, hint="arg needs a number or name: {arg.1}"
-            )
+            raise self._error(ParseErrorCode.BAD_PLACEHOLDER, start, hint="arg needs a number or name: {arg.1}")
         self.pos = m.end()
         if self.s.startswith(".", self.pos):
-            raise self._error(
-                ParseErrorCode.BAD_PLACEHOLDER, start, hint="read inside a value with [ ]: {arg.1[key]}"
-            )
+            raise self._error(ParseErrorCode.BAD_PLACEHOLDER, start, hint="read inside a value with [ ]: {arg.1[key]}")
         return m.group()[1:]
 
     def _var_in_expr(self, start: int) -> VarRef:

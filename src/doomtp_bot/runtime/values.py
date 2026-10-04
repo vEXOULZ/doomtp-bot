@@ -147,11 +147,7 @@ async def convert(
             raise ConversionError("expected a whole number")
     elif type_name == "float":
         try:
-            converted = (
-                float(text)
-                if not isinstance(value, (int, float)) or isinstance(value, bool)
-                else float(value)
-            )
+            converted = float(text) if not isinstance(value, (int, float)) or isinstance(value, bool) else float(value)
         except ValueError as exc:
             raise ConversionError("expected a number") from exc
         if math.isnan(converted) or math.isinf(converted):
@@ -205,9 +201,7 @@ async def convert(
         except ValueError:
             converted = None
         if not isinstance(converted, kind):
-            raise ConversionError(
-                "expected a list like [1, 2]" if kind is list else 'expected a map like {"a": 1}'
-            )
+            raise ConversionError("expected a list like [1, 2]" if kind is list else 'expected a map like {"a": 1}')
         return converted
     elif type_name == "url":
         parts = urlsplit(text)

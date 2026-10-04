@@ -119,9 +119,7 @@ def check_value_cap(key: VarKey, size: int, limits: Limits) -> None:
 def check_quota(owner: tuple[str, str], used: int, grew: bool, limits: Limits) -> None:
     """A commit that leaves its owner over quota fails, unless it only shrank what was stored."""
     if grew and used > limits.quota_bytes:
-        raise VariableError(
-            f"{owner[0]} storage is full ({used} of {limits.quota_bytes} bytes)", ErrorCode.E_QUOTA
-        )
+        raise VariableError(f"{owner[0]} storage is full ({used} of {limits.quota_bytes} bytes)", ErrorCode.E_QUOTA)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,9 +144,7 @@ def key_for(ctx: ExecContext, namespace: str, name: str) -> VarKey:
     if "chatter" in namespace.split(".") and chatter is None:
         raise VariableError(f"{namespace}.{name} needs a chatter", ErrorCode.E_BAD_REFERENCE)
     if namespace.startswith("publisher") and owner is None:
-        raise VariableError(
-            f"{namespace}.{name} is only available inside custom commands", ErrorCode.E_BAD_REFERENCE
-        )
+        raise VariableError(f"{namespace}.{name} is only available inside custom commands", ErrorCode.E_BAD_REFERENCE)
     match namespace:
         case "chatter":
             return VarKey(namespace, chatter or "", name=name)
@@ -200,9 +196,7 @@ def apply_op(current: Any, op: WriteOp, limits: Limits) -> Any:
     return root
 
 
-def _apply_at(
-    container: Any, path: tuple[str | int, ...], op: WriteOp, creates: bool, limits: Limits
-) -> None:
+def _apply_at(container: Any, path: tuple[str | int, ...], op: WriteOp, creates: bool, limits: Limits) -> None:
     key, rest = path[0], path[1:]
     if isinstance(container, dict):
         name = str(key)
@@ -226,9 +220,7 @@ def _apply_at(
         else:
             container[position] = _apply_leaf(container[position], op, limits)
     else:
-        raise VariableError(
-            f"{op.label()}: can't go inside a value that isn't a map or list", ErrorCode.E_NOT_A_MAP
-        )
+        raise VariableError(f"{op.label()}: can't go inside a value that isn't a map or list", ErrorCode.E_NOT_A_MAP)
 
 
 def _position(key: str | int, items: list[Any], op: WriteOp) -> int:
@@ -236,9 +228,7 @@ def _position(key: str | int, items: list[Any], op: WriteOp) -> int:
     try:
         position = int(key)
     except ValueError:
-        raise VariableError(
-            f"{op.label()}: a list takes a number, not {key}", ErrorCode.E_NOT_A_MAP
-        ) from None
+        raise VariableError(f"{op.label()}: a list takes a number, not {key}", ErrorCode.E_NOT_A_MAP) from None
     if not -len(items) <= position < len(items):
         raise VariableError(f"{op.label()}: no item {position} (it has {len(items)})", ErrorCode.E_INDEX)
     return position
@@ -255,9 +245,7 @@ def _apply_leaf(current: Any, op: WriteOp, limits: Limits) -> Any:
         if not isinstance(current, list):
             raise VariableError(f"{op.label()} is not a list", ErrorCode.E_NOT_A_LIST)
         if len(current) >= limits.list_items:
-            raise VariableError(
-                f"{op.label()} is full (max {limits.list_items} items)", ErrorCode.E_LIST_FULL
-            )
+            raise VariableError(f"{op.label()} is full (max {limits.list_items} items)", ErrorCode.E_LIST_FULL)
         return [*current, op.value]
     if op.kind == "pop":
         if current is MISSING:
@@ -391,9 +379,7 @@ class DeclaredVariables:
     access policy governs those.
     """
 
-    def __init__(
-        self, session: VariableSession, command: str, reads: tuple[str, ...], writes: tuple[str, ...]
-    ) -> None:
+    def __init__(self, session: VariableSession, command: str, reads: tuple[str, ...], writes: tuple[str, ...]) -> None:
         self.session = session
         self.command = command
         self.reads = frozenset(reads) | frozenset(writes)  # a command reads what it is about to change

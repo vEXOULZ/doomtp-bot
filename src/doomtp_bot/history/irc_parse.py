@@ -1,4 +1,4 @@
-"""Parsing the IRC lines recent-messages returns (ADR-0008, RFC 2812 plus IRCv3 tags).
+"""Parsing the IRC lines logs.ivr.fi returns (ADR-0008, RFC 2812 plus IRCv3 tags).
 
 The service replays raw Twitch IRC, so this is a small, strict parser: tags, prefix, command, params.
 Tags arrive in any order and the trailing parameter may be missing, which the tests cover.

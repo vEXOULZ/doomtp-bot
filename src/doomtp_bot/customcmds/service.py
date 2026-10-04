@@ -222,9 +222,7 @@ class CustomCommandService:
         )
         return (self._publication(row), self._command(row)) if row else None
 
-    async def publication_in_scope(
-        self, channel_id: str, name: str
-    ) -> tuple[Publication, CustomCommand] | None:
+    async def publication_in_scope(self, channel_id: str, name: str) -> tuple[Publication, CustomCommand] | None:
         """This channel's publication, else one published globally (ADR-0012 derived commands)."""
         return await self.publication(channel_id, name) or await self.publication(GLOBAL, name)
 
@@ -239,8 +237,7 @@ class CustomCommandService:
 
     async def versions(self, command_id: str) -> list[tuple[int, str, int]]:
         async with await self.conn.execute(
-            "SELECT version, body, created_at FROM custom_command_versions"
-            " WHERE command_id = %s ORDER BY version DESC",
+            "SELECT version, body, created_at FROM custom_command_versions WHERE command_id = %s ORDER BY version DESC",
             (command_id,),
         ) as cur:
             return [(r["version"], r["body"], r["created_at"]) for r in await cur.fetchall()]
@@ -281,9 +278,7 @@ class CustomCommandService:
         filter and command sign apply to the body."""
         name = name.lower()
         if not NAME_RE.match(name):
-            raise CustomCommandError(
-                "command names: lowercase letters, digits, _ and -, up to 32, not only digits"
-            )
+            raise CustomCommandError("command names: lowercase letters, digits, _ and -, up to 32, not only digits")
         self.check_body(body, name, channel_id=channel_id, prefix=prefix)
         if await self.by_owner(owner_user_id, name) is not None:
             raise CustomCommandError(f"you already have a command named {name}")
@@ -350,9 +345,7 @@ class CustomCommandService:
                 "UPDATE custom_command_publications SET status = 'orphaned' WHERE command_id = %s",
                 (command.id,),
             )
-            await self.conn.execute(
-                "DELETE FROM publication_write_grants WHERE command_id = %s", (command.id,)
-            )
+            await self.conn.execute("DELETE FROM publication_write_grants WHERE command_id = %s", (command.id,))
             await self._audit(actor_via, command.owner_user_id, "cc.delete", command.id, command.name, None)
         await self._grants_changed()
         return affected
@@ -378,21 +371,15 @@ class CustomCommandService:
             )
             await self._audit(actor_via, command.owner_user_id, "cc.describe", command.id, None, summary)
 
-    async def set_visibility(
-        self, command: CustomCommand, shareable: bool, *, actor_via: str = "chat"
-    ) -> None:
+    async def set_visibility(self, command: CustomCommand, shareable: bool, *, actor_via: str = "chat") -> None:
         async with transaction(self.conn):
             await self.conn.execute(
                 "UPDATE custom_commands SET visibility = %s, updated_at = %s WHERE id = %s",
                 ("shareable" if shareable else "private", now_ms(), command.id),
             )
-            await self._audit(
-                actor_via, command.owner_user_id, "cc.share", command.id, None, {"shareable": shareable}
-            )
+            await self._audit(actor_via, command.owner_user_id, "cc.share", command.id, None, {"shareable": shareable})
 
-    async def link(
-        self, *, user_id: str, alias: str, command: CustomCommand, actor_via: str = "chat"
-    ) -> None:
+    async def link(self, *, user_id: str, alias: str, command: CustomCommand, actor_via: str = "chat") -> None:
         alias = alias.lower()
         if not NAME_RE.match(alias):
             raise CustomCommandError("aliases: lowercase letters, digits, _ and -, up to 32, not only digits")
@@ -426,9 +413,7 @@ class CustomCommandService:
     ) -> Publication:
         name = name.lower()
         if not NAME_RE.match(name):
-            raise CustomCommandError(
-                "published names: lowercase letters, digits, _ and -, up to 32, not only digits"
-            )
+            raise CustomCommandError("published names: lowercase letters, digits, _ and -, up to 32, not only digits")
         existing = await fetch_one(
             self.conn,
             "SELECT command_id FROM custom_command_publications WHERE channel_id = %s AND name = %s",
@@ -469,9 +454,7 @@ class CustomCommandService:
                 (status, channel_id, name.lower()),
             )
             if cur.rowcount:
-                await self._audit(
-                    actor_via, actor_user_id, f"cc.{status}", name, None, None, channel_id=channel_id
-                )
+                await self._audit(actor_via, actor_user_id, f"cc.{status}", name, None, None, channel_id=channel_id)
             return bool(cur.rowcount)
 
     async def unpublish(

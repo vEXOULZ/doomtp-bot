@@ -50,7 +50,5 @@ async def policy_with_channels(
     for channel_id, login in channels:
         await policy.mutate(lambda repo, c=channel_id, n=login: repo.ensure_channel(c, n, SETUP))
         if joined:
-            await policy.mutate(
-                lambda repo, c=channel_id: repo.set_channel_field(c, "status", "joined", SETUP)
-            )
+            await policy.mutate(lambda repo, c=channel_id: repo.set_channel_field(c, "status", "joined", SETUP))
     return policy

@@ -28,6 +28,9 @@ def _fragment(fragment: Any) -> dict[str, Any]:
         data["emote_id"] = fragment.emote.id
     if getattr(fragment, "cheermote", None) is not None:
         data["cheermote"] = {"prefix": fragment.cheermote.prefix, "bits": fragment.cheermote.bits}
+    # twitchio keeps only the GIF's URL, as an Asset; its id is in the raw event.
+    if getattr(fragment, "gif", None) is not None:
+        data["gif"] = {"url": fragment.gif.url}
     return data
 
 
@@ -166,9 +169,7 @@ def chat_notification(payload: Any) -> ChatNotification:
         payload={
             "system_message": payload.system_message,
             "text": payload.text,
-            "chatter": None
-            if payload.anonymous
-            else {"id": payload.chatter.id, "login": payload.chatter.name},
+            "chatter": None if payload.anonymous else {"id": payload.chatter.id, "login": payload.chatter.name},
             "detail": _plain(detail),
         },
         sent_at=_ms(payload.timestamp),
