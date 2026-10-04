@@ -176,7 +176,7 @@ async def test_the_bot_refuses_an_empty_database(empty_database: str) -> None:
 
 
 def test_heads_needs_no_database(capsys: pytest.CaptureFixture[str]) -> None:
-    """`deploy/rollback.sh` asks the target image this, without settings or a database."""
+    """`scripts/rollback.sh` asks the target image this, without settings or a database."""
     assert schema.cli(["heads"]) == 0
     assert capsys.readouterr().out.strip() == f"bot={schema.head('bot')} chatlog={schema.head('chatlog')}"
 

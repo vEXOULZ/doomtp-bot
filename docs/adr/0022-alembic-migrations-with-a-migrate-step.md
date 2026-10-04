@@ -44,7 +44,8 @@ can't be undone, so a rollback needs a restore.
 - **`deploy/rollback.sh <image>` rolls back.** It asks the target image for its heads (`doomtp-bot db
   heads`; an image from before this change is asked for its migration count instead). Then it takes a
   backup, downgrades with the *current* image, which is the only one that has the downgrade code, points
-  `BOT_IMAGE` at the target and starts it without the migrate step.
+  `BOT_IMAGE` at the target and starts it without the migrate step. *(2026-10-04)* Moved to
+  `scripts/rollback.sh` when `deploy/` went (ADR-0013).
 - **`doomtp-bot db`** is the command line: `upgrade`, `downgrade --bot REV --chatlog REV`, `current`,
   `heads`. It doesn't take the instance lock, so it can run while the bot is up.
 

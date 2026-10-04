@@ -750,13 +750,13 @@ flowchart LR
     ci -->|green| ghcr[("ghcr.io/owner/doomtp-bot<br/>:main and :sha")]
 
     subgraph guest["Proxmox guest — it pulls, nothing pushes to it"]
-        timer["systemd timer<br/>nightly"] --> upd["deploy/update.sh"]
+        timer["the server's deploy timer<br/>(not in this repo)"] --> upd["docker compose pull"]
         upd --> moved{"digest<br/>moved?"}
         moved -->|no| done["exit 0, nothing touched"]
         moved -->|yes| migrate["migrate step, new image<br/>db upgrade + starter pack (ADR-0022)"]
         migrate -->|failed| old["old bot keeps running"]
         migrate --> restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
-        restart --> cov["coverage check<br/>its exit code is the unit's"]
+        restart --> cov["coverage check<br/>its exit code is the deploy's"]
         pg[("postgres<br/>never restarted by an update")]
         migrate -.-> pg
     end
@@ -781,11 +781,12 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
   `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
   publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to
-  `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
-  hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
+  `main`; a timer on the server (the deploy tool is the server's, not this repo's; README step 9 lists its
+  steps) pulls, does nothing when the digest hasn't moved, runs the migrate step and restarts **the bot**
+  through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back is `deploy/rollback.sh <image>`: it backs up, downgrades the schema with the
+  chosen under. Rolling back is `scripts/rollback.sh <image>`: it backs up, downgrades the schema with the
   image running now (the only one that has the downgrade), pins `BOT_IMAGE` to the target and starts it
   without the migrate step (ADR-0022).
 - **What the image holds:** the locked dependency set and the installed package — static files,

@@ -25,7 +25,9 @@ guest, and what is allowed to reach into the homelab to put it there.
 - **A systemd timer runs `deploy/update.sh` nightly.** It pulls, does nothing when the digest hasn't
   moved, and otherwise restarts through compose — which sends `SIGTERM` and waits out
   `stop_grace_period`, so a deploy closes the log sessions instead of leaving a gap (ADR-0008). It then
-  runs the coverage check, whose exit code is the unit's.
+  runs the coverage check, whose exit code is the unit's. *(2026-10-04)* `deploy/update.sh` and its
+  timer are removed: the server's own deploy tool runs the same steps (pull, migrate step, restart the
+  bot, coverage check), and the README lists them. The rollback script is now `scripts/rollback.sh`.
 - **The one-shot tools ship in the image.** `scripts/` is copied into `/app/scripts` rather than
   bind-mounted from a checkout, so `coverage`, `backup` and `starter-pack` are the versions that were
   built, not whatever the tree beside them says today.
