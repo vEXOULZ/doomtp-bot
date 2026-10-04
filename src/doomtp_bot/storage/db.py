@@ -129,7 +129,7 @@ async def check_schema(conn: Connection, schema: str) -> str:
         )
     raise schema_module.SchemaMismatch(
         f"{schema} schema is at {revision}, which a newer build wrote; this build needs {expected}: "
-        "downgrade with the newer image first (deploy/rollback.sh)"
+        "downgrade with the newer image first (scripts/rollback.sh)"
     )
 
 

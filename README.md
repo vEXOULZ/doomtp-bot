@@ -402,26 +402,23 @@ docker compose up -d
 The bot token you stored in step 7 stays valid; nothing needs signing in again. Open
 `https://bot.example.com/admin/login` and sign in with Twitch as a bot owner, or with the password.
 
-### 9. Turn on unattended updates
+### 9. Keep it updated
+
+The repository ships no updater: run these from whatever schedules your deploys (a systemd timer, cron, a
+deploy tool). An update is four steps, in this order:
 
 ```bash
-sudo cp deploy/doomtp-bot-update.* /etc/systemd/system/ && sudo systemctl enable --now doomtp-bot-update.timer
+docker compose pull doomtp-bot
+docker compose run --rm migrate
+docker compose up -d doomtp-bot
+docker compose --profile tools run --rm coverage --wait 300
 ```
 
-Nightly it pulls, does nothing if the tag hasn't moved, and otherwise restarts through compose — which
-waits out the grace period from step 2 — then runs the coverage check, which waits up to five minutes for
-queued backfill jobs, and takes its exit code. So a failed unit means an unfilled gap in the chat log, not
-a failed deploy.
-
-```bash
-systemctl list-timers doomtp-bot-update
-```
-
-```bash
-sudo systemctl start doomtp-bot-update && journalctl -u doomtp-bot-update -n 20
-```
-
-That second command deploys now instead of waiting for tonight.
+Skip the rest when the pull didn't move the image. The migrate step runs from the new image before the bot
+is replaced, so a failed one leaves the old bot running (ADR-0022). `up -d doomtp-bot` restarts the bot
+alone — Postgres is never bounced for an update (ADR-0014) — and waits out the grace period from step 2.
+Give the bot a minute to queue its backfill jobs before the coverage check, which waits up to five minutes
+for them. A failed check means an unfilled gap in the chat log, not a failed deploy.
 
 ### 10. Back it up
 
@@ -444,22 +441,22 @@ not drive failures.
 | How often does it happen? | `curl -s localhost:8080/metrics` — counters in Prometheus text (ADR-0015); point a scraper on the LAN at it |
 | What is it doing? | `docker compose logs -f doomtp-bot` |
 | Did the log lose anything? | `docker compose --profile tools run --rm coverage --wait 300` |
-| Deploy now | `sudo systemctl start doomtp-bot-update` |
+| Deploy now | the four commands in step 9 |
 | Upgrade the schema and install `core` and the starter commands | `docker compose run --rm migrate` |
 | Where does the schema stand? | `docker compose run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
 
-To **roll back**, run `deploy/rollback.sh ghcr.io/<owner>/doomtp-bot:vX.Y.Z` (or any `:<sha>` tag). It takes
+To **roll back**, run `scripts/rollback.sh ghcr.io/<owner>/doomtp-bot:vX.Y.Z` (or any `:<sha>` tag). It takes
 a backup, downgrades the schema to what that image expects using the image running now, points `BOT_IMAGE`
-in `.env` at it and restarts the bot on it (ADR-0022). The update unit then stays on that tag until you
-change `BOT_IMAGE` back. A downgrade that drops a column drops its data, so the backup it took is the way
+in `.env` at it and restarts the bot on it (ADR-0022). Updates then stay on that tag until you change
+`BOT_IMAGE` back. A downgrade that drops a column drops its data, so the backup it took is the way
 back to that data. Releases are cut from `dev` into `main` (CONTRIBUTING.md, ADR-0021).
 
 An image from before ADR-0022 has no migrate step. After rolling back to one, start it with `up -d --no-deps
 doomtp-bot`, not a bare `up -d`, which would run the step and fail.
 
-Both scripts use `compose.yaml`. A server with an override file of its own lists both in `COMPOSE_FILE`
+The script uses `compose.yaml`. A server with an override file of its own lists both in `COMPOSE_FILE`
 in `.env` (`COMPOSE_FILE=compose.yaml:compose.local.yaml`),
-which the scripts and a bare `docker compose` both read, so a rollback keeps the override.
+which the script and a bare `docker compose` both read, so a rollback keeps the override.
 
 ### If something is wrong
 
@@ -467,7 +464,7 @@ which the scripts and a bare `docker compose` both read, so a rollback keeps the
 |---------|-------|
 | `up -d` tries to build | `COMPOSE_FILE` in `.env` names `compose.dev.yaml`, which is for development |
 | The bot logs `bot.schema_mismatch` and says to run `db upgrade` | It was started without the migrate step: `docker compose ... run --rm migrate`, then start it |
-| The bot logs `bot.schema_mismatch` and says a newer build wrote the schema | An older image was started on a newer schema: use `deploy/rollback.sh`, which downgrades first |
+| The bot logs `bot.schema_mismatch` and says a newer build wrote the schema | An older image was started on a newer schema: use `scripts/rollback.sh`, which downgrades first |
 | `migrate` fails and the bot isn't replaced | Working as intended: the old bot keeps running. `docker compose ... logs migrate` says why |
 | `denied` or `manifest unknown` on pull | The package path is wrong or private — GHCR paths are lowercase, and a private package needs `docker login ghcr.io` |
 | `/readyz` says the stored bot token is for another account | `TWITCH_BOT_ID` changed, or a token from before it was set is stored. Open `/auth/login` and sign in as the bot account |
@@ -478,7 +475,7 @@ which the scripts and a bare `docker compose` both read, so a rollback keeps the
 | The site loads, but `/admin` shows nothing and the API calls fail | The proxy sends the bot's paths to the site's files. Check the table in step 8 |
 | The browser can't reach `/auth/login` before step 8 | The tunnel dropped. The bot listens on `127.0.0.1` on the guest by design |
 | `chatlog.unclean_shutdown_detected` at startup | Something killed the bot instead of stopping it — revisit step 2 |
-| The update unit is failed but the bot is fine | That is the coverage check reporting a gap. `journalctl -u doomtp-bot-update` says which channel |
+| An update reports a failure but the bot is fine | That is the coverage check reporting a gap. Its output says which channel |
 
 ## Web site
 
@@ -561,7 +558,6 @@ src/doomtp_bot/
 tests/          pytest; tests/lang/corpus.yaml is the shared parser conformance corpus
                 and tests/fixtures/eventsub/ holds EventSub payloads recorded from Twitch
 web-editor/     the CodeMirror expression editor — npm, and the only Node in the repo
-scripts/        the one-shot tools: backup, coverage, starter pack, fixture recording
-deploy/         what a server needs: the update script and its systemd timer
+scripts/        the one-shot tools: backup, coverage, starter pack, fixture recording, rollback
 docs/           architecture, spec, ADRs, grammar
 ```

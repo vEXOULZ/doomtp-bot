@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Roll the bot back to an older image, schema included (ADR-0022):
 #
-#     deploy/rollback.sh ghcr.io/<owner>/doomtp-bot:0.1.0
+#     scripts/rollback.sh ghcr.io/<owner>/doomtp-bot:0.1.0
 #
-# Run it from the server, like update.sh. Only the image running now has the code to undo its own
+# Run it on the server, in the checkout that holds compose.yaml, .env and secrets/. Only the image running now has the code to undo its own
 # migrations, so it does the downgrade, after a backup; then BOT_IMAGE in .env points at the target and the
 # bot restarts on it without the migrate step. A downgrade that drops a column drops its data: the backup
 # is the way back to it.
@@ -16,7 +16,7 @@ COMPOSE_FILE=${COMPOSE_FILE:-$(sed -n 's/^COMPOSE_FILE=//p' .env | tail -1)}
 export COMPOSE_FILE=${COMPOSE_FILE:-compose.yaml}
 compose=(docker compose)
 
-target=${1:?usage: deploy/rollback.sh <image>}
+target=${1:?usage: scripts/rollback.sh <image>}
 current=${BOT_IMAGE:-$(sed -n 's/^BOT_IMAGE=//p' .env | tail -1)}
 : "${current:?set BOT_IMAGE in .env}"
 if [ "$target" = "$current" ]; then
@@ -51,4 +51,4 @@ else
 fi
 # --no-deps: no migrate step, which would only upgrade again (and an image from before ADR-0022 has none).
 BOT_IMAGE=$target "${compose[@]}" up -d --no-deps doomtp-bot
-echo "rolled back to $target. BOT_IMAGE in .env now names it, so update.sh stays there until you change it."
+echo "rolled back to $target. BOT_IMAGE in .env now names it, so a deploy of BOT_IMAGE stays there until you change it."
