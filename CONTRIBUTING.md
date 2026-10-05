@@ -35,10 +35,16 @@ Work integrates on `dev`, and `main` is what production runs. The `pre-commit` h
 made on `main`, `master`, `dev` or `develop`.
 
 - Feature and bugfix branches start from `dev`, and their pull requests target `dev`.
-- A release is a pull request from `dev` (or a `release/*` branch) into `main`, then a `vX.Y.Z` tag on
-  `main`.
-- A `hotfix/*` branch starts from `main` and merges into `main`; `main` then merges back into `dev` so
-  `dev` never loses it.
+- A release is a pull request into `main`, and it has to raise the version (`conventions / version`).
+  Start one from the **Actions → release → Run workflow** button: it works out the next version from
+  the Conventional Commits since the last tag (`feat` is a minor, `!` or `BREAKING CHANGE` a major,
+  anything else a patch; choose a bump to override), writes it on a `release/X-Y-Z` branch and opens
+  "Release vX.Y.Z" into `main`.
+- Merging the release pull request tags the merge commit `vX.Y.Z`, publishes the GitHub release, and
+  opens the pull request that brings `main` back into `dev`. Merge that one too.
+- A `hotfix/*` branch starts from `main`, raises the version (`conventions version set X.Y.Z`) and
+  merges into `main`; it is released the same way, and `main` then merges back into `dev` so `dev`
+  never loses it.
 - The `conventions / branch-name` check refuses any other pull request into `main`.
 
 ```bash
@@ -58,6 +64,9 @@ Every pull request runs:
 - **`conventions / check`:** the synced files match the version pinned in `.conventions.toml`, and the
   repo follows the conventions for its profile. A public repo is also checked for private
   infrastructure (addresses, server paths).
+- **`conventions / version`:** every file that carries the version (`pyproject.toml`, `uv.lock`,
+  `__version__`, `package.json`, `package-lock.json`) says the same. In a `flow = "dev"` repo a pull
+  request into `main` must also raise it, to a version with no tag yet.
 - **`ci / …`:** the repo's lint, tests and build, from the reusable workflows in
   [vEXOULZ/conventions](https://github.com/vEXOULZ/conventions).
 
@@ -92,35 +101,22 @@ gh pr merge --merge --delete-branch
 
 ## Releases
 
-Merging into `dev` deploys nothing. Production changes only when a release reaches `main`:
+Merging into `dev` deploys nothing. Production changes only when a release reaches `main`, and
+`.github/workflows/release.yml` does the steps (it needs the repository secret `RELEASE_TOKEN`):
 
-1. Bump the version on `dev` through a `release/x-y-z` pull request: `version` in `pyproject.toml` and
-   `__version__` in `src/doomtp_bot/__init__.py`.
-2. Open the release pull request from `dev` into `main` and merge it with a merge commit.
-
-   ```bash
-   gh pr create --base main --head dev --title "Release vX.Y.Z"
-   ```
-
-3. Tag it once the release pull request has merged, never before. CI builds the tag again, checks
-   that it matches the package version and publishes `:vX.Y.Z` beside `:main`. Check that the tag's
-   run passed: a tag on a `main` without the version bump publishes nothing, and then there's nothing
-   to roll back to (v0.2.0's tag did exactly that).
-
-   ```bash
-   gh release create vX.Y.Z --target main --generate-notes
-   ```
-
-4. Merge `main` back into `dev`. The release's merge commit exists only on `main`, and `main` accepts
-   a pull request only from a branch that is up to date with it, so without this the next release
-   pull request shows as out of date.
-
-   ```bash
-   gh pr create --base dev --head main --title "Bring release vX.Y.Z back into dev"
-   ```
-
-   Open it straight after the tag. If `dev` moves first, that pull request is out of date and can't be
-   updated, because its head is the protected `main`. Merge `main` into a branch cut from `dev` instead:
+1. **Actions → release → Run workflow** (or `gh workflow run release.yml -f bump=auto`). It works out
+   the next version from the commits since the last tag, writes it into `pyproject.toml`, `uv.lock` and
+   `src/doomtp_bot/__init__.py` on a `release/x-y-z` branch, and opens "Release vX.Y.Z" into `main`.
+   Set `bump` to `patch`, `minor` or `major` to override it.
+2. Merge that pull request with a merge commit. The `conventions / version` check has already made
+   sure the version went up.
+3. The `finish` job tags the merge commit `vX.Y.Z` and publishes the GitHub release. CI builds the
+   tag again and publishes `:vX.Y.Z` beside `:main`; check that the tag's run passed, because that
+   image is what a rollback needs.
+4. `finish` also opens "Bring release vX.Y.Z back into dev". Merge it straight away: the release's
+   merge commit exists only on `main`, and the next release pull request shows as out of date without
+   it. If `dev` moves first, that pull request can't be updated, because its head is the protected
+   `main`. Merge `main` into a branch cut from `dev` instead:
 
    ```bash
    git switch -c chore/back-merge-main origin/dev && git merge --no-ff origin/main
@@ -129,12 +125,14 @@ Merging into `dev` deploys nothing. Production changes only when a release reach
 To roll back, run `scripts/rollback.sh` on the server with the previous `:vX.Y.Z`, which downgrades the schema
 and pins `BOT_IMAGE` to it (README).
 
-**A hotfix** branches from `main` (`hotfix/…`), merges into `main`, and then `main` merges back into
-`dev` in a pull request of its own, so `dev` never loses the fix:
+**A hotfix** branches from `main` (`hotfix/…`), raises the version itself and merges into `main`:
 
 ```bash
-gh pr create --base dev --head main --title "Bring hotfix back into dev"
+uvx --from "git+https://github.com/vEXOULZ/conventions@$(sed -n 's/^version *= *"\(.*\)"/\1/p' .conventions.toml)" conventions version set X.Y.Z
 ```
+
+Its merge is released like any other: `finish` tags it and opens the pull request that brings `main`
+back into `dev`, so `dev` never loses the fix.
 
 ## Before you push
 
