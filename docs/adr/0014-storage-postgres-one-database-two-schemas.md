@@ -114,7 +114,7 @@ that read-then-write; those places are marked in the code.
 - **Sharp edge:** ADR-0013's forward-only migrations still apply, and now apply to a database that outlives
   the container. Rolling back to an image from before a migration still means rolling back **within a
   schema version**, or restoring a `pg_restore` archive taken before the deploy. *(2026-09-28)* Replaced
-  by ADR-0022: every migration has a downgrade, and `deploy/rollback.sh` runs it.
+  by ADR-0022: every migration has a downgrade, and `deploy/rollback.sh` (now `scripts/rollback.sh`) runs it.
 - **Sharp edge (dev, Windows):** psycopg's async mode refuses to run on the Proactor event loop, which is
   Python's default on Windows. `storage.db.configure_event_loop()` switches to the Selector loop, which in
   exchange cannot spawn asyncio subprocesses. Production is Linux, where none of this applies.

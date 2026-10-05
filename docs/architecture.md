@@ -750,13 +750,13 @@ flowchart LR
     ci -->|green| ghcr[("ghcr.io/owner/doomtp-bot<br/>:main and :sha")]
 
     subgraph guest["Proxmox guest — it pulls, nothing pushes to it"]
-        timer["systemd timer<br/>nightly"] --> upd["deploy/update.sh"]
+        timer["the server's deploy timer<br/>(not in this repo)"] --> upd["docker compose pull"]
         upd --> moved{"digest<br/>moved?"}
         moved -->|no| done["exit 0, nothing touched"]
         moved -->|yes| migrate["migrate step, new image<br/>db upgrade + starter pack (ADR-0022)"]
         migrate -->|failed| old["old bot keeps running"]
         migrate --> restart["compose up -d doomtp-bot<br/>SIGTERM, 45 s grace, sessions closed"]
-        restart --> cov["coverage check<br/>its exit code is the unit's"]
+        restart --> cov["coverage check<br/>its exit code is the deploy's"]
         pg[("postgres<br/>never restarted by an update")]
         migrate -.-> pg
     end
@@ -781,11 +781,12 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
 - **How an update reaches the server (ADR-0013, ADR-0021):** work integrates on `dev`, which publishes
   `:dev`; a release is a merge from `dev` into `main`, which publishes `:main`, and its `vX.Y.Z` tag
   publishes `:vX.Y.Z`. Each image also gets its `:<sha>`. CI pushes `:main` on every push to
-  `main`; a systemd timer in the guest runs `deploy/update.sh`, which pulls, does nothing when the digest
-  hasn't moved, restarts **the bot** through compose when it has, and finishes with the coverage check.
+  `main`; a timer on the server (the deploy tool is the server's, not this repo's; README step 9 lists its
+  steps) pulls, does nothing when the digest hasn't moved, runs the migrate step and restarts **the bot**
+  through compose when it has, and finishes with the coverage check.
   Postgres is left running: its image never moves, and bouncing it would drop connections for nothing
   (ADR-0014). Nothing outside the homelab connects to it, which is the same constraint ADR-0001 was
-  chosen under. Rolling back is `deploy/rollback.sh <image>`: it backs up, downgrades the schema with the
+  chosen under. Rolling back is `scripts/rollback.sh <image>`: it backs up, downgrades the schema with the
   image running now (the only one that has the downgrade), pins `BOT_IMAGE` to the target and starts it
   without the migrate step (ADR-0022).
 - **What the image holds:** the locked dependency set and the installed package — static files,
@@ -795,7 +796,7 @@ The deployment setup is unchanged from revision 2, apart from the notes below.
   apply, `/readyz` is ok with Twitch reported as disabled, and the language page serves both the grammar
   and the editor.*
 - **Self-hosted history, optional:** for independence from the public logs.ivr.fi, run a [rustlog](https://github.com/boring-nick/rustlog) container on a separate compose stack. Don't restart it together with the bot during updates. Point `IVR_LOGS_URL` at it.
-- **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is queued as a backfill job (ADR-0024 §5). `scripts/coverage.py` (compose: `--profile tools run --rm coverage --wait 300`) says how each channel's last session ended and which gaps no complete backfill run covers, naming the job still to fill a gap and, with `--wait`, waiting for it — the deploy runbook in the README.
+- **Updates:** the shutdown path ends every open log session with `end_reason='shutdown'` and drains the writer queue, so a restart leaves a gap the length of the deploy and no more; compose waits 45 s for `SIGTERM` to let that happen. A process that is killed instead leaves its sessions open, and the next startup closes them at the last message it stored (`chatlog.unclean_shutdown_detected`). On start, the gap is queued as a backfill job (ADR-0024 §5). `scripts/coverage.py` (compose: `--profile tools run --rm coverage --wait 300`) says how each channel's last session ended and which gaps no complete backfill run covers, naming the job still to fill a gap and, with `--wait`, waiting for it; a gap in a channel the history service doesn't log is listed as unfillable and doesn't fail it (`--strict` counts it) — the deploy runbook in the README.
 - **Backups:** `scripts/backup.py` (compose: `--profile tools run --rm backup`) runs `pg_dump` once per schema, writing a compressed custom-format archive that `pg_restore` can take apart, rotated to the last 7 of each. `pg_dump` snapshots inside one transaction, so it is safe to run while the bot writes. The `bot` schema is the critical one — it holds custom commands, variables, roles and the OAuth tokens. The dumps land on the same host as the database, which is not a backup until a copy leaves the machine; that part is still the operator's job.
 - **Metrics** (ADR-0015): counters in the Prometheus text format on `GET /metrics`, beside `/readyz` on the
   LAN-bound port, for a scraper on the LAN to pull. `core/metrics.py` writes the format by hand — no

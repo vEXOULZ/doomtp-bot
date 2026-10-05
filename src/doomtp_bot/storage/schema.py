@@ -2,7 +2,7 @@
 
 Each schema, `bot` and `chatlog`, is its own Alembic environment under `migrations/<schema>/`, with its
 own `alembic_version` table, so ADR-0014's split holds. Revisions are plain SQL, and every one has a
-downgrade: a rollback to an older image downgrades with the newer one first (`deploy/rollback.sh`).
+downgrade: a rollback to an older image downgrades with the newer one first (`scripts/rollback.sh`).
 
 The bot doesn't migrate itself. The `migrate` one-shot runs `doomtp-bot db upgrade` before it starts, and
 the bot refuses a schema that isn't at its own head (`storage.db.check_schema`).
