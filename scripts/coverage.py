@@ -9,8 +9,11 @@ It reads the bot and chatlog schemas and prints, per channel, how the last sessi
 between sessions that no complete backfill run covers. A gap a backfill job is still waiting to fill
 (ADR-0024 §5; a `chat_backfill` run in `jobs.job_runs` since ADR-0027) is open too, and says so; `--wait`
 checks again until no gap is waiting or the time is up.
-Exit code 1 means a gap is still open in a channel that asked for backfill — the deploy runbook in the
-README says what to do about it.
+A gap whose last backfill run found that the history service doesn't log the channel
+(`channel_not_logged`) is listed as unfillable: no job will ever fill it, so it doesn't count as open
+unless `--strict` is given.
+Exit code 1 means a fillable gap is still open in a channel that asked for backfill — the deploy runbook
+in the README says what to do about it.
 """
 
 from __future__ import annotations
@@ -27,9 +30,11 @@ from psycopg.rows import dict_row
 
 from doomtp_bot.config import Settings
 from doomtp_bot.history.backfill import gaps_between
+from doomtp_bot.history.provider import NOT_LOGGED
 
 RECENT_DEFAULT = 7
 POLL_S = 5
+UNFILLABLE = "the history service doesn't log this channel"
 
 
 def _open(dsn: str, schema: str) -> psycopg.Connection[dict[str, object]]:
@@ -78,6 +83,8 @@ def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap:
         return f"{job['state']} as backfill job #{job['id']}"
     if row is None:
         return "no backfill run"
+    if row["error"] == NOT_LOGGED:
+        return UNFILLABLE
     if row["error"]:
         return f"backfill failed: {row['error']}"
     if not row["complete"]:
@@ -85,13 +92,13 @@ def filled(chatlog: psycopg.Connection[dict[str, object]], channel_id: str, gap:
     return ""
 
 
-def report(dsn: str, recent_days: int) -> tuple[list[str], int, int]:
+def report(dsn: str, recent_days: int, *, strict: bool = False) -> tuple[list[str], int, int]:
     """The lines to print, how many gaps are still open in channels that asked for backfill, and how many
-    of those a backfill job is still to fill."""
+    of those a backfill job is still to fill. Unfillable gaps count as open only when `strict`."""
     lines: list[str] = []
     say = lines.append
     since_ms = int(datetime.now(UTC).timestamp() * 1000) - recent_days * 86_400_000
-    open_gaps = waiting = 0
+    open_gaps = waiting = unfillable = 0
     with closing(_open(dsn, "bot")) as bot, closing(_open(dsn, "chatlog")) as chatlog:
         channels = bot.execute(
             "SELECT channel_id, login, history_backfill FROM channels WHERE active ORDER BY login"
@@ -117,12 +124,20 @@ def report(dsn: str, recent_days: int) -> tuple[list[str], int, int]:
             for gap in found:
                 why = filled(chatlog, channel["channel_id"], gap)
                 where = f"  {_when(gap[0])} + {_duration(gap[1] - gap[0])}"
+                if why == UNFILLABLE:
+                    unfillable += 1
+                    open_gaps += strict
+                    say(f"{where}: UNFILLABLE — {why}")
+                    continue
                 open_gaps += bool(why)
                 waiting += " as backfill job #" in why
                 say(f"{where}: OPEN — {why}" if why else f"{where}: filled")
     if open_gaps:
         queued = f", {waiting} waiting on backfill jobs" if waiting else ""
         say(f"{open_gaps} gap(s) still open in the last {recent_days} days{queued}")
+    if unfillable:
+        counted = "counted as open (--strict)" if strict else "not counted as open"
+        say(f"{unfillable} gap(s) unfillable: the history service doesn't log the channel ({counted})")
     return lines, open_gaps, waiting
 
 
@@ -142,14 +157,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="SECONDS",
         help="while a backfill job is still to fill a gap, check again for up to this long (default 0)",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="count gaps in channels the history service doesn't log as open too",
+    )
     args = parser.parse_args(argv)
     dsn = args.database_url or Settings().database_dsn()
     deadline = time.monotonic() + args.wait
     try:
-        lines, open_gaps, waiting = report(dsn, args.days)
+        lines, open_gaps, waiting = report(dsn, args.days, strict=args.strict)
         while waiting and time.monotonic() < deadline:
             time.sleep(POLL_S)
-            lines, open_gaps, waiting = report(dsn, args.days)
+            lines, open_gaps, waiting = report(dsn, args.days, strict=args.strict)
     except psycopg.OperationalError as exc:
         print(f"cannot reach the database: {exc}", file=sys.stderr)
         return 2

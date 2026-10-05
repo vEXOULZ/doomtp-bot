@@ -82,6 +82,69 @@ async def test_old_gaps_and_silent_channels_stay_out_of_the_way(
     assert not any("OPEN" in line for line in lines)
 
 
+async def _unfillable_gap(dbs: Databases) -> None:
+    """A channel with one filled gap and one the history service said it doesn't log."""
+    await _channel(dbs, "c6", "frank", backfill=True)
+    await _session(dbs, "c6", NOW - 7 * HOUR, NOW - 6 * HOUR, "shutdown")
+    await _session(dbs, "c6", NOW - 5 * HOUR, NOW - 4 * HOUR, "shutdown")
+    await _session(dbs, "c6", NOW - 3 * HOUR, None, "")
+    await dbs.chatlog.execute(
+        "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, inserted, complete, error, at)"
+        " VALUES ('c6', %s, %s, 3, true, '', %s), ('c6', %s, %s, 0, false, 'channel_not_logged', %s)",
+        (NOW - 6 * HOUR, NOW - 5 * HOUR, NOW, NOW - 4 * HOUR, NOW - 3 * HOUR, NOW),
+    )
+
+
+async def test_a_gap_the_service_cannot_fill_is_listed_but_not_open(
+    committed_database: tuple[str, Databases],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dsn, dbs = committed_database
+    await _unfillable_gap(dbs)
+
+    lines, open_gaps, waiting = report(dsn, recent_days=7)
+
+    assert (open_gaps, waiting) == (0, 0)
+    assert lines[1].endswith(": filled")
+    assert lines[2].endswith(": UNFILLABLE — the history service doesn't log this channel")
+    assert lines[-1] == "1 gap(s) unfillable: the history service doesn't log the channel (not counted as open)"
+    assert main(["--database-url", dsn]) == 0
+    assert "UNFILLABLE" in capsys.readouterr().out
+
+
+async def test_strict_counts_unfillable_gaps_as_open(committed_database: tuple[str, Databases]) -> None:
+    dsn, dbs = committed_database
+    await _unfillable_gap(dbs)
+
+    lines, open_gaps, waiting = report(dsn, recent_days=7, strict=True)
+
+    assert (open_gaps, waiting) == (1, 0)
+    assert lines[-2] == "1 gap(s) still open in the last 7 days"
+    assert lines[-1].endswith("(counted as open (--strict))")
+    assert main(["--database-url", dsn, "--strict"]) == 1
+
+
+async def test_a_fillable_gap_still_fails_next_to_an_unfillable_one(
+    committed_database: tuple[str, Databases],
+) -> None:
+    dsn, dbs = committed_database
+    await _unfillable_gap(dbs)
+    await _channel(dbs, "c7", "gina", backfill=True)
+    await _session(dbs, "c7", NOW - 5 * HOUR, NOW - 4 * HOUR, "shutdown")
+    await _session(dbs, "c7", NOW - 3 * HOUR, None, "")
+    await dbs.chatlog.execute(
+        "INSERT INTO backfill_runs (channel_id, gap_from, gap_to, complete, error, at)"
+        " VALUES ('c7', %s, %s, false, 'http_503', %s)",
+        (NOW - 4 * HOUR, NOW - 3 * HOUR, NOW),
+    )
+
+    lines, open_gaps, waiting = report(dsn, recent_days=7)
+
+    assert (open_gaps, waiting) == (1, 0)
+    assert any(line.endswith(": OPEN — backfill failed: http_503") for line in lines)
+    assert main(["--database-url", dsn]) == 1
+
+
 async def _queued_gap(dbs: Databases) -> int:
     """A channel with one gap that a queued backfill job is waiting to fill; the job's id."""
     await _channel(dbs, "c5", "erin", backfill=True)
