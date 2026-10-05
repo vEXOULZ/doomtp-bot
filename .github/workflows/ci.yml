@@ -9,12 +9,12 @@ on:
 
 jobs:
   conventions:
-    uses: vEXOULZ/conventions/.github/workflows/conventions-check.yml@v1.0.0
+    uses: vEXOULZ/conventions/.github/workflows/conventions-check.yml@v2.0.0
     secrets: inherit
 
   ci:
     # The suite runs against a real Postgres, not a stand-in (ADR-0014). Same major as compose runs.
-    uses: vEXOULZ/conventions/.github/workflows/python-ci.yml@v1.0.0
+    uses: vEXOULZ/conventions/.github/workflows/python-ci.yml@v2.0.0
     with:
       postgres: true
       # The Twitch CLI is Twitch's event simulator, for the EventSub handshake tests (ADR-0001 item 5).
@@ -64,7 +64,7 @@ jobs:
     # A pull request builds the image and stops there. Pushes to main and dev and release tags publish
     # one (ADR-0013, ADR-0021).
     needs: ci
-    uses: vEXOULZ/conventions/.github/workflows/publish-image.yml@v1.0.0
+    uses: vEXOULZ/conventions/.github/workflows/publish-image.yml@v2.0.0
     permissions:
       contents: read
       packages: write
