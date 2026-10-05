@@ -210,8 +210,10 @@ week with whether it was filled. A gap a job is still to fill shows as `OPEN —
 (or `running`), and `--wait` checks again every few seconds until no gap is waiting or the time is up.
 `!backfill queue` in chat and `GET /api/v1/channels/{login}/backfill` show the same queue. Exit code 1
 means a gap is still open — the usual causes are
-logs.ivr.fi being down, the bot's own daily request budget for it being spent (the job waits for the next
-day), or a channel it doesn't log, and all are worth seeing in the log before you assume the history is complete.
+logs.ivr.fi being down or the bot's own daily request budget for it being spent (the job waits for the next
+day), and both are worth seeing in the log before you assume the history is complete. A gap in a channel
+logs.ivr.fi doesn't log (`channel_not_logged`) shows as `UNFILLABLE`: no job can ever fill it, so it is
+listed but doesn't fail the check. `--strict` counts those as open too.
 
 ## Deploying to a server, step by step
 
@@ -440,7 +442,7 @@ not drive failures.
 | Is it healthy? | `curl -s localhost:8080/readyz` |
 | How often does it happen? | `curl -s localhost:8080/metrics` — counters in Prometheus text (ADR-0015); point a scraper on the LAN at it |
 | What is it doing? | `docker compose logs -f doomtp-bot` |
-| Did the log lose anything? | `docker compose --profile tools run --rm coverage --wait 300` |
+| Did the log lose anything? | `docker compose --profile tools run --rm coverage --wait 300`. `UNFILLABLE` gaps are in channels the history service doesn't log; they never fail it unless `--strict` |
 | Deploy now | the four commands in step 9 |
 | Upgrade the schema and install `core` and the starter commands | `docker compose run --rm migrate` |
 | Where does the schema stand? | `docker compose run --rm --no-deps --entrypoint doomtp-bot migrate db current` |
@@ -475,7 +477,7 @@ which the script and a bare `docker compose` both read, so a rollback keeps the 
 | The site loads, but `/admin` shows nothing and the API calls fail | The proxy sends the bot's paths to the site's files. Check the table in step 8 |
 | The browser can't reach `/auth/login` before step 8 | The tunnel dropped. The bot listens on `127.0.0.1` on the guest by design |
 | `chatlog.unclean_shutdown_detected` at startup | Something killed the bot instead of stopping it — revisit step 2 |
-| An update reports a failure but the bot is fine | That is the coverage check reporting a gap. Its output says which channel |
+| An update reports a failure but the bot is fine | That is the coverage check reporting a gap a backfill could still fill. Its output says which channel. `UNFILLABLE` gaps (a channel the history service doesn't log) don't cause it |
 
 ## Web site
 
