@@ -40,11 +40,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0025](adr/0025-chat-log-timeline-api.md) | The chat log as a paged timeline on the API | 1/3 | API built; the site's log viewer and the archive's enrichment are next |
 | [0027](adr/0027-shared-jobs-api-and-audit-through-vex-platform.md) | Shared jobs, API and audit through vex-platform | 5/7 | The dependency and its tables (bot 0011); the audit log in the shared table; backfill as the `chat_backfill` job kind; the jobs, audit and chat log routes under `/api/v2`; job counters from the runtime's hooks. The clients are moving to v2; the cleanup waits for them and the owner's go-ahead |
 | [0028](adr/0028-chat-watchers-and-the-pyramid-pack.md) | Chat watchers, and emote pyramids as a pack | 5/5 | Built: watchers, trigger badges, `PyramidWatcher` and the `pyramid` pack |
+| [0030](adr/0030-view-as-preview-header.md) | View as, scoped on the server | 2/3 | Built: `X-View-As` on the API; doomtp-web drops its emulation next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**141 of 150 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
+**143 of 153 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
 item 2 (switching the shared sign-in on once vexoulz-auth is deployed); six are the rest of ADR-0024 and ADR-0025,
-both accepted on 2026-09-28, and one the rest of ADR-0027, accepted on 2026-09-30. **All 9 architecture promises are closed**: six built,
+both accepted on 2026-09-28, and one the rest of ADR-0027, accepted on 2026-09-30; the last is doomtp-web adopting ADR-0030. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 

@@ -51,10 +51,6 @@ def _filter_check(request: Request, channel_id: str, *texts: str) -> None:
         raise HTTPException(status_code=400, detail=f"the filter rejects that: {', '.join(hits)}")
 
 
-def _is_broadcaster(caller: Caller, settings: ChannelSettings) -> bool:
-    return caller.user_id is not None and caller.user_id == settings.channel_id
-
-
 # ── dry runs ────────────────────────────────────────────────────────────────
 class TextBody(BaseModel):
     text: str = Field(min_length=1, max_length=500)
@@ -103,7 +99,7 @@ def _manageable(role: Role, settings: ChannelSettings, caller: Caller, rank: int
     return not role.builtin and can_manage_role(
         rank,
         role.rank,
-        actor_is_broadcaster=_is_broadcaster(caller, settings),
+        actor_is_broadcaster=caller.is_broadcaster_of(settings),
         role_is_channel=role.channel_id == settings.channel_id,
     )
 
@@ -151,7 +147,7 @@ async def create_role(request: Request, login: str, body: RoleBody, caller: Call
         raise HTTPException(status_code=409, detail=f"role {name} already exists")
     rank = caller.rank_in(policy, settings.login)
     if not can_manage_role(
-        rank, body.rank, actor_is_broadcaster=_is_broadcaster(caller, settings), role_is_channel=True
+        rank, body.rank, actor_is_broadcaster=caller.is_broadcaster_of(settings), role_is_channel=True
     ):
         raise HTTPException(status_code=403, detail="you can only create roles ranked below your own")
     await policy.mutate(lambda repo: repo.create_role(settings.channel_id, name, body.rank, caller.actor))
