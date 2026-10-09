@@ -14,7 +14,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "pydantic>=2.7",
-    "pydantic-settings>=2.3",
+    "pydantic-settings>=2.15.0",
     "structlog>=24.1",
     # Shared job runtime, /api/v2 conventions and audit log with twitch-archive (ADR-0027). A tarball, since
     # the image has no git.
