@@ -13,7 +13,7 @@ dependencies = [
     "sqlalchemy>=2.0.36",
     "fastapi>=0.115",
     "uvicorn>=0.30",
-    "pydantic>=2.7",
+    "pydantic>=2.14.0",
     "pydantic-settings>=2.3",
     "structlog>=24.1",
     # Shared job runtime, /api/v2 conventions and audit log with twitch-archive (ADR-0027). A tarball, since
