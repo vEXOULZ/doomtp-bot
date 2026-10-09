@@ -7,7 +7,9 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing anything. It covers bran
 - Work branches go into `dev`; only `dev`, `release/*` and `hotfix/*` merge into `main` (ADR-0021).
 - `compose.yaml` is production and pulls `${BOT_IMAGE}`; `compose.dev.yaml` on top builds from the tree.
 - Tests need Postgres: `docker compose --profile test up -d postgres-test`, or `TEST_DATABASE_URL`.
-- A release tag must equal both `version` in pyproject.toml and `__version__` in `src/doomtp_bot/__init__.py`.
+- Releases run from `.github/workflows/release.yml` (CONTRIBUTING "Releases"): don't bump, tag or
+  back-merge by hand. `conventions version set X.Y.Z` writes pyproject.toml, uv.lock and `__version__`
+  together, and a release tag must equal them.
 
 ## graphify
 

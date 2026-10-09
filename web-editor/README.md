@@ -45,13 +45,59 @@ tokenize("🏜random 1-6 | echo {_1}", { context: "line" }); // [{ t: "prefix", 
 Its exports (`tokenize`, `allowsGap`, `DEFAULT_PREFIX`, `VARIATION_SELECTOR`) and the token classes are a
 contract with that site: add to them, don't rename them.
 
+## Theming
+
+The element has no shadow root, so there are no `::part()`s. A page themes it with these custom properties,
+set on `dtb-editor` or any ancestor. They are a contract with doomtp-web: add to them, don't rename them.
+
+| Property | What it colours or sets | Falls back to | Default |
+|----------|-------------------------|---------------|---------|
+| `--dtb-bg` | the editor's background | `--panel` | `#16181d` |
+| `--dtb-ink` | text, the caret, words | `--ink` | `#e6e6e6` |
+| `--dtb-muted` | the gutter, placeholder braces, types, the hint | `--muted` | `#8b8f98` |
+| `--dtb-line` | every border | `--line` | `#2c3038` |
+| `--dtb-accent` | the prefix and commands, the focus ring, the chosen completion, a hovered button | `--accent` | `#e8a33d` |
+| `--dtb-accent-ink` | text on the accent | `--bg` | `#0f1115` |
+| `--dtb-ok` | strings and numbers | `--ok` | `#7cc47c` |
+| `--dtb-bad` | the wavy underline under an error | `--bad` | `#ff6b6b` |
+| `--dtb-raised` | the Explain button, the report, tooltips | | `--dtb-bg` |
+| `--dtb-soft` | escapes and fallbacks | | `#e8c35a` |
+| `--dtb-op` | operators | | `#ff7ab2` |
+| `--dtb-var` | variables, read or written | | `#8ab4f8` |
+| `--dtb-path` | a variable's path after its root | | `#b7cffb` |
+| `--dtb-font` | the editor's and the report's font | | `ui-monospace, …` |
+| `--dtb-font-size` | the editor's font size | | `.95rem` |
+| `--dtb-small-font-size` | the button's and the report's font size | | `.85rem` |
+| `--dtb-radius` | every corner | | `.4rem` |
+| `--dtb-gap` | the space above the button and the report | | `.5rem` |
+| `--dtb-control-height` | the Explain button's height | | `2rem` |
+
+The "falls back to" column is the variables the bot's own pages used; a page that sets neither gets the
+dark default. For anything the properties don't reach, three class names are stable too: `.dtb-editor`
+(the box around the editor), `.dtb-explain` (the button) and `.dtb-report`. The element's own styles for
+the button and the report weigh nothing (`:where()`), so any rule of the page's wins. CodeMirror's `.cm-*`
+classes are not part of the API.
+
+```css
+dtb-editor {
+  --dtb-bg: var(--vx-surface);
+  --dtb-raised: var(--vx-surface-2);
+  --dtb-line: var(--vx-line);
+  --dtb-font: var(--vx-font-mono);
+  --dtb-font-size: 14px;
+  --dtb-radius: var(--vx-radius-sm);
+  --dtb-control-height: var(--vx-ctl);
+}
+```
+
 ## Layout
 
 | File | What it is |
 |------|------------|
 | `src/tokens.js` | the lexer: text → token classes of ADR-0011. Pure, and the only thing worth testing |
 | `src/highlight.js` | those tokens as CodeMirror decorations |
-| `src/theme.js` | colours, taken from the page's CSS variables so light and dark follow it |
+| `src/theme.js` | colours and the frame, all through the theming properties |
+| `src/properties.js` | the theming API: the `--dtb-*` properties, their fallbacks, the button's and report's styles |
 | `src/complete.js` | where the cursor is → which list to ask the server for |
 | `src/api.js` | the four endpoints, with the page-lifetime cache for the ones that don't change |
 | `src/editor.js` | the `<dtb-editor>` element: the textarea it upgrades, diagnostics, the report |
