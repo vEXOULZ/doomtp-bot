@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from doomtp_bot.api.access import caller_for_session, current_session
+from doomtp_bot.api.access import ViewAs, caller_for_session, current_session, refuse_writes, view_as
 from doomtp_bot.api.keys import SCOPES, ApiKey, ApiKeyError, ApiKeyService
 from doomtp_bot.api.sessions import SESSION_COOKIE, AdminAuth, LoginLimiter, Networks, Session, address_in
 
@@ -82,6 +82,44 @@ def _session_json(request: Request, session: Session | None) -> dict[str, Any]:
     }
 
 
+def _preview_json(request: Request, session: Session, view: ViewAs) -> dict[str, Any]:
+    """`GET /session` under `X-View-As` (ADR-0030): what that viewer's own session would say, with
+    `view_as` naming the preview. The user stays the admin's, as their changes and personal pages do."""
+    real = _session_json(request, session)
+    if view.kind == "signed-out":
+        found: dict[str, Any] = {
+            **real,
+            "authenticated": False,
+            "csrf": None,
+            "expires_at": None,
+            "role": None,
+            "user": None,
+            "channels": None,
+            "channel_roles": None,
+            "channel_ranks": None,
+            "own_channel": None,
+        }
+    else:
+        channel = view.channel
+        listed = channel is not None and view.manages
+        own = None
+        if view.kind == "broadcaster" and channel is not None:
+            policy = getattr(request.app.state, "policy", None)
+            settings = None if policy is None else policy.channel_by_login(channel)
+            if settings is not None:
+                joined = settings.active and settings.status == "joined"
+                own = {"login": settings.login, "joined": joined, "status": settings.status, "tier": settings.tier}
+        found = {
+            **real,
+            "role": "moderator" if listed else "user",
+            "channels": [channel] if listed else [],
+            "channel_roles": {channel: view.kind} if listed else {},
+            "channel_ranks": {channel: view.rank} if channel is not None else {},
+            "own_channel": own,
+        }
+    return {**found, "view_as": view.header}
+
+
 def _channel_access(
     request: Request, session: Session | None
 ) -> tuple[dict[str, str] | None, dict[str, int] | None, dict[str, Any] | None]:
@@ -118,6 +156,9 @@ async def require_session(request: Request, *, write: bool, admin: bool = True) 
     session = await current_session(request)
     if session is None:
         raise HTTPException(status_code=401, detail="an admin session is required")
+    view = view_as(request, session)
+    if view is not None:  # no previewed viewer is an admin, and a preview changes nothing
+        raise refuse_writes(view) if write else HTTPException(status_code=403, detail="only an admin can do this")
     if admin and not session.is_admin:  # keys reach every channel, so only an admin manages them (ADR-0017)
         raise HTTPException(status_code=403, detail="only an admin can do this")
     if write and not auth.valid_csrf(token, request.headers.get("x-csrf-token")):
@@ -144,7 +185,11 @@ class Login(BaseModel):
 
 @router.get("/session")
 async def get_session(request: Request) -> dict[str, Any]:
-    return _session_json(request, await current_session(request))
+    session = await current_session(request)
+    view = view_as(request, session) if session is not None else None
+    if session is not None and view is not None:
+        return _preview_json(request, session, view)
+    return _session_json(request, session)
 
 
 @router.post("/session")
