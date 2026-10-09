@@ -17,15 +17,26 @@ import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { linter, lintKeymap, lintGutter } from "@codemirror/lint";
 import { highlighting } from "./highlight.js";
 import { theme } from "./theme.js";
+import { CHROME_CSS } from "./properties.js";
 import { completions } from "./complete.js";
 import * as api from "./api.js";
 
 const DEBOUNCE_MS = 300; // ADR-0011: diagnostics about a third of a second after typing stops
 const EXPLAIN_MAX_CHARS = 500; // above this, explain is on demand only
 
+/** The Explain button's and the report's styles, once per document, first so the page's own rules win. */
+function addChromeStyles(doc) {
+  if (doc.querySelector("style[data-dtb-editor]")) return;
+  const style = doc.createElement("style");
+  style.dataset.dtbEditor = "";
+  style.textContent = CHROME_CSS;
+  doc.head.prepend(style);
+}
+
 class DoomtpEditor extends HTMLElement {
   connectedCallback() {
     if (this.view) return;
+    addChromeStyles(this.ownerDocument);
     this.textarea = this.querySelector("textarea");
     this.options = {
       context: this.getAttribute("context") || "body",
