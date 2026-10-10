@@ -317,7 +317,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.4.0" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "railroad-diagrams", marker = "extra == 'dev'", specifier = ">=3" },
     { name = "regex", specifier = ">=2024.11.6" },
