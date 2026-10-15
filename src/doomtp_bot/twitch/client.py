@@ -36,6 +36,11 @@ log = structlog.get_logger(__name__)
 
 EventSink = Callable[[Event], Awaitable[None]]
 DEDUPE_SIZE = 2000
+#: How often the bot checks that chat still reaches it, and how many misses in a row mean it has gone deaf.
+#: Two minutes leaves TwitchIO room to finish a reconnect of its own first.
+WATCH_S = 60.0
+DEAF_AFTER = 2
+CHAT_MESSAGE = "channel.chat.message"
 USER_CACHE_SIZE = 5000
 # Why Helix Send a Shoutout said no, in words a moderator can act on.
 SHOUTOUT_REFUSALS = {
@@ -159,6 +164,15 @@ class _BotClient(twitchio.Client):
         )
         log.info("twitch.token_refreshed", user_id=payload.user_id)
 
+    async def event_subscription_revoked(self, payload: Any) -> None:
+        # Twitch took a subscription back. Left alone, its channel goes quiet; the watchdog starts again.
+        log.warning(
+            "twitch.subscription_revoked",
+            type=payload.type,
+            reason=str(getattr(payload.status, "value", payload.status)),
+            condition=payload.raw.get("condition"),
+        )
+
     async def event_websocket_welcome(self, payload: Any) -> None:
         # One per EventSub session: a first connection or a reconnect, which TwitchIO doesn't tell apart
         # for us (ADR-0015).
@@ -221,6 +235,12 @@ class TwitchService:
         self._users_by_login: OrderedDict[str, dict[str, str]] = OrderedDict()
         self._logins_by_id: dict[str, str] = {}
         self.last_error: str | None = None
+        #: Channels asked for, whether or not their subscriptions took (`_subscribed` holds the ones that did).
+        self._wanted: set[str] = set()
+        self._watch: asyncio.Task[None] | None = None
+        self.watch_s = WATCH_S
+        #: Why the watchdog last found the bot deaf, while it still is; None while chat reaches it.
+        self.deaf: str | None = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     async def start(self) -> bool:
@@ -251,8 +271,11 @@ class TwitchService:
             self, client_id=self.client_id, client_secret=self.client_secret, bot_id=stored.user_id
         )
         self._subscribed.clear()
+        self._wanted.clear()
+        self.deaf = None
         await self.client.login()
         self._task = asyncio.create_task(self._run(self.client), name="twitch-client")
+        self._watch = asyncio.create_task(self._watchdog(self.client), name="twitch-watchdog")
         log.info("twitch.started", bot=stored.login)
         return True
 
@@ -273,7 +296,54 @@ class TwitchService:
             # from a new task, because starting again cancels this one.
             asyncio.create_task(self.on_stopped(), name="twitch-restart")  # noqa: RUF006
 
+    def deaf_reason(self) -> str | None:
+        """Why chat no longer reaches the bot, or None while it does.
+
+        TwitchIO keeps `client.start()` running when an EventSub socket closes for good — a reconnect that
+        timed out, a resubscribe Twitch refused, every subscription revoked — so `_run` never returns and
+        nothing else notices. This looks at the sockets themselves: the second place the adapter reaches into
+        TwitchIO's internals, pinned by `tests/chat/test_twitch.py`.
+        """
+        client = self.client
+        if client is None or self.bot_id is None or not self._wanted:
+            return None
+        sockets = client._websockets.get(self.bot_id, {})
+        hearing: set[str] = set()
+        for socket in list(sockets.values()):
+            if not socket.connected:
+                continue
+            for sub in socket._subscriptions.values():
+                if str(getattr(sub["type"], "value", sub["type"])) == CHAT_MESSAGE:
+                    hearing.add(str(sub["condition"].get("broadcaster_user_id")))
+        if not hearing:
+            return "no EventSub connection carries chat"
+        lost = sorted(self._subscribed - hearing)
+        if lost:
+            return f"chat subscriptions gone for {len(lost)} channel(s)"
+        return None
+
+    async def _watchdog(self, client: _BotClient) -> None:
+        """Start the client again once chat has stopped reaching it for `DEAF_AFTER` checks in a row."""
+        misses = 0
+        while self.client is client:
+            await asyncio.sleep(self.watch_s)
+            reason = self.deaf_reason()
+            misses = misses + 1 if reason else 0
+            self.deaf = reason
+            if reason is None or misses < DEAF_AFTER:
+                continue
+            self.last_error = f"deaf: {reason}"
+            log.error("twitch.chat_deaf", reason=reason, channels=len(self._wanted))
+            if self.on_stopped is not None:
+                metrics.TWITCH_CLIENT_RESTARTS.inc()
+                # From a task of its own: starting again stops this client, and cancels this task with it.
+                asyncio.create_task(self.on_stopped(), name="twitch-restart")  # noqa: RUF006
+            return
+
     async def stop(self) -> None:
+        if self._watch is not None and self._watch is not asyncio.current_task():
+            self._watch.cancel()
+        self._watch = None
         if self.client is not None:
             with contextlib.suppress(Exception):
                 await self.client.close(save_tokens=False)
@@ -289,6 +359,8 @@ class TwitchService:
             return ComponentHealth(Status.DEGRADED, {"reason": reason})
         if self._task is not None and self._task.done():
             return ComponentHealth(Status.UNHEALTHY, {"reason": "client stopped", "error": self.last_error})
+        if self.deaf is not None:
+            return ComponentHealth(Status.UNHEALTHY, {"reason": "not hearing chat", "error": self.deaf})
         return ComponentHealth(Status.OK, {"bot": self.bot_login, "channels": len(self._subscribed)})
 
     # ── events ──────────────────────────────────────────────────────────────
@@ -309,6 +381,7 @@ class TwitchService:
         """Subscribe to basic-tier chat events for a channel. Returns the subscription types that failed."""
         if self.client is None or self.bot_id is None:
             return [s.type for s in CHAT_SUBSCRIPTIONS]
+        self._wanted.add(channel_id)
         if channel_id in self._subscribed:
             return []
         failed: list[str] = []
@@ -366,6 +439,7 @@ class TwitchService:
 
     async def unsubscribe_channel(self, channel_id: str) -> None:
         self._subscribed.discard(channel_id)
+        self._wanted.discard(channel_id)
         if self.client is None:
             return
         for sub_id, sub in self.client.websocket_subscriptions().items():
