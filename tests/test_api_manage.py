@@ -144,6 +144,44 @@ async def test_packs_are_built_shared_and_published(client: httpx.AsyncClient, a
     assert (await client.get(f"{OWN}/packs")).json()["packs"] == []
 
 
+async def test_a_pack_owner_manages_its_triggers_as_chat_does(client: httpx.AsyncClient, app: Any) -> None:
+    """ADR-0032: `cc pack trigger add|on|off|cooldown|rm`, under the same rules."""
+    csrf = as_user(client, app)
+    await _command(client, csrf, "wave", "echo o/")
+    await _command(client, csrf, "helper", "echo shh")
+    await _command(client, csrf, "loose", "echo not in the pack")
+    await client.post("/api/v1/me/packs", json={"name": "kit"}, headers=csrf)
+    for member in ("wave", "helper"):
+        await client.put(f"/api/v1/me/packs/kit/commands/{member}", json={}, headers=csrf)
+    await client.put("/api/v1/me/packs/kit/commands/helper", json={"internal": True}, headers=csrf)
+    base = "/api/v1/me/packs/kit/triggers"
+
+    def put(key: str, **body: Any) -> Any:
+        return client.put(f"{base}/{key}", json=body, headers=csrf)
+
+    made = await put("hourly", type="timer", expr="wave", schedule={"every_s": 3600}, cooldown_s=60)
+    assert made.status_code == 200, made.text
+    assert (made.json()["created"], made.json()["cooldown_s"]) == (True, 60)
+    for refused, why in (
+        (put("fast", type="timer", expr="wave", schedule={"every_s": 300}), "every 15m"),
+        (put("often", type="cron", expr="wave", schedule={"cron": "*/5 * * * *"}), "every 15 minutes"),
+        (put("other", type="raid", expr="loose"), "loose is neither"),
+        (put("inside", type="raid", expr="helper"), "helper is internal"),
+    ):
+        answer = await refused
+        assert answer.status_code == 400 and why in answer.json()["detail"], answer.text
+
+    replaced = await put("hourly", type="timer", expr="wave", schedule={"every_s": 1800})
+    assert (replaced.json()["created"], replaced.json()["cooldown_s"]) == (False, 60)  # cooldowns kept
+    off = await client.patch(f"{base}/hourly", json={"enabled": False, "cooldown_s": 0}, headers=csrf)
+    assert (off.json()["enabled"], off.json()["cooldown_s"]) == (False, 0)
+    packs = (await client.get("/api/v1/me/packs")).json()["packs"]
+    assert [(t["key"], t["schedule"]["every_s"]) for t in packs[0]["triggers"]] == [("hourly", 1800)]
+    assert (await client.delete(f"{base}/hourly", headers=csrf)).status_code == 200
+    assert (await client.get(base)).json()["triggers"] == []
+    assert (await client.delete(f"{base}/hourly", headers=csrf)).status_code == 404
+
+
 async def test_a_published_command_waits_for_its_write_grant(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_mod(client, app)
     await _command(client, csrf, "deaths", "echo 1 -> channel.deaths")

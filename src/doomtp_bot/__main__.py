@@ -180,11 +180,12 @@ async def run(settings: Settings) -> None:
     if twitch is not None:
         services.update(twitch=twitch, login_for=twitch.login_for, schedule=NextStreams(twitch))
     registry = builtin_registry()
+    # The system packs' members are sentinels, loaded once: the pack script's changes need a restart.
+    system = await SystemResolver.load(BuiltinResolver(registry), packs)
     runtime = Runtime(
         registry,
         policy=policy,
-        # The system packs' members are sentinels, loaded once: the pack script's changes need a restart.
-        resolver=await SystemResolver.load(BuiltinResolver(registry), packs),
+        resolver=system,
         callbacks=policy,
         store=store,
         access=access,
@@ -193,6 +194,8 @@ async def run(settings: Settings) -> None:
         services=services,
     )
     triggers.parser_params = runtime.parser_params  # expressions are checked the way they will run
+    # What a pack's own trigger may call besides its pack's commands: what runs in every channel (ADR-0032).
+    triggers.everywhere = lambda name: registry.get(name) is not None or name in system.public
 
     def rate_for(channel_id: str) -> tuple[int, float]:
         """Moderator send limits when the channel tier or the bot's role there allows them."""

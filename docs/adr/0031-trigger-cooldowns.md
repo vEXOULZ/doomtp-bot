@@ -55,7 +55,8 @@ event's conditions), and every reader would have to know which keys aren't about
   `0` for none). A per-chatter cooldown that isn't given stays as it was. Listings show the cooldowns.
 - API: `cooldown_s` and `user_cooldown_s` on `POST` and `PATCH /channels/{login}/triggers…`, and in
   every trigger's JSON. Changes are audited as `trigger.add` and `trigger.edit`, like the other fields.
-- Pack triggers (ADR-0029) keep 0 until their owners can edit them.
+- Pack triggers (ADR-0029) keep 0 until their owners can edit them. *Amended by ADR-0032:* they can now,
+  with `cc pack trigger cooldown`.
 
 ## Consequences
 

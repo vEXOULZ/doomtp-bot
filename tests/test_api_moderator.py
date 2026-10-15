@@ -57,6 +57,10 @@ OWN = {
     ("DELETE", "/api/v1/me/packs/{name}"),
     ("PUT", "/api/v1/me/packs/{name}/commands/{command}"),
     ("DELETE", "/api/v1/me/packs/{name}/commands/{command}"),
+    ("GET", "/api/v1/me/packs/{name}/triggers"),
+    ("PUT", "/api/v1/me/packs/{name}/triggers/{key}"),
+    ("PATCH", "/api/v1/me/packs/{name}/triggers/{key}"),
+    ("DELETE", "/api/v1/me/packs/{name}/triggers/{key}"),
     ("GET", "/api/v1/me/variables"),
     ("GET", "/api/v1/me/runs"),
     # Filtered to what the caller may see: their own entries, or the channels they manage.

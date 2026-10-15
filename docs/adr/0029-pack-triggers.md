@@ -49,6 +49,8 @@ where each one applies.
 - Pack triggers are written only by the script that owns the pack (`scripts/starter_pack.py`). Chat and
   the API list them in each channel where they apply, marked with their pack, and refuse to edit, toggle
   or delete them. A channel turns one off with `!module disable <pack>`.
+  *Amended by ADR-0032:* a pack's owner writes its triggers too, from chat and the API, under tighter rules;
+  the bot's own packs stay script-owned.
 - The pack's module toggle and publications are read from the policy snapshot and the trigger cache, which
   reloads after a pack is published or unpublished.
 
