@@ -14,7 +14,7 @@ from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.engine import RunReport
 from doomtp_bot.storage.db import fetch_value
 from doomtp_bot.triggers.service import TriggerService
-from scripts.starter_pack import PYRAMID_FACTS, PYRAMID_PACK, _DEFAULT_FACT_PREFIX
+from scripts.starter_pack import _DEFAULT_FACT_PREFIX, PYRAMID_FACTS, PYRAMID_PACK
 from tests.customcmds.test_customcmds import BADGES, CHANNEL_ID, CHANNEL_LOGIN, USERS
 from tests.customcmds.test_packs import OTHER_CHANNEL, Harness, h  # noqa: F401
 from tests.test_starter_pack import OWNER, _install
