@@ -10,10 +10,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.customcmds.packs import custom_modules
+from doomtp_bot.customcmds.resolution import MODULE as CUSTOM_MODULE
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse, parse_template
-from doomtp_bot.modules._common import actor, command_spec, need, policy_of, rank, reject_filtered, user_arg
+from doomtp_bot.modules._common import actor, is_custom, need, policy_of, rank, reject_filtered, rule_spec, user_arg
 from doomtp_bot.policy.repository import PolicyRepository
 from doomtp_bot.policy.roles import (
     BOT_ADMIN_RANK,
@@ -179,7 +180,7 @@ PERM_USAGE = "perm show <command> | set <command> <role> | allow <command> <role
 async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
     need(v, 2, PERM_USAGE)
-    action, spec, channel_id = v[0].lower(), command_spec(ctx, v[1]), ctx.channel.id
+    action, spec, channel_id = v[0].lower(), await rule_spec(ctx, v[1]), ctx.channel.id
     if action == "show":
         required, allowed = policy.required_role(channel_id, spec)
         text = f"{spec.name}: requires {required}" + (f", or exactly: {', '.join(allowed)}" if allowed else "")
@@ -193,7 +194,7 @@ async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
         role = v[2].lower()
         if policy.rank_of(channel_id, role) is None:
             raise CommandError(f"unknown role {role}")
-        await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.name, role, None, actor(ctx)))
+        await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.key, role, None, actor(ctx)))
         return Result.success(f"{spec.name} now requires {role}")
     if action == "allow":
         need(v, 3, PERM_USAGE)
@@ -202,10 +203,10 @@ async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
         if not roles or unknown:
             raise CommandError(f"unknown role(s): {', '.join(unknown) or '(none given)'}")
         required, _ = policy.required_role(channel_id, spec)
-        await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.name, required, roles, actor(ctx)))
+        await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.key, required, roles, actor(ctx)))
         return Result.success(f"{spec.name} is also allowed for: {', '.join(roles)}")
     if action == "clear":
-        await policy.mutate(lambda repo: repo.set_command_rule(channel_id, spec.name, None, None, actor(ctx)))
+        await policy.mutate(lambda repo: repo.set_command_rule(channel_id, spec.key, None, None, actor(ctx)))
         return Result.success(f"{spec.name} permissions reset to default ({spec.required_role})")
     raise CommandError(f"usage: {PERM_USAGE}")
 
@@ -218,7 +219,7 @@ COOLDOWN_USAGE = "cooldown show <command> | set <command> <role> <tier_s> <user_
 async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
     need(v, 2, COOLDOWN_USAGE)
-    action, spec, channel_id = v[0].lower(), command_spec(ctx, v[1]), ctx.channel.id
+    action, spec, channel_id = v[0].lower(), await rule_spec(ctx, v[1]), ctx.channel.id
     if action == "show":
         rules = policy.cooldown_rules(channel_id, spec)
         if not rules:
@@ -236,10 +237,10 @@ async def _cooldown(ctx: CommandContext, v: list[str], args: Args) -> Result:
     if action == "set":
         need(v, 5, COOLDOWN_USAGE)
         tier_s, user_s = _int(v[3], "tier_s", 0, 86_400), _int(v[4], "user_s", 0, 86_400)
-        await _write(ctx, lambda repo: repo.set_cooldown(channel_id, spec.name, role, tier_s, user_s, actor(ctx)))
+        await _write(ctx, lambda repo: repo.set_cooldown(channel_id, spec.key, role, tier_s, user_s, actor(ctx)))
         return Result.success(f"{spec.name} for {role}: {tier_s}s shared, {user_s}s personal")
     if action == "clear":
-        await policy.mutate(lambda repo: repo.set_cooldown(channel_id, spec.name, role, None, None, actor(ctx)))
+        await policy.mutate(lambda repo: repo.set_cooldown(channel_id, spec.key, role, None, None, actor(ctx)))
         return Result.success(f"{spec.name} cooldown for {role} reset to default")
     raise CommandError(f"usage: {COOLDOWN_USAGE}")
 
@@ -292,10 +293,20 @@ async def _module(ctx: CommandContext, v: list[str], args: Args) -> Result:
     return Result.success(f"{module} {'reset' if enabled is None else ('enabled' if enabled else 'disabled')} {where}")
 
 
+def _custom_switch(ctx: CommandContext, spec: CommandSpec) -> str:
+    """Where a custom command is turned on and off: its own publication, or its pack's module."""
+    sign = ctx.channel.prefix
+    if spec.module == CUSTOM_MODULE:
+        return f"{spec.name} is a custom command: {sign}cc disable|enable {spec.name} turns it off or on here"
+    return (
+        f"{spec.name} is in the {spec.module} pack: {sign}module disable|enable {spec.module} turns the pack off or on"
+    )
+
+
 @_handler
 async def _cmd(ctx: CommandContext, v: list[str], args: Args) -> Result:
     need(v, 2, CMD_USAGE)
-    action, spec = v[0].lower(), command_spec(ctx, v[1])
+    action, spec = v[0].lower(), await rule_spec(ctx, v[1])
     if action == "log":
         need(v, 3, CMD_USAGE)
         try:
@@ -304,19 +315,21 @@ async def _cmd(ctx: CommandContext, v: list[str], args: Args) -> Result:
             raise CommandError(f"usage: {CMD_USAGE}") from exc
         await _write(
             ctx,
-            lambda repo: repo.set_command_toggle(ctx.channel.id, spec.name, actor(ctx), log_level=level.value),
+            lambda repo: repo.set_command_toggle(ctx.channel.id, spec.key, actor(ctx), log_level=level.value),
         )
         return Result.success(f"{spec.name} log level: {level.value}")
+    if is_custom(spec):
+        return Result.failure(Code.FAIL, _custom_switch(ctx, spec))
     if not spec.toggleable:
         return Result.failure(Code.FAIL, f"{spec.name} can't be turned off")
     scope = _scope(ctx, v, 2)
     if action == "reset":
-        await _write(ctx, lambda repo: repo.set_command_toggle(scope, spec.name, actor(ctx), clear_enabled=True), scope)
+        await _write(ctx, lambda repo: repo.set_command_toggle(scope, spec.key, actor(ctx), clear_enabled=True), scope)
         return Result.success(f"{spec.name} reset")
     if action not in ("enable", "disable"):
         raise CommandError(f"usage: {CMD_USAGE}")
     enabled = action == "enable"
-    await _write(ctx, lambda repo: repo.set_command_toggle(scope, spec.name, actor(ctx), enabled=enabled), scope)
+    await _write(ctx, lambda repo: repo.set_command_toggle(scope, spec.key, actor(ctx), enabled=enabled), scope)
     return Result.success(
         f"{spec.name} {'enabled' if enabled else 'disabled'}{' everywhere' if scope == GLOBAL else ''}"
     )
