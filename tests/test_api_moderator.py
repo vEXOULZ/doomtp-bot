@@ -58,6 +58,9 @@ OWN = {
     ("PUT", "/api/v1/me/packs/{name}/commands/{command}"),
     ("DELETE", "/api/v1/me/packs/{name}/commands/{command}"),
     ("GET", "/api/v1/me/variables"),
+    ("PUT", "/api/v1/me/variables/chatter/{name}"),
+    ("DELETE", "/api/v1/me/variables/chatter/{name}"),
+    ("GET", "/api/v1/me/storage"),
     ("GET", "/api/v1/me/runs"),
     # Filtered to what the caller may see: their own entries, or the channels they manage.
     ("GET", "/api/v1/audit"),
@@ -75,6 +78,7 @@ SETTING_ROLE = {
     ("DELETE", "/api/v1/channels/{login}/grants/{name}/{variable}"),
     ("PUT", "/api/v1/channels/{login}/variables/{name}"),
     ("DELETE", "/api/v1/channels/{login}/variables/{name}"),
+    ("DELETE", "/api/v1/channels/{login}/chatters/{user_id}/variables/{name}"),
 }
 PERSONAL = OWN | SETTING_ROLE
 # Channel routes that need the broadcaster's rank, as their chat commands do.
