@@ -516,3 +516,117 @@ async def test_a_stored_token_for_another_account_is_refused_at_startup(dbs: Dat
 
     health = await service.health()
     assert "oldbot (999)" in health.detail["reason"] and "/auth/login" in health.detail["reason"]
+
+
+# ── the watchdog: chat that stops arriving without the client stopping ──────
+
+
+REDEEM = "channel.channel_points_custom_reward_redemption.add"
+
+
+def _socket(*channels: str, connected: bool = True, kind: str = "channel.chat.message", token: str = "999") -> Any:
+    """A real TwitchIO socket in the state the watchdog reads, with `kind` subscriptions for `channels`."""
+    from twitchio.eventsub import SubscriptionType
+    from twitchio.eventsub.websockets import Websocket
+
+    socket = Websocket(token_for=token, http=None)  # type: ignore[arg-type]
+    socket._socket = NS(closed=not connected)  # type: ignore[assignment]
+    for n, channel in enumerate(channels):
+        socket._subscriptions[f"sub-{channel}-{n}"] = {
+            "type": SubscriptionType(kind),
+            "version": "1",
+            "condition": {"broadcaster_user_id": channel, "user_id": token},
+            "transport": {"method": "websocket", "session_id": "s1"},
+            "token_for": token,
+        }
+    return socket
+
+
+def _watched(*sockets: Any, broadcaster: dict[str, Any] | None = None) -> TwitchService:
+    service = TwitchService(client_id="x", client_secret="y", tokens=None, sink=None)  # type: ignore[arg-type]
+    service.bot_id = "999"
+    by_token: dict[str, Any] = {"999": {f"s{n}": s for n, s in enumerate(sockets)}}
+    by_token.update({channel: {"b": socket} for channel, socket in (broadcaster or {}).items()})
+    service.client = NS(_websockets=by_token)  # type: ignore[assignment]
+    service._wanted = {"100", "200"}
+    service._subscribed = {"100", "200"}
+    return service
+
+
+def test_the_bot_hears_chat_while_a_connected_socket_carries_every_channel() -> None:
+    assert _watched(_socket("100", "200")).deaf_reason() is None
+
+
+def test_a_closed_socket_leaves_the_bot_deaf() -> None:
+    assert _watched().deaf_reason() == "no EventSub connection carries chat"
+    assert _watched(_socket("100", "200", connected=False)).deaf_reason() == "no EventSub connection carries chat"
+
+
+def test_a_revoked_channel_leaves_the_bot_deaf_there() -> None:
+    assert _watched(_socket("100")).deaf_reason() == "chat subscriptions gone for 1 channel(s)"
+
+
+def test_a_closed_broadcaster_socket_loses_the_redemptions() -> None:
+    chat = _socket("100", "200")
+    alive = _watched(chat, broadcaster={"100": _socket("100", kind=REDEEM, token="100")})
+    alive._channel_events = {"100": {REDEEM}}
+    assert alive.deaf_reason() is None
+    dead = _watched(chat, broadcaster={"100": _socket("100", kind=REDEEM, token="100", connected=False)})
+    dead._channel_events = {"100": {REDEEM}}
+    assert dead.deaf_reason() == "broadcaster events (redemptions, bits) gone for 1 channel(s)"
+
+
+async def test_only_subscriptions_twitchio_kept_are_watched() -> None:
+    from doomtp_bot.twitch.client import BROADCASTER_SUBSCRIPTIONS
+
+    answers = iter([{"data": [{"id": "s1"}]}, None])  # the cheer one already existed this session
+
+    async def subscribe_websocket(payload: Any, *, token_for: str) -> Any:
+        return next(answers)
+
+    service = _watched()
+    service.client = NS(subscribe_websocket=subscribe_websocket)  # type: ignore[assignment]
+    assert (await service.subscribe_broadcaster("100", {"redemptions", "bits"})).failed == ()
+    assert service._channel_events == {"100": {BROADCASTER_SUBSCRIPTIONS[0][1].type}}
+
+
+def test_nothing_is_deaf_before_any_channel_is_asked_for() -> None:
+    service = _watched()
+    service._wanted.clear()
+    assert service.deaf_reason() is None
+
+
+async def test_the_watchdog_restarts_a_deaf_client_and_health_says_so() -> None:
+    restarts: list[bool] = []
+
+    async def on_stopped() -> None:
+        restarts.append(True)
+
+    service = _watched()
+    service.on_stopped = on_stopped
+    service.watch_s = 0.01
+    watch = asyncio.create_task(service._watchdog(service.client))  # type: ignore[arg-type]
+    await asyncio.wait_for(watch, 1)
+    await asyncio.sleep(0)
+    assert restarts == [True]
+    health = await service.health()
+    assert health.status.value == "unhealthy" and health.detail["reason"] == "not hearing chat"
+
+
+async def test_the_watchdog_lets_a_quick_reconnect_finish() -> None:
+    restarts: list[bool] = []
+
+    async def on_stopped() -> None:
+        restarts.append(True)
+
+    socket = _socket("100", "200", connected=False)
+    service = _watched(socket)
+    service.on_stopped = on_stopped
+    service.watch_s = 0.05
+    watch = asyncio.create_task(service._watchdog(service.client))  # type: ignore[arg-type]
+    await asyncio.sleep(0.07)  # one miss, then TwitchIO's reconnect lands before the next check
+    assert service.deaf is not None
+    socket._socket = NS(closed=False)
+    await asyncio.sleep(0.1)
+    assert restarts == [] and service.deaf is None
+    watch.cancel()
