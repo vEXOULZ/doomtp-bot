@@ -317,3 +317,48 @@ async def test_a_custom_command_cannot_ignore_whoever_runs_it(h: Harness) -> Non
     refused = await h.run("bob", "!trap")
     assert refused.result.message == "ignore me only works typed in chat"
     assert not h.policy.is_ignored(CHANNEL_ID, USERS["bob"]["id"])
+
+
+# ── member ranks (ADR-0033) ────────────────────────────────────────────────
+async def test_a_pack_sets_a_members_rank_and_channels_can_raise_it_but_not_lower_it(h: Harness) -> None:
+    await h.say("alice", "!cc add hit echo hit me")
+    await h.say("alice", "!cc pack create blackjack")
+    await h.say("alice", "!cc pack add blackjack hit")
+    assert await h.say("alice", "!cc pack role blackjack hit mod") == (
+        "a pack sets one of: everyone, subscriber, vip, moderator, lead_moderator, broadcaster"
+    )
+    assert await h.say("alice", "!cc pack role blackjack hit moderator") == (
+        "hit in blackjack now moderator and up, wherever it's published"
+    )
+    info = await h.say("alice", "!cc pack info blackjack")
+    assert info is not None and info.startswith("blackjack: hit (moderator)")
+    await h.say("alice", "!cc pack share blackjack on")
+    await h.say("mod", "!cc publish pack @alice blackjack")
+
+    assert await h.say("bob", "!hit") is None  # denied, quietly like any other command
+    assert await h.say("mod", "!hit") == "hit me"
+    assert await h.say("mod", "!perm set hit everyone") == (
+        "hit needs moderator at least: its blackjack pack sets that, and a channel can only raise it"
+    )
+    assert await h.say("mod", "!perm allow hit vip") == (
+        "hit needs moderator at least: its blackjack pack sets that, and a channel can only raise it"
+    )
+    assert await h.say("mod", "!perm set hit broadcaster") == "hit now requires broadcaster"
+    assert await h.say("mod", "!perm show hit") == "hit: requires broadcaster"
+    await h.say("mod", "!perm clear hit")
+    assert await h.say("mod", "!perm show hit") == "hit: requires moderator"
+
+    assert await h.say("alice", "!cc pack role blackjack hit everyone") == "hit in blackjack now open to everyone"
+    assert await h.say("bob", "!hit") == "hit me"
+
+
+async def test_a_rule_written_before_the_pack_set_a_rank_cannot_lower_it(h: Harness) -> None:
+    await h.say("alice", "!cc add hit echo hit me")
+    await h.say("alice", "!cc pack create blackjack")
+    await h.say("alice", "!cc pack add blackjack hit")
+    await h.say("alice", "!cc pack share blackjack on")
+    await h.say("mod", "!cc publish pack @alice blackjack")
+    assert await h.say("mod", "!perm allow hit everyone") == "hit is also allowed for: everyone"
+    await h.say("alice", "!cc pack role blackjack hit vip")
+    assert await h.say("mod", "!perm show hit") == "hit: requires vip"
+    assert await h.say("bob", "!hit") is None

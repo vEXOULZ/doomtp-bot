@@ -41,7 +41,8 @@ def spec_for(
     follow the command rather than the name it happens to be published under.
 
     A command reached through a pack takes the pack's name as its module, so `!module disable <pack>`
-    turns the whole set off in a channel (ADR-0012). A system pack's members are sentinels instead: never
+    turns the whole set off in a channel (ADR-0012), and the rank the pack sets on it as a floor no channel
+    rule goes under (ADR-0033). A system pack's members are sentinels instead: never
     switched off, role everyone, no cooldowns, not logged (spec §8, ADR-0019).
     """
     summary = command.summary or f"custom command by @{command.owner_login}"
@@ -61,6 +62,7 @@ def spec_for(
             toggleable=False,
             fixed_policy=True,
         )
+    floor = command.pack_role if pack is not None else None  # the pack's rank on it (ADR-0033)
     return CommandSpec(
         name=name,
         module=pack.name if pack is not None else MODULE,
@@ -68,7 +70,8 @@ def spec_for(
         description=command.body,
         params=params,
         input=InputMode.OPTIONAL,
-        required_role=(publication.required_role if publication else None) or "everyone",
+        required_role=floor or (publication.required_role if publication else None) or "everyone",
+        min_role=floor,
         log_level=LogLevel.INVOCATIONS,
         policy_key=command.id,
     )

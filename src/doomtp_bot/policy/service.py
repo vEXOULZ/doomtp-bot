@@ -226,7 +226,19 @@ class PolicyService:
         rule = rules.get((channel_id, spec.key)) or rules.get((GLOBAL, spec.key))
         required = rule.required_role if rule and rule.required_role else spec.required_role
         allowed = rule.allowed_roles if rule else None
+        if spec.min_role is not None:  # a pack member's rank is a floor (ADR-0033)
+            if self.below_floor(channel_id, spec, required):
+                required = spec.min_role
+            if allowed:
+                allowed = tuple(r for r in allowed if not self.below_floor(channel_id, spec, r)) or None
         return required, allowed
+
+    def below_floor(self, channel_id: str, spec: CommandSpec, role: str) -> bool:
+        """Would requiring `role` let in someone the command's pack keeps out (ADR-0033)?"""
+        if spec.min_role is None:
+            return False
+        floor, rank = self.rank_of(channel_id, spec.min_role), self.rank_of(channel_id, role)
+        return floor is not None and (rank is None or rank < floor)
 
     def permission(self, ctx: ExecContext, spec: CommandSpec) -> Decision | None:
         if spec.fixed_policy:  # sentinels are always allowed (spec §8)
