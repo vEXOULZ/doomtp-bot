@@ -99,6 +99,18 @@ async def test_sessions_runs_and_outbound(dbs: Databases) -> None:
     assert await rows(dbs, "SELECT text_sent, twitch_message_id FROM outbound_msgs") == [("pong", "t1")]
 
 
+async def test_a_restart_ends_sessions_when_the_bot_last_heard_chat(dbs: Databases) -> None:
+    writer = ChatLogWriter(dbs.chatlog)
+    await writer.start_session("c1")
+    await writer.end_all_sessions("restart", at=1234)
+    await writer.start_session("c1")  # a new session once the client is back, so the gap between is filled
+    await writer.stop()
+    assert await rows(dbs, "SELECT ended_at, end_reason FROM log_sessions ORDER BY id") == [
+        (1234, "restart"),
+        (None, None),
+    ]
+
+
 async def test_stale_sessions_closed_at_last_message_before_next_session(dbs: Databases) -> None:
     await dbs.chatlog.execute(
         """

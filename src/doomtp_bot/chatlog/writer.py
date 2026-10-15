@@ -201,14 +201,15 @@ class ChatLogWriter:
             )
         self._sessions[channel_id] = int(session_id or 0)
 
-    async def end_session(self, channel_id: str, reason: str) -> None:
+    async def end_session(self, channel_id: str, reason: str, at: int | None = None) -> None:
+        """End the channel's session, at `at` (ms) when the bot stopped hearing it earlier than now."""
         session_id = self._sessions.pop(channel_id, None)
         if session_id is None:
             return
         async with transaction(self.conn):
             await self.conn.execute(
                 "UPDATE log_sessions SET ended_at = %s, end_reason = %s WHERE id = %s",
-                (now_ms(), reason, session_id),
+                (now_ms() if at is None else at, reason, session_id),
             )
 
     async def close_stale_sessions(self) -> int:
@@ -234,9 +235,9 @@ class ChatLogWriter:
             )
         return cur.rowcount or 0
 
-    async def end_all_sessions(self, reason: str) -> None:
+    async def end_all_sessions(self, reason: str, at: int | None = None) -> None:
         for channel_id in list(self._sessions):
-            await self.end_session(channel_id, reason)
+            await self.end_session(channel_id, reason, at)
 
     # ── internals ───────────────────────────────────────────────────────────
     async def _put(self, kind: str, params: tuple[Any, ...]) -> None:
