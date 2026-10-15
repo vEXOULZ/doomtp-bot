@@ -14,7 +14,7 @@ from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.engine import RunReport
 from doomtp_bot.storage.db import fetch_value
 from doomtp_bot.triggers.service import TriggerService
-from scripts.starter_pack import PYRAMID_FACTS, PYRAMID_PACK
+from scripts.starter_pack import _DEFAULT_FACT_PREFIX, PYRAMID_FACTS, PYRAMID_PACK
 from tests.customcmds.test_customcmds import BADGES, CHANNEL_ID, CHANNEL_LOGIN, USERS
 from tests.customcmds.test_packs import OTHER_CHANNEL, Harness, h  # noqa: F401
 from tests.test_starter_pack import OWNER, _install
@@ -29,6 +29,14 @@ def _chatter(harness: Harness, who: str, channel: str = CHANNEL_ID) -> Any:
 def _info(harness: Harness, channel: str = CHANNEL_ID) -> Any:
     login = CHANNEL_LOGIN if channel == CHANNEL_ID else "other"
     return dataclasses.replace(harness.policy.channel_info(channel, login), prefix="!")
+
+
+def remove_prefix(text: str | None) -> str | None:
+    if text is None:
+        return text
+    if text.startswith(_DEFAULT_FACT_PREFIX):
+        return text[len(_DEFAULT_FACT_PREFIX) :]
+    return text
 
 
 async def _say(harness: Harness, who: str, text: str) -> RunReport:
@@ -104,20 +112,20 @@ async def test_chance_zero_watches_without_breaking(h: Harness) -> None:  # noqa
 
 async def test_chance_hundred_breaks_once_per_pyramid_with_a_fact(h: Harness) -> None:  # noqa: F811
     await _setup(h, "chance 100")
-    fact = await _event(h, "step")
+    fact = remove_prefix(await _event(h, "step"))
     assert fact in PYRAMID_FACTS
-    assert await _event(h, "step", width=3, peak=3) is None  # its line is already out
+    assert remove_prefix(await _event(h, "step", width=3, peak=3)) is None  # its line is already out
     assert (await _var(h, "pyramid"))["attempt"] == "p1"
-    assert await _event(h, "step", pyramid_id="p2") in PYRAMID_FACTS  # the next pyramid gets its own try
+    assert remove_prefix(await _event(h, "step", pyramid_id="p2")) in PYRAMID_FACTS  # the next pyramid gets its own try
 
 
 async def test_going_up_and_going_down_roll_their_own_chance(h: Harness) -> None:  # noqa: F811
     await _setup(h, "chanceup 0", "chancedown 100")
-    assert await _event(h, "step", width=3, peak=3) is None  # still rising: up is 0%
-    assert await _event(h, "step", direction="down", width=2, peak=3) in PYRAMID_FACTS
+    assert remove_prefix(await _event(h, "step", width=3, peak=3)) is None  # still rising: up is 0%
+    assert remove_prefix(await _event(h, "step", direction="down", width=2, peak=3)) in PYRAMID_FACTS
     await _set(h, "chanceup 100", "chancedown 0")
-    assert await _event(h, "step", pyramid_id="p2", direction="down", width=2, peak=3) is None
-    assert await _event(h, "step", pyramid_id="p2", width=3, peak=3) in PYRAMID_FACTS
+    assert remove_prefix(await _event(h, "step", pyramid_id="p2", direction="down", width=2, peak=3)) is None
+    assert remove_prefix(await _event(h, "step", pyramid_id="p2", width=3, peak=3)) in PYRAMID_FACTS
 
 
 async def test_a_bot_break_and_a_dodge_are_counted(h: Harness) -> None:  # noqa: F811
@@ -169,10 +177,10 @@ async def test_breaks_by_chatters_count_for_the_breaker(h: Harness) -> None:  # 
 
 async def test_exempt_builders_are_never_broken(h: Harness) -> None:  # noqa: F811
     await _setup(h, "chance 100", "exempt mod")
-    assert await _event(h, "step", chatter="mod") is None
-    assert await _event(h, "step", chatter="alice") in PYRAMID_FACTS
+    assert remove_prefix(await _event(h, "step", chatter="mod")) is None
+    assert remove_prefix(await _event(h, "step", chatter="alice")) in PYRAMID_FACTS
     await _set(h, "exempt off")
-    assert await _event(h, "step", chatter="mod", pyramid_id="p2") in PYRAMID_FACTS
+    assert remove_prefix(await _event(h, "step", chatter="mod", pyramid_id="p2")) in PYRAMID_FACTS
 
 
 async def test_channel_facts_and_the_shared_switch(h: Harness) -> None:  # noqa: F811
@@ -180,13 +188,13 @@ async def test_channel_facts_and_the_shared_switch(h: Harness) -> None:  # noqa:
     empty = await _say(h, "alice", "!pyramid fact")
     assert empty.send == "no pyramid facts yet. Add one with !pyramid addfact <fact>"
     await _set(h, "chance 100")
-    assert await _event(h, "step") is None  # nothing to say, so no try
+    assert remove_prefix(await _event(h, "step")) is None  # nothing to say, so no try
     assert (await _var(h, "pyramid")).get("attempt") is None
 
     assert (await _say(h, "mod", "!pyramid addfact Pyramids are pointy")).send == "added pyramid fact #1"
     assert (await _say(h, "alice", "!pyramid fact")).send == "Pyramids are pointy"
     assert (await _say(h, "alice", "!pyramid fact 1")).send == "#1: Pyramids are pointy"
-    assert await _event(h, "step") == "Pyramids are pointy"
+    assert remove_prefix(await _event(h, "step")) == "Pyramids are pointy"
     assert (await _say(h, "mod", "!pyramid delfact 1")).send == "deleted pyramid fact #1"
     assert (await _say(h, "mod", "!pyramid delfact 1")).send == "there is no pyramid fact #1"
 
