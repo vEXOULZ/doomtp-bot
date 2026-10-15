@@ -50,7 +50,8 @@ from doomtp_bot.clock import now_ms
 from doomtp_bot.core.channels import ChannelBanned
 from doomtp_bot.customcmds.packs import custom_modules
 from doomtp_bot.customcmds.params import to_params
-from doomtp_bot.customcmds.resolution import system_specs
+from doomtp_bot.customcmds.resolution import MODULE as CUSTOM_MODULE
+from doomtp_bot.customcmds.resolution import is_custom, published_specs, system_specs
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.matcher import FilterError
 from doomtp_bot.filters.service import FilterService
@@ -508,6 +509,23 @@ def command_spec(request: Request, name: str) -> CommandSpec:
     raise HTTPException(status_code=404, detail=f"no command named {name}")
 
 
+async def _published(request: Request, channel_id: str) -> dict[str, CommandSpec]:
+    services = request.app.state
+    return await published_specs(channel_id, getattr(services, "customcmds", None), getattr(services, "packs", None))
+
+
+async def channel_command_spec(request: Request, channel_id: str, name: str) -> CommandSpec:
+    """A command as `!perm`, `!cooldown` and `!cmd` find it in a channel: a built-in or system pack member,
+    else the custom command chat there reaches under that name (`_common.rule_spec`)."""
+    try:
+        return command_spec(request, name)
+    except HTTPException:
+        found = (await _published(request, channel_id)).get(name.lower())
+        if found is None:
+            raise
+        return found
+
+
 def rule_json(policy: PolicyService, scope: str, spec: CommandSpec) -> dict[str, Any]:
     required, allowed = policy.required_role(scope, spec)
     return {
@@ -523,6 +541,9 @@ def rule_json(policy: PolicyService, scope: str, spec: CommandSpec) -> dict[str,
             role: {"tier_s": cd.tier_s, "user_s": cd.user_s} for role, cd in policy.cooldown_rules(scope, spec).items()
         },
         "log_level": policy.log_level(scope, spec).value,
+        # A custom command (ADR-0009): its rules are keyed by its id, and it turns on and off with its
+        # publication (`cc enable|disable`) or its pack's module, not here.
+        "custom": is_custom(spec),
     }
 
 
@@ -539,6 +560,11 @@ async def channel_commands(request: Request, login: str) -> dict[str, Any]:
         }
         for spec in [c.spec for c in runtime.registry.all()] + system_specs(runtime.resolver)
     ]
+    # Then the custom commands chat here reaches, unless a built-in has the name (spec §5.1).
+    taken = {c["name"] for c in listing}
+    for spec in (await _published(request, settings.channel_id)).values():
+        if spec.name not in taken:
+            listing.append({**rule_json(policy, settings.channel_id, spec), "requires": [], "missing": []})
     return {"channel": settings.login, "prefix": settings.prefix, "commands": listing}
 
 
@@ -553,6 +579,11 @@ async def apply_command_rule(
         raise HTTPException(status_code=400, detail=f"{spec.name} is always allowed for everyone")
     if rules and spec.module == "core_admin" and rank < BOT_ADMIN_RANK:
         raise HTTPException(status_code=403, detail="only a bot admin can change an admin command's rules")
+    if "enabled" in fields and is_custom(spec):
+        where = f"cc disable|enable {spec.name}" if spec.module == CUSTOM_MODULE else f"the {spec.module} module"
+        raise HTTPException(
+            status_code=400, detail=f"{spec.name} is a custom command: it turns off and on with {where}"
+        )
     if "enabled" in fields and not spec.toggleable:
         raise HTTPException(status_code=400, detail=f"{spec.name} can't be turned off")
     if fields.get("allowed_roles") == []:
@@ -566,7 +597,7 @@ async def apply_command_rule(
         if "enabled" in fields or "log_level" in fields:
             await repo.set_command_toggle(
                 scope,
-                spec.name,
+                spec.key,
                 caller.actor,
                 enabled=fields.get("enabled"),
                 log_level=fields.get("log_level"),
@@ -578,10 +609,10 @@ async def apply_command_rule(
             roles = fields.get("allowed_roles", list(allowed) if allowed else None)
             if required is None:
                 roles = None
-            await repo.set_command_rule(scope, spec.name, required, roles, caller.actor)
+            await repo.set_command_rule(scope, spec.key, required, roles, caller.actor)
         for role, cooldown in (body.cooldowns or {}).items():
             tier, user = (None, None) if cooldown is None else (cooldown.tier_s, cooldown.user_s)
-            await repo.set_cooldown(scope, spec.name, role, tier, user, caller.actor)
+            await repo.set_cooldown(scope, spec.key, role, tier, user, caller.actor)
 
     await policy.mutate(write)
 
@@ -593,7 +624,7 @@ async def patch_command(
     """Turn a command on or off here, set who may use it, its cooldowns per role and how much of its runs
     is logged: `!cmd`, `!perm` and `!cooldown` in one call."""
     settings, policy = _channel(request, login), _policy(request)
-    spec = command_spec(request, name)
+    spec = await channel_command_spec(request, settings.channel_id, name)
     rank = caller.rank_in(policy, settings.login)
     await apply_command_rule(request, settings.channel_id, spec, body, caller, rank)
     return rule_json(policy, settings.channel_id, spec)
@@ -601,7 +632,7 @@ async def patch_command(
 
 def reset_rule(policy: PolicyService, scope: str, spec: CommandSpec) -> CommandRule:
     """What `DELETE` sends: `!cmd reset`, `!perm clear` and every cooldown cleared, where each applies."""
-    fields: dict[str, Any] = {"enabled": None} if spec.toggleable else {}
+    fields: dict[str, Any] = {"enabled": None} if spec.toggleable and not is_custom(spec) else {}
     if not spec.fixed_policy:
         fields["required_role"] = None
         fields["cooldowns"] = dict.fromkeys(policy.cooldown_rules(scope, spec))
@@ -612,7 +643,7 @@ def reset_rule(policy: PolicyService, scope: str, spec: CommandSpec) -> CommandR
 async def reset_command(request: Request, login: str, name: str, caller: Caller = WRITE) -> dict[str, Any]:
     """Back to the command's own rules here. The log level stays."""
     settings, policy = _channel(request, login), _policy(request)
-    spec = command_spec(request, name)
+    spec = await channel_command_spec(request, settings.channel_id, name)
     rank = caller.rank_in(policy, settings.login)
     body = reset_rule(policy, settings.channel_id, spec)
     await apply_command_rule(request, settings.channel_id, spec, body, caller, rank)

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from doomtp_bot.customcmds.resolution import CustomCommandLoader
+from doomtp_bot.customcmds.resolution import CustomCommandLoader, published_specs
 from doomtp_bot.customcmds.service import CustomCommandError, CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.lang.parser import Context
@@ -170,6 +170,52 @@ async def test_mods_can_disable_and_re_enable_a_publication(h: Harness) -> None:
         channel_id=CHANNEL_ID, name="roll", status="active", actor_user_id=USERS["mod"]["id"]
     )
     assert await h.say("bob", "!roll") == "rolled"
+
+
+# ── a published command's rules: !perm, !cooldown and !cmd (ADR-0006, ADR-0009) ──
+async def test_cooldown_on_a_published_command_follows_the_command(h: Harness) -> None:
+    command = await h.add("alice", "roll", "echo rolled")
+    await h.service.publish(channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"])
+    await h.service.publish(channel_id=CHANNEL_ID, name="dice", command=command, published_by=USERS["mod"]["id"])
+    assert await h.say("mod", "!cooldown show roll") == "roll: no cooldowns"
+    assert await h.say("mod", "!cooldown set roll everyone 0 86400") == "roll for everyone: 0s shared, 86400s personal"
+    assert await h.say("bob", "!roll") == "rolled"
+    assert await h.say("bob", "!roll") is None  # on cooldown: silent (spec §5.2); the test clock moves a minute a read
+    # The rule is keyed by the command, so its other name here shares it.
+    assert await h.say("bob", "!dice") is None
+    assert await h.say("alice", "!dice") == "rolled"
+    assert await h.say("mod", "!cooldown clear roll everyone") == "roll cooldown for everyone reset to default"
+    assert await h.say("bob", "!roll") == "rolled"
+
+
+async def test_perm_and_log_level_on_a_published_command(h: Harness) -> None:
+    command = await h.add("alice", "roll", "echo rolled")
+    await h.service.publish(channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"])
+    assert await h.say("mod", "!perm show roll") == "roll: requires everyone"
+    assert await h.say("mod", "!perm set roll moderator") == "roll now requires moderator"
+    denied = await h.run("bob", "!roll")
+    assert (denied.result.code, denied.send) == (Code.DENIED, None)
+    assert await h.say("mod", "!roll") == "rolled"
+    assert await h.say("mod", "!cmd log roll all") == "roll log level: all"
+    spec = (await published_specs(CHANNEL_ID, h.service, None))["roll"]
+    assert h.policy.log_level(CHANNEL_ID, spec).value == "all"
+    assert await h.say("mod", "!perm clear roll") == "roll permissions reset to default (everyone)"
+    assert await h.say("bob", "!roll") == "rolled"
+
+
+async def test_cmd_points_a_custom_command_at_its_own_switch(h: Harness) -> None:
+    command = await h.add("alice", "roll", "echo rolled")
+    await h.service.publish(channel_id=CHANNEL_ID, name="roll", command=command, published_by=USERS["mod"]["id"])
+    assert (
+        await h.say("mod", "!cmd disable roll")
+        == "roll is a custom command: !cc disable|enable roll turns it off or on here"
+    )
+    assert await h.say("bob", "!roll") == "rolled"
+
+
+async def test_rules_only_reach_commands_published_here(h: Harness) -> None:
+    await h.add("alice", "hi", "echo hi")
+    assert await h.say("mod", "!cooldown show hi") == "unknown command: hi"
 
 
 # ── limits (spec §5.2 checks 6 and 7) ──────────────────────────────────────
