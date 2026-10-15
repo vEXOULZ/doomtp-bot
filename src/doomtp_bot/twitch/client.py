@@ -237,6 +237,8 @@ class TwitchService:
         self.last_error: str | None = None
         #: Channels asked for, whether or not their subscriptions took (`_subscribed` holds the ones that did).
         self._wanted: set[str] = set()
+        #: The broadcaster events each channel subscribed to on its own token: the watchdog's list for them.
+        self._channel_events: dict[str, set[str]] = {}
         self._watch: asyncio.Task[None] | None = None
         self.watch_s = WATCH_S
         #: Why the watchdog last found the bot deaf, while it still is; None while chat reaches it.
@@ -272,6 +274,7 @@ class TwitchService:
         )
         self._subscribed.clear()
         self._wanted.clear()
+        self._channel_events.clear()
         self.deaf = None
         await self.client.login()
         self._task = asyncio.create_task(self._run(self.client), name="twitch-client")
@@ -296,30 +299,42 @@ class TwitchService:
             # from a new task, because starting again cancels this one.
             asyncio.create_task(self.on_stopped(), name="twitch-restart")  # noqa: RUF006
 
+    def _carried(self, token_for: str) -> set[tuple[str, str]]:
+        """(type, broadcaster) of every subscription a connected socket on this token still carries."""
+        assert self.client is not None
+        carried: set[tuple[str, str]] = set()
+        for socket in list(self.client._websockets.get(token_for, {}).values()):
+            if not socket.connected:
+                continue
+            for sub in socket._subscriptions.values():
+                kind = str(getattr(sub["type"], "value", sub["type"]))
+                carried.add((kind, str(sub["condition"].get("broadcaster_user_id"))))
+        return carried
+
     def deaf_reason(self) -> str | None:
-        """Why chat no longer reaches the bot, or None while it does.
+        """Why chat, or a broadcaster's own events, no longer reach the bot; None while they do.
 
         TwitchIO keeps `client.start()` running when an EventSub socket closes for good — a reconnect that
         timed out, a resubscribe Twitch refused, every subscription revoked — so `_run` never returns and
         nothing else notices. This looks at the sockets themselves: the second place the adapter reaches into
         TwitchIO's internals, pinned by `tests/chat/test_twitch.py`.
         """
-        client = self.client
-        if client is None or self.bot_id is None or not self._wanted:
+        if self.client is None or self.bot_id is None:
             return None
-        sockets = client._websockets.get(self.bot_id, {})
-        hearing: set[str] = set()
-        for socket in list(sockets.values()):
-            if not socket.connected:
-                continue
-            for sub in socket._subscriptions.values():
-                if str(getattr(sub["type"], "value", sub["type"])) == CHAT_MESSAGE:
-                    hearing.add(str(sub["condition"].get("broadcaster_user_id")))
-        if not hearing:
-            return "no EventSub connection carries chat"
-        lost = sorted(self._subscribed - hearing)
-        if lost:
-            return f"chat subscriptions gone for {len(lost)} channel(s)"
+        if self._wanted:
+            hearing = {channel for kind, channel in self._carried(self.bot_id) if kind == CHAT_MESSAGE}
+            if not hearing:
+                return "no EventSub connection carries chat"
+            lost = sorted(self._subscribed - hearing)
+            if lost:
+                return f"chat subscriptions gone for {len(lost)} channel(s)"
+        quiet = [
+            channel
+            for channel, kinds in self._channel_events.items()
+            if not {(kind, channel) for kind in kinds} <= self._carried(channel)
+        ]
+        if quiet:
+            return f"broadcaster events (redemptions, bits) gone for {len(quiet)} channel(s)"
         return None
 
     async def _watchdog(self, client: _BotClient) -> None:
@@ -421,9 +436,11 @@ class TwitchService:
         refused = False
         for subscription in wanted:
             try:
-                await self.client.subscribe_websocket(
+                created = await self.client.subscribe_websocket(
                     subscription(broadcaster_user_id=channel_id), token_for=channel_id
                 )
+                if created is not None:  # TwitchIO answers None to one this session already has
+                    self._channel_events.setdefault(channel_id, set()).add(subscription.type)
             except Exception as exc:
                 if _already_subscribed(exc):
                     continue
@@ -440,6 +457,7 @@ class TwitchService:
     async def unsubscribe_channel(self, channel_id: str) -> None:
         self._subscribed.discard(channel_id)
         self._wanted.discard(channel_id)
+        self._channel_events.pop(channel_id, None)
         if self.client is None:
             return
         for sub_id, sub in self.client.websocket_subscriptions().items():
