@@ -10,7 +10,6 @@ import dataclasses
 import json
 from typing import Any
 
-from doomtp_bot.history.irc_convert import text
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.runtime.engine import RunReport
 from doomtp_bot.storage.db import fetch_value
