@@ -80,7 +80,12 @@ The API and web UI show the same warnings, as a confirmation step.
 ### Execution identity (the key safety rule)
 
 - A custom command **always runs as the invoker.** Every inner command is checked for toggles, the invoker's rank and the invoker's cooldowns.
-- The custom command itself has its own cooldown **in addition to** its inner commands' cooldowns.
+- The custom command itself has its own cooldown **in addition to** its inner commands' cooldowns. A
+  channel sets it, and the role it needs and its log level, with `!cooldown`, `!perm` and `!cmd log`
+  under the name it has there, as for a built-in (the API's `/channels/{login}/commands` takes the same
+  rules). The rules are keyed by the command's id, so they follow the command across renames and every
+  name it's published under in that channel. It turns on and off with `!cc enable|disable` (or its pack's
+  module), not `!cmd`. *(Added 2026-10-15; before that nothing could set them.)*
 - Variable access follows ADR-0010:
   - A foreign command can write only `publisher.*` and `publisher.chatter.*`.
   - It can write `channel.*` and `channel.chatter.*` only through explicit publication write grants.

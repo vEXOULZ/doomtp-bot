@@ -20,6 +20,7 @@ from doomtp_bot.customcmds.params import to_params
 from doomtp_bot.customcmds.service import CustomCommand, CustomCommandService, Publication
 from doomtp_bot.lang.ast import Invocation, Node, invocations
 from doomtp_bot.lang.errors import ParseError
+from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH
 from doomtp_bot.runtime.resolver import CustomTarget, Resolved, Resolver, Source
 from doomtp_bot.runtime.spec import CommandSpec, InputMode, LogLevel, Param
@@ -183,6 +184,41 @@ class SystemResolver:
 def system_specs(resolver: Resolver) -> list[CommandSpec]:
     """The system packs' commands, when the runtime resolves them (ADR-0019)."""
     return resolver.specs() if isinstance(resolver, SystemResolver) else []
+
+
+def is_custom(spec: CommandSpec) -> bool:
+    """A custom command published one by one or in a user's pack: its rules are keyed by its id. System pack
+    members carry an id too, but they are sentinels with fixed rules."""
+    return spec.policy_key is not None and not spec.fixed_policy
+
+
+async def published_specs(
+    channel_id: str, commands: CustomCommandService | None, packs: PackService | None
+) -> dict[str, CommandSpec]:
+    """The custom commands a channel's chat reaches by name, as `!perm`, `!cooldown` and `!cmd` change them.
+
+    Every name goes to what the runtime would resolve it to (spec §5.1): this channel's publication, a
+    global one, then a pack published here, then a global pack. A publication that is switched off here
+    (`cc disable`) is still listed, so its rules can be set before it's on again. Built-ins and system
+    pack members take a name first; the caller checks those. The spec's `policy_key` is the command id, so
+    a rule follows the command, not the name.
+    """
+    found: dict[str, CommandSpec] = {}
+    scopes = (GLOBAL,) if channel_id == GLOBAL else (GLOBAL, channel_id)
+    # Lowest priority first: a later entry for the same name wins.
+    if packs is not None:
+        for scope in scopes:
+            for publication, pack in await packs.publications_in(scope):
+                if publication.status != "active" or pack.is_system:
+                    continue
+                for command in await packs.members(pack.id, internal=False):
+                    found[command.name] = spec_for(command.name, command, None, pack)
+    if commands is not None:
+        for scope in scopes:
+            for pub, command in await commands.publications_in(scope):
+                if command.status == "active":
+                    found[pub.name] = spec_for(pub.name, command, pub)
+    return found
 
 
 @dataclass(frozen=True, slots=True)

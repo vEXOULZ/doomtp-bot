@@ -378,7 +378,8 @@ admins are looked up as in chat.
 | `invocations` | Every explicit invocation. **The default for prefixed commands.** |
 | `all` | Everything, including cooldown and permission rejections and listener non-matches. For debugging only. |
 
-- The level is set in the spec and overridden per channel with `!cmd log <command> <level>`.
+- The level is set in the spec and overridden per channel with `!cmd log <command> <level>`, a published
+  custom command's included (ADR-0009).
 - Audit logging (§5.5) is **always on** and is not affected by these levels.
 
 ---

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from doomtp_bot.customcmds.resolution import is_custom as is_custom
+from doomtp_bot.customcmds.resolution import published_specs
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, strip_prefix
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.runtime.context import CommandContext
@@ -78,3 +80,18 @@ def command_spec(ctx: CommandContext, name: str) -> CommandSpec:
     if system is None or system.source != "system":
         raise CommandError(f"unknown command: {name}")
     return system.spec
+
+
+async def rule_spec(ctx: CommandContext, name: str) -> CommandSpec:
+    """The command whose rules `!perm`, `!cooldown` and `!cmd` change: a built-in or system pack member as
+    `command_spec` finds it, else the custom command chat here reaches under that name."""
+    try:
+        return command_spec(ctx, name)
+    except CommandError:
+        pass
+    services = ctx.exec.services
+    found = await published_specs(ctx.channel.id, services.get("customcmds"), services.get("packs"))
+    spec = found.get(strip_prefix(name, ctx.channel.prefix).lower())
+    if spec is None:
+        raise CommandError(f"unknown command: {name}")
+    return spec

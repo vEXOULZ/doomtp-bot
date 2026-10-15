@@ -657,6 +657,39 @@ async def test_the_module_list_has_packs_and_custom_with_chats_toggle_rules(
     assert (await modules())["custom"]["enabled"] is False
 
 
+async def test_published_custom_commands_get_rules_like_built_ins(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    await _publish_pack_and_command(app_and_keys[0])
+    listed = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/commands")).json()["commands"]
+    by_name = {c["name"]: c for c in listed}
+    assert by_name["hype"]["custom"] is True and by_name["hype"]["module"] == "custom"
+    assert by_name["coin"]["custom"] is True and by_name["coin"]["module"] == "games"
+    assert by_name["random"]["custom"] is False
+
+    ruled = await client.patch(
+        f"/api/v1/channels/{CHANNEL_LOGIN}/commands/hype",
+        json={"required_role": "moderator", "cooldowns": {"everyone": {"tier_s": 5, "user_s": 30}}, "log_level": "all"},
+        headers=auth(write_key),
+    )
+    assert ruled.status_code == 200
+    body = ruled.json()
+    assert (body["required_role"], body["cooldowns"], body["log_level"]) == (
+        "moderator",
+        {"everyone": {"tier_s": 5, "user_s": 30}},
+        "all",
+    )
+    # On and off stay with the publication (`cc disable`) or the pack's module, as in chat.
+    refused = await client.patch(
+        f"/api/v1/channels/{CHANNEL_LOGIN}/commands/coin", json={"enabled": False}, headers=auth(write_key)
+    )
+    assert refused.status_code == 400 and "games module" in refused.json()["detail"]
+
+    reset = await client.delete(f"/api/v1/channels/{CHANNEL_LOGIN}/commands/hype", headers=auth(write_key))
+    assert reset.status_code == 200
+    assert (reset.json()["required_role"], reset.json()["cooldowns"]) == ("everyone", {})
+
+
 async def test_explain_knows_pack_commands_and_says_when_their_module_is_off(
     client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
 ) -> None:
