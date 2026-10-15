@@ -70,7 +70,13 @@ from doomtp_bot.runtime.variables import (
     Limits,
     Space,
 )
-from doomtp_bot.triggers.service import TRIGGER_TYPES, PackTriggerError, TriggerError, TriggerService
+from doomtp_bot.triggers.service import (
+    MAX_COOLDOWN_S,
+    TRIGGER_TYPES,
+    PackTriggerError,
+    TriggerError,
+    TriggerService,
+)
 from doomtp_bot.variables.store import LimitOverride
 from doomtp_bot.webfetch.fetcher import Secret
 from doomtp_bot.webfetch.hosts import MAX_LIMIT, HostError, HostStore
@@ -791,6 +797,9 @@ class TriggerBody(BaseModel):
     schedule: dict[str, Any] | None = None
     run_as_rank: int | None = Field(default=None, ge=0, le=10_000)  # the creator's own rank by default
     log_level: LogLevelName = "output"
+    # ADR-0031: seconds before it fires again in the channel, and for the same chatter; 0 is none.
+    cooldown_s: int = Field(default=0, ge=0, le=MAX_COOLDOWN_S)
+    user_cooldown_s: int = Field(default=0, ge=0, le=MAX_COOLDOWN_S)
 
 
 class TriggerPatch(BaseModel):
@@ -802,6 +811,8 @@ class TriggerPatch(BaseModel):
     schedule: dict[str, Any] | None = None
     run_as_rank: int | None = Field(default=None, ge=0, le=10_000)
     log_level: LogLevelName | None = None
+    cooldown_s: int | None = Field(default=None, ge=0, le=MAX_COOLDOWN_S)
+    user_cooldown_s: int | None = Field(default=None, ge=0, le=MAX_COOLDOWN_S)
 
 
 def _trigger_json(trigger: Any) -> dict[str, Any]:
@@ -814,6 +825,8 @@ def _trigger_json(trigger: Any) -> dict[str, Any]:
         "enabled": trigger.enabled,
         "run_as_rank": trigger.run_as_rank,
         "log_level": trigger.log_level.value,
+        "cooldown_s": trigger.cooldown_s,
+        "user_cooldown_s": trigger.user_cooldown_s,
         "created_by": trigger.created_by,
         "pack": trigger.pack,  # set on a pack's trigger, which can't be changed here (ADR-0029)
     }
@@ -851,6 +864,8 @@ async def add_trigger(request: Request, login: str, body: TriggerBody, caller: C
             schedule=body.schedule,
             run_as_rank=_run_as(request, caller, settings.login, body.run_as_rank),
             log_level=LogLevel(body.log_level),
+            cooldown_s=body.cooldown_s,
+            user_cooldown_s=body.user_cooldown_s,
             created_by=caller.actor.user_id,
             prefix=settings.prefix,
             via=caller.actor.via,
@@ -882,6 +897,8 @@ async def patch_trigger(
                 schedule=body.schedule,
                 run_as_rank=run_as,
                 log_level=None if body.log_level is None else LogLevel(body.log_level),
+                cooldown_s=body.cooldown_s,
+                user_cooldown_s=body.user_cooldown_s,
                 actor_user_id=caller.actor.user_id,
                 prefix=settings.prefix,
                 via=caller.actor.via,

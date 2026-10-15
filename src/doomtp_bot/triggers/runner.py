@@ -3,6 +3,9 @@
 Every trigger goes through the same runtime a typed command does, at the rank its creator chose, with
 the event payload in `{event.*}` and listener captures in `{match.*}`. The chatter is the event's user —
 the raider, the subscriber, the person who matched — and a timer has none.
+
+A trigger's own cooldowns (ADR-0031) hold it back before it runs: one window for the whole channel and one
+per chatter, kept in memory like a command's buckets. A firing inside either is skipped quietly.
 """
 
 from __future__ import annotations
@@ -13,7 +16,9 @@ import structlog
 
 from doomtp_bot.core.streams import live_fields
 from doomtp_bot.lang.parser import Context
+from doomtp_bot.policy.cooldowns import CooldownTracker
 from doomtp_bot.runtime.executor import ScopeArgs
+from doomtp_bot.runtime.spec import Cooldown
 from doomtp_bot.triggers.service import Trigger
 
 if TYPE_CHECKING:
@@ -35,11 +40,21 @@ class TriggerRunner:
         policy: PolicyService,
         outbox: Outbox,
         streams: StreamStatus | None = None,
+        cooldowns: CooldownTracker | None = None,
     ) -> None:
         self.runtime = runtime
         self.policy = policy
         self.outbox = outbox
         self.streams = streams
+        self.cooldowns = cooldowns or CooldownTracker()
+
+    def cooling(self, trigger: Trigger, user_id: str | None) -> bool:
+        """Whether one of the trigger's cooldowns still holds it, here or for this chatter (ADR-0031). A pack
+        trigger shares its id across channels, so the channel is part of the key."""
+        if not trigger.cooldown_s and not trigger.user_cooldown_s:
+            return False
+        state = self.cooldowns.state(trigger.channel_id, f"trigger:{trigger.id}", "trigger", user_id)
+        return not state.ready
 
     async def run(
         self,
@@ -54,7 +69,17 @@ class TriggerRunner:
         is_cancelled: Callable[[], bool] | None = None,
         message_id: str | None = None,
     ) -> RunReport | None:
-        """Run one trigger and send whatever it produced. Returns the report, or None if it didn't parse."""
+        """Run one trigger and send whatever it produced. Returns the report, or None if it didn't parse or
+        is still cooling down."""
+        user_id = user[0] if user is not None else None
+        if self.cooling(trigger, user_id):
+            log.info("trigger.cooldown", trigger=trigger.id, type=trigger.type, channel=trigger.channel_id)
+            return None
+        if trigger.cooldown_s or trigger.user_cooldown_s:
+            # Taken before the run, with no await in between, so two lines arriving together can't both
+            # get through. A run that then fails or is moderated away has still used its turn.
+            rule = Cooldown(tier_s=trigger.cooldown_s, user_s=trigger.user_cooldown_s)
+            self.cooldowns.commit(trigger.channel_id, f"trigger:{trigger.id}", "trigger", user_id, rule)
         channel = self.policy.channel_info(
             trigger.channel_id, channel_login, **live_fields(self.streams, trigger.channel_id)
         )

@@ -347,6 +347,28 @@ async def test_triggers_round_trip(client: httpx.AsyncClient, write_key: str) ->
     assert gone.status_code == 200
 
 
+async def test_trigger_cooldowns_are_set_like_chat_sets_them(client: httpx.AsyncClient, write_key: str) -> None:
+    """ADR-0031: `cooldown_s` and `user_cooldown_s` on add and edit, with chat's rules."""
+    url, headers = f"/api/v1/channels/{CHANNEL_LOGIN}/triggers", auth(write_key)
+    made = await client.post(
+        url,
+        json={"type": "listener", "expr": "echo hi", "match": {"regex": "hi", "name": "hi"}, "cooldown_s": 30},
+        headers=headers,
+    )
+    assert made.status_code == 201, made.text
+    assert (made.json()["cooldown_s"], made.json()["user_cooldown_s"]) == (30, 0)
+    changed = await client.patch(f"{url}/{made.json()['id']}", json={"user_cooldown_s": 120}, headers=headers)
+    assert (changed.json()["cooldown_s"], changed.json()["user_cooldown_s"]) == (30, 120)
+    timer = await client.post(
+        url,
+        json={"type": "timer", "expr": "echo hi", "schedule": {"every_s": 900}, "user_cooldown_s": 60},
+        headers=headers,
+    )
+    assert timer.status_code == 400 and "no chatter" in timer.json()["detail"]
+    too_long = await client.patch(f"{url}/{made.json()['id']}", json={"cooldown_s": 90000}, headers=headers)
+    assert too_long.status_code == 422
+
+
 async def test_filter_and_trigger_writes_are_audited_as_api(client: httpx.AsyncClient, write_key: str) -> None:
     base = f"/api/v1/channels/{CHANNEL_LOGIN}"
     entry_id = (await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))).json()["id"]
