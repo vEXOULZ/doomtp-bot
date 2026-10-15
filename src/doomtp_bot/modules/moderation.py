@@ -254,7 +254,9 @@ async def announce_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
         side_effects=True,
         default_cooldowns={"moderator": Cooldown(tier_s=30)},
         log_level=LogLevel.INVOCATIONS,
-        examples=(Example('{sign}mecho "welcome {$chatter.display}" "the rules are in {sign}rules"', "(two messages)"),),
+        examples=(
+            Example('{sign}mecho "welcome {$chatter.display}" "the rules are in {sign}rules"', "(two messages)"),
+        ),
     )
 )
 async def mecho_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
