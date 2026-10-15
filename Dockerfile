@@ -31,6 +31,8 @@ COPY --from=build /opt/venv /opt/venv
 # The one-shot tools (backup, coverage, starter pack) run from the image, not from a checkout beside it:
 # a guest that deploys by pulling has no source tree to mount over them.
 COPY scripts /app/scripts
+# The tag or branch and commit CI built this from (core/build.py); empty in a local build.
+COPY build-info /app/build-info
 USER bot
 VOLUME ["/data"]
 EXPOSE 8080

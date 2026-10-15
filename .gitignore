@@ -34,3 +34,7 @@ data/
 # Web editor
 web-editor/node_modules/
 web-editor/dist/
+
+# Written by CI before the image build (core/build.py)
+/build-info/ref
+/build-info/commit

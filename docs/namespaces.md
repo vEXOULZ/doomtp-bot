@@ -90,7 +90,7 @@ A type is either **declared once** in the command's parameter definition, or giv
 | `{$chatter.*}` | `id`, `name` (login), `display`, `rank`, `roles`, `is_sub`, `is_vip`, `is_mod` | anywhere |
 | `{$channel.*}` | `id`, `name`, `display`, `prefix`, `live`, `title`, `game`, `viewers`, `uptime` (seconds; `:human` says it for people), `next_stream` (`[title]`, `[category]`, `[start]`, `[in]` seconds from now; missing when nothing is scheduled) | anywhere |
 | `{$publisher.*}` | `id`, `name`, `display` (owner of the custom command) | custom commands |
-| `{$bot.*}` | `name`, `id`, `version` | anywhere |
+| `{$bot.*}` | `name`, `id`, `version`, `release` (the tag, or the branch, the bot was built from), `commit` (short), `uptime` (seconds since it started) | anywhere |
 | `{$now.*}` | `iso`, `unix`, `date`, `time`, `weekday` (channel timezone) | anywhere |
 | `{cmd.*}` | `name`, `alias`, `id`, `version`, `owner` | custom commands |
 | `{event.*}` | trigger payload: `type`, `user.*`, `input`, `reward.*`, `viewers`, `bits`, `months`, `tier`, `message`; for `pyramid`, `pyramid_id`, `phase`, `direction`, `token`, `width`, `peak`, `breaker.*`, `by_bot`, `self_broken` (ADR-0028) | custom commands and triggers |
