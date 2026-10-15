@@ -19,7 +19,7 @@ from doomtp_bot.lang.parser import Context
 from doomtp_bot.policy.cooldowns import CooldownTracker
 from doomtp_bot.runtime.executor import ScopeArgs
 from doomtp_bot.runtime.spec import Cooldown
-from doomtp_bot.triggers.service import Trigger
+from doomtp_bot.triggers.service import MIN_CHANNEL_COOLDOWN_S, Trigger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -48,10 +48,15 @@ class TriggerRunner:
         self.streams = streams
         self.cooldowns = cooldowns or CooldownTracker()
 
+    @staticmethod
+    def channel_cooldown_s(trigger: Trigger) -> int:
+        """Its whole-channel cooldown, at least the least its type runs with (ADR-0034)."""
+        return max(trigger.cooldown_s, MIN_CHANNEL_COOLDOWN_S.get(trigger.type, 0))
+
     def cooling(self, trigger: Trigger, user_id: str | None) -> bool:
         """Whether one of the trigger's cooldowns still holds it, here or for this chatter (ADR-0031). A pack
         trigger shares its id across channels, so the channel is part of the key."""
-        if not trigger.cooldown_s and not trigger.user_cooldown_s:
+        if not self.channel_cooldown_s(trigger) and not trigger.user_cooldown_s:
             return False
         state = self.cooldowns.state(trigger.channel_id, f"trigger:{trigger.id}", "trigger", user_id)
         return not state.ready
@@ -75,10 +80,11 @@ class TriggerRunner:
         if self.cooling(trigger, user_id):
             log.info("trigger.cooldown", trigger=trigger.id, type=trigger.type, channel=trigger.channel_id)
             return None
-        if trigger.cooldown_s or trigger.user_cooldown_s:
+        channel_s = self.channel_cooldown_s(trigger)
+        if channel_s or trigger.user_cooldown_s:
             # Taken before the run, with no await in between, so two lines arriving together can't both
             # get through. A run that then fails or is moderated away has still used its turn.
-            rule = Cooldown(tier_s=trigger.cooldown_s, user_s=trigger.user_cooldown_s)
+            rule = Cooldown(tier_s=channel_s, user_s=trigger.user_cooldown_s)
             self.cooldowns.commit(trigger.channel_id, f"trigger:{trigger.id}", "trigger", user_id, rule)
         channel = self.policy.channel_info(
             trigger.channel_id, channel_login, **live_fields(self.streams, trigger.channel_id)
