@@ -231,6 +231,7 @@ async def run(settings: Settings) -> None:
         links_allowed_for=links_allowed_for,
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
+    runtime.services["outbox"] = outbox  # `mecho` sends its lines itself, one message each
     trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
     timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
