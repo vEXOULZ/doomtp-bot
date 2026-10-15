@@ -18,9 +18,11 @@ from doomtp_bot.runtime.result import CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 from doomtp_bot.triggers.cron import describe as describe_cron
 from doomtp_bot.triggers.service import (
+    NO_CHATTER,
     REQUIRED_CAPABILITY,
     TRIGGER_TYPES,
     TriggerError,
+    parse_duration,
     parse_every,
 )
 
@@ -30,11 +32,18 @@ if TYPE_CHECKING:
 MODULE = "automation"
 EVENT_TYPES = tuple(t for t in TRIGGER_TYPES if t not in ("listener", "timer", "cron"))
 LISTENER_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")
-LISTEN_USAGE = 'listen list | add <name> </regex/|"regex"> <expression> | test <text> | rm|on|off <name|id>'
-EVENT_USAGE = "event list | add <" + "|".join(EVENT_TYPES) + "> <expression> | rm|on|off <id>"
+LISTEN_USAGE = (
+    'listen list | add <name> </regex/|"regex"> <expression> | test <text> | rm|on|off <name|id>'
+    " | cooldown <name|id> [<channel> [<user>]]"
+)
+EVENT_USAGE = (
+    "event list | add <"
+    + "|".join(EVENT_TYPES)
+    + "> <expression> | rm|on|off <id> | cooldown <id> [<channel> [<user>]]"
+)
 TIMER_USAGE = (
     "timer list | add <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression>"
-    ' | cron "<m h dom mon dow>" <expression> | rm|on|off <id>'
+    ' | cron "<m h dom mon dow>" <expression> | rm|on|off <id> | cooldown <id> [<channel>]'
 )
 TRIGGER_USAGE = (
     "trigger list | add <" + "|".join(EVENT_TYPES) + "> <expression> |"
@@ -42,7 +51,7 @@ TRIGGER_USAGE = (
 )
 
 
-def _leading_arg(raw: str, usage: str, *, slashes: bool = False) -> tuple[str, str]:
+def leading_arg(raw: str, usage: str, *, slashes: bool = False) -> tuple[str, str]:
     """Split a raw tail into its first argument and the expression after it (ADR-0018: no `=>`).
 
     The argument is one word, `"…"` when it has spaces, or `/…/` for a regex when `slashes` is set.
@@ -70,7 +79,14 @@ def _service(ctx: CommandContext) -> TriggerService:
     return ctx.service("triggers")  # type: ignore[no-any-return]
 
 
-def _describe(trigger: Trigger) -> str:
+def describe(trigger: Trigger) -> str:
+    pack = f" ({trigger.pack} pack)" if trigger.pack else ""
+    held = f" [{cooldowns_text(trigger)}]" if trigger.cooldown_s or trigger.user_cooldown_s else ""
+    return f"{trigger.id}:{trigger_what(trigger)}{'' if trigger.enabled else ' (off)'}{pack}{held} → {trigger.expr}"
+
+
+def trigger_what(trigger: Trigger) -> str:
+    """What sets it off: a listener's regex, a timer's interval, a cron's schedule or the event's type."""
     if trigger.type == "listener":
         what = f"{trigger.name} /{trigger.regex}/" if trigger.name else f"/{trigger.regex}/"
     elif trigger.type == "timer":
@@ -79,8 +95,24 @@ def _describe(trigger: Trigger) -> str:
         what = describe_cron(trigger.cron)
     else:
         what = trigger.type
-    pack = f" ({trigger.pack} pack)" if trigger.pack else ""
-    return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'}{pack} → {trigger.expr}"
+    return what
+
+
+def _seconds(value: int) -> str:
+    for unit, size in (("h", 3600), ("m", 60)):
+        if value and value % size == 0:
+            return f"{value // size}{unit}"
+    return f"{value}s"
+
+
+def cooldowns_text(trigger: Trigger) -> str:
+    """`cooldown 30s, 2m per chatter`, or `no cooldown`."""
+    parts = []
+    if trigger.cooldown_s:
+        parts.append(f"{_seconds(trigger.cooldown_s)} for the channel")
+    if trigger.user_cooldown_s:
+        parts.append(f"{_seconds(trigger.user_cooldown_s)} per chatter")
+    return "cooldown " + ", ".join(parts) if parts else "no cooldown"
 
 
 async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
@@ -88,9 +120,10 @@ async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
     if not found:
         return Result.success("none here", [])
     return Result.success(
-        "; ".join(_describe(t) for t in found),
+        "; ".join(describe(t) for t in found),
         [
             {"id": t.id, "type": t.type, "enabled": t.enabled, "expr": t.expr}
+            | {"cooldown_s": t.cooldown_s, "user_cooldown_s": t.user_cooldown_s}
             | ({"name": t.name} if t.name else {})
             | ({"pack": t.pack} if t.pack else {})
             for t in found
@@ -142,6 +175,45 @@ async def _remove_or_toggle(
     return Result.success(f"{values[1]} is {'on' if action == 'on' else 'off'}")
 
 
+async def _cooldown(ctx: CommandContext, values: list[str], usage: str, *, named: bool = False) -> Result:
+    """`<listen|event|timer> cooldown <id> [<channel> [<user>]]` (ADR-0031): with no durations, what it is;
+    with them, the whole-channel and per-chatter windows, `0` for none. Leaving out the per-chatter one
+    keeps it."""
+    need(values, 2, usage)
+    entry_id = _entry_id(ctx, values[1], named=named)
+    service = _service(ctx)
+    current = next((t for t in service.in_channel(ctx.channel.id) if t.id == entry_id), None)
+    if current is None:
+        raise CommandError(f"no entry {entry_id} here")
+    if len(values) == 2:
+        return Result.success(
+            f"{values[1]}: {cooldowns_text(current)}",
+            {"cooldown_s": current.cooldown_s, "user_cooldown_s": current.user_cooldown_s},
+        )
+    if len(values) > 4 or (len(values) == 4 and current.type in NO_CHATTER):
+        raise CommandError(f"usage: {usage}")
+    try:
+        channel_s = parse_duration(values[2])
+        user_s = parse_duration(values[3]) if len(values) == 4 else None
+        updated = await service.update(
+            channel_id=ctx.channel.id,
+            trigger_id=entry_id,
+            cooldown_s=channel_s,
+            user_cooldown_s=user_s,
+            actor_user_id=ctx.invoker.id if ctx.invoker else None,
+            prefix=ctx.channel.prefix,
+            via="chat",
+        )
+    except TriggerError as exc:  # a bad duration, or a pack's trigger (ADR-0029)
+        raise CommandError(str(exc)) from exc
+    if updated is None:
+        raise CommandError(f"no entry {entry_id} here")
+    return Result.success(
+        f"{values[1]}: {cooldowns_text(updated)}",
+        {"cooldown_s": updated.cooldown_s, "user_cooldown_s": updated.user_cooldown_s},
+    )
+
+
 async def _add(
     ctx: CommandContext,
     type_: str,
@@ -166,13 +238,19 @@ async def _add(
         raise CommandError(str(exc)) from exc
 
 
-def _warning(ctx: CommandContext, type_: str) -> str:
+def capability_warning(ctx: CommandContext, type_: str) -> str:
     """Say up front when a trigger is stored but can't fire here yet (ADR-0007)."""
     needed = REQUIRED_CAPABILITY.get(type_)
     if needed and needed not in ctx.channel.capabilities:
         how = "mod the bot" if needed == "followers" else "the broadcaster has to connect the channel"
         return f" ⚠ it stays quiet until this channel grants {needed}: {how}"
     return ""
+
+
+def capability_note(type_: str) -> str:
+    """For a pack's trigger, which fires in many channels: where it stays quiet (ADR-0007, ADR-0032)."""
+    needed = REQUIRED_CAPABILITY.get(type_)
+    return f", in the channels that granted {needed}" if needed else ""
 
 
 # ── !listen ─────────────────────────────────────────────────────────────────
@@ -189,6 +267,7 @@ def _warning(ctx: CommandContext, type_: str) -> str:
             Example(r"{sign}listen add hello /\bhello\b/ echo hi {$chatter.display}", ""),
             Example(r"{sign}listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}", ""),
             Example("{sign}listen test hello there", ""),
+            Example("{sign}listen cooldown hello 30s 5m", "hello: cooldown 30s for the channel, 5m per chatter"),
         ),
     ),
     raw_tail_subcommands=(("add", 3), ("test", 2)),
@@ -201,6 +280,8 @@ async def listen_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         return await _listing(ctx, ("listener",))
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, LISTEN_USAGE, named=True)
+    if action == "cooldown":
+        return await _cooldown(ctx, values, LISTEN_USAGE, named=True)
     if action == "test":
         return _test(ctx, (args.raw_tail or " ".join(values[1:])).strip())
     if action != "add":
@@ -212,7 +293,7 @@ async def listen_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         raise CommandError("a listener's name is a letter, then up to 31 letters, digits or _")
     if _listener(ctx, name) is not None:
         raise CommandError(f"there's already a listener called {name}: rm it first")
-    regex, expr = _leading_arg(args.raw_tail or " ".join(values[2:]), LISTEN_USAGE, slashes=True)
+    regex, expr = leading_arg(args.raw_tail or " ".join(values[2:]), LISTEN_USAGE, slashes=True)
     created = await _add(ctx, "listener", expr, match={"regex": regex, "name": name})
     return Result.success(f"listener {name} added ({created.id})", {"id": created.id, "name": name})
 
@@ -256,6 +337,8 @@ async def event_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         return await _listing(ctx, EVENT_TYPES)
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, EVENT_USAGE)
+    if action == "cooldown":
+        return await _cooldown(ctx, values, EVENT_USAGE)
     if action != "add":
         raise CommandError(f"usage: {EVENT_USAGE}")
     need(values, 2, EVENT_USAGE)
@@ -266,7 +349,7 @@ async def event_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
     if not expr:
         raise CommandError(f"usage: {EVENT_USAGE}")
     created = await _add(ctx, type_, expr)
-    return Result.success(f"{type_} event {created.id} added{_warning(ctx, type_)}", {"id": created.id})
+    return Result.success(f"{type_} event {created.id} added{capability_warning(ctx, type_)}", {"id": created.id})
 
 
 # ── !timer ──────────────────────────────────────────────────────────────────
@@ -294,19 +377,28 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         return await _listing(ctx, ("timer", "cron"))
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, TIMER_USAGE)
+    if action == "cooldown":
+        return await _cooldown(ctx, values, TIMER_USAGE)
     if action == "cron":
         return await _add_cron(ctx, args, values)
     if action != "add":
         raise CommandError(f"usage: {TIMER_USAGE}")
 
     need(values, 2, TIMER_USAGE)
+    schedule, expr = timer_schedule(values[1], args.raw_tail or " ".join(values[2:]), TIMER_USAGE)
+    created = await _add(ctx, "timer", expr, schedule=schedule)
+    every = schedule["every_s"]
+    return Result.success(f"timer {created.id} every {every}s", {"id": created.id, "every_s": every})
+
+
+def timer_schedule(every: str, rest: str, usage: str) -> tuple[dict[str, Any], str]:
+    """`15m [jitter=<d>] [only_live] [min_lines=<n>] <expression>` → the timer's schedule and expression."""
     try:
-        schedule: dict[str, Any] = {"every_s": parse_every(values[1])}
+        schedule: dict[str, Any] = {"every_s": parse_every(every)}
     except TriggerError as exc:
         raise CommandError(str(exc)) from exc
-    rest = (args.raw_tail or " ".join(values[2:])).strip()
     expr_words: list[str] = []
-    for word in rest.split():
+    for word in rest.strip().split():
         lowered = word.lower()
         if lowered == "only_live":
             schedule["only_live"] = True
@@ -321,15 +413,13 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
             expr_words.append(word)
     expr = " ".join(expr_words)
     if not expr:
-        raise CommandError(f"usage: {TIMER_USAGE}")
-    created = await _add(ctx, "timer", expr, schedule=schedule)
-    every = schedule["every_s"]
-    return Result.success(f"timer {created.id} every {every}s", {"id": created.id, "every_s": every})
+        raise CommandError(f"usage: {usage}")
+    return schedule, expr
 
 
 async def _add_cron(ctx: CommandContext, args: Args, values: list[str]) -> Result:
     """`timer cron "0 18 * * fri" echo we live at six`, in the channel's timezone."""
-    schedule_text, expr = _leading_arg(args.raw_tail or " ".join(values[1:]), TIMER_USAGE)
+    schedule_text, expr = leading_arg(args.raw_tail or " ".join(values[1:]), TIMER_USAGE)
     created = await _add(ctx, "cron", expr, schedule={"cron": schedule_text.strip()})
     when = describe_cron(created.cron)
     return Result.success(
@@ -370,7 +460,7 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
     match: dict[str, Any] = {}
     if action == "listen":
         type_ = "listener"
-        match["regex"], expr = _leading_arg(expr, TRIGGER_USAGE)
+        match["regex"], expr = leading_arg(expr, TRIGGER_USAGE)
     elif action == "add":
         need(values, 2, TRIGGER_USAGE)
         type_ = values[1].lower()
@@ -380,7 +470,7 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         raise CommandError(f"usage: {TRIGGER_USAGE}")
     created = await _add(ctx, type_, expr, match=match)
     return Result.success(
-        f"added {type_} trigger {created.id}{_warning(ctx, type_)}{_going_away(ctx.channel.prefix)}",
+        f"added {type_} trigger {created.id}{capability_warning(ctx, type_)}{_going_away(ctx.channel.prefix)}",
         {"id": created.id},
     )
 

@@ -99,6 +99,7 @@ async def app_and_keys(
         services={"policy": policy, "customcmds": customcmds, "packs": packs},
     )
     triggers.parser_params = runtime.parser_params
+    triggers.everywhere = lambda name: runtime.registry.get(name) is not None
     health = HealthRegistry()
     health.register("databases", _ok_check)
     twitch = FakeTwitch()
@@ -347,6 +348,28 @@ async def test_triggers_round_trip(client: httpx.AsyncClient, write_key: str) ->
     assert gone.status_code == 200
 
 
+async def test_trigger_cooldowns_are_set_like_chat_sets_them(client: httpx.AsyncClient, write_key: str) -> None:
+    """ADR-0031: `cooldown_s` and `user_cooldown_s` on add and edit, with chat's rules."""
+    url, headers = f"/api/v1/channels/{CHANNEL_LOGIN}/triggers", auth(write_key)
+    made = await client.post(
+        url,
+        json={"type": "listener", "expr": "echo hi", "match": {"regex": "hi", "name": "hi"}, "cooldown_s": 30},
+        headers=headers,
+    )
+    assert made.status_code == 201, made.text
+    assert (made.json()["cooldown_s"], made.json()["user_cooldown_s"]) == (30, 0)
+    changed = await client.patch(f"{url}/{made.json()['id']}", json={"user_cooldown_s": 120}, headers=headers)
+    assert (changed.json()["cooldown_s"], changed.json()["user_cooldown_s"]) == (30, 120)
+    timer = await client.post(
+        url,
+        json={"type": "timer", "expr": "echo hi", "schedule": {"every_s": 900}, "user_cooldown_s": 60},
+        headers=headers,
+    )
+    assert timer.status_code == 400 and "no chatter" in timer.json()["detail"]
+    too_long = await client.patch(f"{url}/{made.json()['id']}", json={"cooldown_s": 90000}, headers=headers)
+    assert too_long.status_code == 422
+
+
 async def test_filter_and_trigger_writes_are_audited_as_api(client: httpx.AsyncClient, write_key: str) -> None:
     base = f"/api/v1/channels/{CHANNEL_LOGIN}"
     entry_id = (await client.post(f"{base}/filters", json={"pattern": "badword"}, headers=auth(write_key))).json()["id"]
@@ -517,6 +540,58 @@ async def test_channel_variables_are_readable(
             "updated_by": "300",
             "updated_by_login": "mod",
         }
+    ]
+
+
+async def test_every_namespace_kept_in_a_channel_is_readable(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    """`!var list channel.chatter @user`, `!var top` and `!var list publisher.channel <owner>`, on the web."""
+    rows = [
+        ("channel.chatter", CHANNEL_ID, "200", "", "points", "30"),
+        ("channel.chatter", CHANNEL_ID, "400", "", "points", "50"),
+        ("channel.chatter", CHANNEL_ID, "400", "", "note", '"hi"'),
+        ("channel.chatter", "elsewhere", "400", "", "points", "99"),
+        ("publisher.channel", "200", CHANNEL_ID, "", "round", "3"),
+        ("publisher.channel", "200", "elsewhere", "", "round", "8"),
+        ("publisher.channel.chatter", "200", CHANNEL_ID, "400", "score", "12"),
+    ]
+    for ns, k1, k2, k3, name, value in rows:
+        await app_and_keys[0].state.bot_db.execute(
+            "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at, updated_by)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)",
+            (ns, k1, k2, k3, name, value, now_ms()),
+        )
+    url, headers = f"/api/v1/channels/{CHANNEL_LOGIN}/variables", auth(write_key)
+
+    async def names(**params: Any) -> list[tuple[Any, ...]]:
+        found = await client.get(url, params=params, headers=headers)
+        assert found.status_code == 200, found.text
+        return [
+            (v["name"], v.get("chatter_login"), v.get("publisher_login"), v["value"]) for v in found.json()["variables"]
+        ]
+
+    assert await names(ns="channel.chatter") == [
+        ("note", "alice", None, "hi"),
+        ("points", "friend", None, 30),
+        ("points", "alice", None, 50),
+    ]
+    assert await names(ns="channel.chatter", user="@alice", name="points") == [("points", "alice", None, 50)]
+    assert await names(ns="publisher.channel") == [("round", None, "friend", 3)]
+    assert await names(ns="publisher.channel.chatter", publisher="friend") == [("score", "alice", "friend", 12)]
+    paged = (await client.get(url, params={"ns": "channel.chatter", "limit": 2}, headers=headers)).json()
+    assert len(paged["variables"]) == 2 and paged["has_more"] is True
+
+    assert (await client.get(url, params={"ns": "channel", "user": "alice"}, headers=headers)).status_code == 400
+    assert (
+        await client.get(url, params={"ns": "channel.chatter", "user": "nobody"}, headers=headers)
+    ).status_code == 404
+    assert (await client.get(url, params={"ns": "chatter"}, headers=headers)).status_code == 422
+
+    top = (await client.get(f"{url}/top", params={"name": "points", "count": 5}, headers=headers)).json()
+    assert top["top"] == [
+        {"rank": 1, "chatter_id": "400", "chatter_login": "alice", "value": 50},
+        {"rank": 2, "chatter_id": "200", "chatter_login": "friend", "value": 30},
     ]
 
 

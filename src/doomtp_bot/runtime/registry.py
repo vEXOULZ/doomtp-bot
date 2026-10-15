@@ -17,7 +17,8 @@ Handler = Callable[[CommandContext, Args, Result | None], Awaitable[Result]]
 class Command:
     spec: CommandSpec
     handler: Handler
-    # Raw-tail commands with subcommands: first argument -> raw tail position (spec §3.3).
+    # Raw-tail commands with subcommands: the leading argument(s), space-separated, -> raw tail position
+    # (spec §3.3). `pack trigger add` matches three leading arguments.
     raw_tail_subcommands: tuple[tuple[str, int], ...] = ()
 
 
@@ -56,10 +57,14 @@ class CommandRegistry:
         if command.raw_tail_subcommands:
             if not lead_args:
                 return RawTail.MORE
+            lead = [a.lower() for a in lead_args]
+            more = False
             for sub, position in command.raw_tail_subcommands:
-                if lead_args[0].lower() == sub:
+                words = sub.split()
+                if lead[: len(words)] == words:
                     return position
-            return RawTail.NONE
+                more = more or (len(lead) < len(words) and words[: len(lead)] == lead)
+            return RawTail.MORE if more else RawTail.NONE
         return command.spec.raw_tail_from if command.spec.raw_tail_from is not None else RawTail.NONE
 
 

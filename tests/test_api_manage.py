@@ -144,6 +144,44 @@ async def test_packs_are_built_shared_and_published(client: httpx.AsyncClient, a
     assert (await client.get(f"{OWN}/packs")).json()["packs"] == []
 
 
+async def test_a_pack_owner_manages_its_triggers_as_chat_does(client: httpx.AsyncClient, app: Any) -> None:
+    """ADR-0032: `cc pack trigger add|on|off|cooldown|rm`, under the same rules."""
+    csrf = as_user(client, app)
+    await _command(client, csrf, "wave", "echo o/")
+    await _command(client, csrf, "helper", "echo shh")
+    await _command(client, csrf, "loose", "echo not in the pack")
+    await client.post("/api/v1/me/packs", json={"name": "kit"}, headers=csrf)
+    for member in ("wave", "helper"):
+        await client.put(f"/api/v1/me/packs/kit/commands/{member}", json={}, headers=csrf)
+    await client.put("/api/v1/me/packs/kit/commands/helper", json={"internal": True}, headers=csrf)
+    base = "/api/v1/me/packs/kit/triggers"
+
+    def put(key: str, **body: Any) -> Any:
+        return client.put(f"{base}/{key}", json=body, headers=csrf)
+
+    made = await put("hourly", type="timer", expr="wave", schedule={"every_s": 3600}, cooldown_s=60)
+    assert made.status_code == 200, made.text
+    assert (made.json()["created"], made.json()["cooldown_s"]) == (True, 60)
+    for refused, why in (
+        (put("fast", type="timer", expr="wave", schedule={"every_s": 300}), "every 15m"),
+        (put("often", type="cron", expr="wave", schedule={"cron": "*/5 * * * *"}), "every 15 minutes"),
+        (put("other", type="raid", expr="loose"), "loose is neither"),
+        (put("inside", type="raid", expr="helper"), "helper is internal"),
+    ):
+        answer = await refused
+        assert answer.status_code == 400 and why in answer.json()["detail"], answer.text
+
+    replaced = await put("hourly", type="timer", expr="wave", schedule={"every_s": 1800})
+    assert (replaced.json()["created"], replaced.json()["cooldown_s"]) == (False, 60)  # cooldowns kept
+    off = await client.patch(f"{base}/hourly", json={"enabled": False, "cooldown_s": 0}, headers=csrf)
+    assert (off.json()["enabled"], off.json()["cooldown_s"]) == (False, 0)
+    packs = (await client.get("/api/v1/me/packs")).json()["packs"]
+    assert [(t["key"], t["schedule"]["every_s"]) for t in packs[0]["triggers"]] == [("hourly", 1800)]
+    assert (await client.delete(f"{base}/hourly", headers=csrf)).status_code == 200
+    assert (await client.get(base)).json()["triggers"] == []
+    assert (await client.delete(f"{base}/hourly", headers=csrf)).status_code == 404
+
+
 async def test_a_published_command_waits_for_its_write_grant(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_mod(client, app)
     await _command(client, csrf, "deaths", "echo 1 -> channel.deaths")
@@ -217,6 +255,48 @@ async def test_channel_variables_are_written_by_the_role_the_channel_names(clien
     assert (await client.put(f"{OWN}/variables/goal", json={"value": None}, headers=csrf)).status_code == 400
     assert (await client.delete(f"{OWN}/variables/goal", headers=csrf)).status_code == 200
     assert (await client.delete(f"{OWN}/variables/goal", headers=csrf)).status_code == 404
+
+
+async def test_a_chatters_value_is_cleared_by_them_or_the_var_admin_role(client: httpx.AsyncClient, app: Any) -> None:
+    """`!var del channel.chatter.<name> @user`: your own, or anyone's from `var_admin_role` up."""
+    for user in ("200", "300"):
+        await app.state.bot_db.execute(
+            "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at)"
+            " VALUES ('channel.chatter', %s, %s, '', 'points', '5', 0)",
+            (CHANNEL_ID, user),
+        )
+    csrf = as_user(client, app)
+    assert (await client.delete(f"{OWN}/chatters/300/variables/points", headers=csrf)).status_code == 403
+    assert (await client.delete(f"{OWN}/chatters/200/variables/points", headers=csrf)).status_code == 200
+    assert (await client.delete(f"{OWN}/chatters/200/variables/points", headers=csrf)).status_code == 404
+    csrf = as_mod(client, app)
+    await app.state.bot_db.execute(
+        "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at)"
+        " VALUES ('channel.chatter', %s, '200', '', 'points', '5', 0)",
+        (CHANNEL_ID,),
+    )
+    assert (await client.delete(f"{OWN}/chatters/200/variables/points", headers=csrf)).status_code == 200
+    assert (await client.delete(f"{OWN}/chatters/200/variables/bad-name", headers=csrf)).status_code == 400
+    audit = (await client.get("/api/v1/audit", params={"action": "variable.delete"})).json()
+    assert any(e["target"] == "channel.chatter.points@200" for e in audit["entries"])
+
+
+async def test_your_own_chatter_variables_are_yours_to_change(client: httpx.AsyncClient, app: Any) -> None:
+    """`!var set|del chatter.<name>` and `!var usage chatter|publisher`, on the web."""
+    csrf = as_user(client, app)
+    assert (
+        await client.put("/api/v1/me/variables/chatter/location", json={"value": "Porto"}, headers=csrf)
+    ).status_code == 200
+    mine = (await client.get("/api/v1/me/variables")).json()["variables"]
+    assert [(v["namespace"], v["name"], v["value"]) for v in mine] == [("chatter", "location", "Porto")]
+    storage = (await client.get("/api/v1/me/storage")).json()
+    assert storage["chatter"]["used_bytes"] > 0 and storage["publisher"]["used_bytes"] == 0
+    assert storage["chatter"]["quota_bytes"] == 1048576
+    bad = await client.put("/api/v1/me/variables/chatter/data", json={"value": 1}, headers=csrf)
+    assert bad.status_code == 400  # a reserved name, as in chat
+    assert (await client.put("/api/v1/me/variables/chatter/x", json={"value": None}, headers=csrf)).status_code == 400
+    assert (await client.delete("/api/v1/me/variables/chatter/location", headers=csrf)).status_code == 200
+    assert (await client.delete("/api/v1/me/variables/chatter/location", headers=csrf)).status_code == 404
 
 
 async def test_filter_and_listener_tests_run_nothing(client: httpx.AsyncClient, app: Any) -> None:

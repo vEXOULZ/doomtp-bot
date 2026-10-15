@@ -21,12 +21,21 @@ from doomtp_bot.lang.ast import stores
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, parse
 from doomtp_bot.modules._common import need, policy_of, rank, reject_filtered, user_arg
+from doomtp_bot.modules.automation import (
+    EVENT_TYPES,
+    capability_note,
+    cooldowns_text,
+    leading_arg,
+    timer_schedule,
+    trigger_what,
+)
 from doomtp_bot.policy.roles import BOT_ADMIN_RANK, GLOBAL
 from doomtp_bot.runtime.context import Args, CommandContext, Publisher
 from doomtp_bot.runtime.executor import ScopeArgs, UsageError
 from doomtp_bot.runtime.registry import Command, command
 from doomtp_bot.runtime.result import Code, CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Cooldown, Example, LogLevel, Param
+from doomtp_bot.triggers.service import NO_CHATTER, Trigger, TriggerError, TriggerService, parse_duration
 
 if TYPE_CHECKING:
     from doomtp_bot.runtime.engine import Runtime
@@ -39,9 +48,17 @@ USAGE = (
     " param <name> <pos> name=<n> [type=…] [required=yes] <description> | describe <name> <summary> |"
     " run <id> [args…] |"
     " pack create|add|rm|share|list|info|delete <pack> [commands…] | pack internal <pack> <commands…> on|off |"
+    " pack trigger list|add|rm|on|off|cooldown <pack> … |"
     " publish pack <pack> [global] |"
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
     " disable|enable <name> | grant <name> <variable> | revoke <name> <variable>"
+)
+PACK_TRIGGER_USAGE = (
+    'cc pack trigger list <pack> | add <pack> <key> listen </regex/|"regex"> <expression>'
+    " | add <pack> <key> event <type> <expression>"
+    " | add <pack> <key> timer <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression>"
+    ' | add <pack> <key> cron "<m h dom mon dow>" <expression>'
+    " | rm|on|off <pack> <key> | cooldown <pack> <key> [<channel> [<user>]]"
 )
 EDIT_WARNING = "⚠ {owner} can edit or delete it at any time; edits apply at once."
 # Namespaces a published command can't write on its own: a channel mod grants each variable
@@ -59,6 +76,16 @@ def _access(ctx: CommandContext) -> VariableAccessPolicy:
 
 def _packs(ctx: CommandContext) -> PackService:
     return ctx.service("packs")  # type: ignore[no-any-return]
+
+
+def _triggers(ctx: CommandContext) -> TriggerService:
+    return ctx.service("triggers")  # type: ignore[no-any-return]
+
+
+def _trigger_keys(ctx: CommandContext, pack: Pack) -> list[str]:
+    """The pack's own triggers (ADR-0032), where the trigger service runs."""
+    triggers: TriggerService | None = ctx.exec.services.get("triggers")
+    return [t.pack_key for t in triggers.pack_triggers(pack.id)] if triggers is not None else []
 
 
 def _scope(ctx: CommandContext, words: list[str]) -> str:
@@ -258,6 +285,8 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
     """`cc pack create|add|rm|list|info|delete <pack> [commands…]`, `cc pack internal <pack> <cmd…> on|off`."""
     need(v, 2, USAGE)
     action, packs, (user_id, _) = v[1].lower(), _packs(ctx), _invoker(ctx)
+    if action == "trigger":
+        return await _pack_trigger(ctx, v, args)
     if action == "list":
         owned = await packs.owned_by(user_id)
         sizes = [(p, len(await packs.members(p.id))) for p in owned]
@@ -284,13 +313,16 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         ]
         where = "system pack" if pack.is_system else (", ".join(published) or "not published here")
         shown = [f"{c.name} (internal)" if c.name in internal else c.name for c in members]
+        keys = _trigger_keys(ctx, pack)
         return Result.success(
-            f"{pack.name}: {', '.join(shown) or 'empty'} ({where})",
+            f"{pack.name}: {', '.join(shown) or 'empty'} ({where})"
+            + (f"; triggers: {', '.join(keys)}" if keys else ""),
             {
                 "pack": pack.name,
                 "commands": [c.name for c in members],
                 "internal": sorted(internal),
                 "published": published,
+                "triggers": keys,
             },
         )
     if pack.is_system:
@@ -332,6 +364,122 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
             changed.append(command.name)
     verb = "added to" if action == "add" else "removed from"
     return Result.success(f"{', '.join(changed) or 'nothing'} {verb} {pack.name}", changed)
+
+
+def _pack_trigger_data(trigger: Trigger) -> dict[str, Any]:
+    return {
+        "key": trigger.pack_key,
+        "type": trigger.type,
+        "enabled": trigger.enabled,
+        "expr": trigger.expr,
+        "match": trigger.match,
+        "schedule": trigger.schedule,
+        "cooldown_s": trigger.cooldown_s,
+        "user_cooldown_s": trigger.user_cooldown_s,
+    }
+
+
+def _pack_trigger_spec(kind: str, rest: str) -> tuple[str, dict[str, Any], dict[str, Any], str]:
+    """`listen /re/ …`, `event <type> …`, `timer <every> …` or `cron "<…>" …` → type, match, schedule and
+    expression, as `!listen`, `!event` and `!timer` read them."""
+    if kind == "listen":
+        regex, expr = leading_arg(rest, PACK_TRIGGER_USAGE, slashes=True)
+        return "listener", {"regex": regex}, {}, expr
+    if kind == "event":
+        type_, _, expr = rest.strip().partition(" ")
+        if type_.lower() not in EVENT_TYPES or not expr.strip():
+            raise CommandError(f"usage: {PACK_TRIGGER_USAGE}")
+        return type_.lower(), {}, {}, expr.strip()
+    if kind == "timer":
+        every, _, tail = rest.strip().partition(" ")
+        schedule, expr = timer_schedule(every, tail, PACK_TRIGGER_USAGE)
+        return "timer", {}, schedule, expr
+    if kind == "cron":
+        text, expr = leading_arg(rest, PACK_TRIGGER_USAGE)
+        return "cron", {}, {"cron": text.strip()}, expr
+    raise CommandError(f"usage: {PACK_TRIGGER_USAGE}")
+
+
+async def _pack_trigger(ctx: CommandContext, v: list[str], args: Args) -> Result:
+    """`cc pack trigger …`: the pack's own triggers, which run wherever the pack is published and its module
+    is on (ADR-0032). Only the pack's owner changes them."""
+    need(v, 4, PACK_TRIGGER_USAGE)
+    action, (user_id, _) = v[2].lower(), _invoker(ctx)
+    packs, triggers = _packs(ctx), _triggers(ctx)
+    pack = await packs.by_owner(user_id, v[3])
+    if pack is None:
+        raise CommandError(f"you have no pack named {v[3].lower()}")
+    if pack.is_system:
+        raise SystemPackError(pack)
+    if action == "list":
+        found = triggers.pack_triggers(pack.id)
+        if not found:
+            return Result.success(f"{pack.name} has no triggers", [])
+        return Result.success(
+            "; ".join(
+                f"{t.pack_key}:{trigger_what(t)}{'' if t.enabled else ' (off)'}"
+                + (f" [{cooldowns_text(t)}]" if t.cooldown_s or t.user_cooldown_s else "")
+                + f" → {t.expr}"
+                for t in found
+            ),
+            [_pack_trigger_data(t) for t in found],
+        )
+    need(v, 5, PACK_TRIGGER_USAGE)
+    key = v[4].lower()
+    missing = CommandError(f"{pack.name} has no trigger {key}")
+    try:
+        if action == "rm":
+            if not await triggers.remove_pack_trigger(pack_id=pack.id, key=key, actor_user_id=user_id, via="chat"):
+                raise missing
+            return Result.success(f"removed {pack.name} trigger {key}")
+        if action in ("on", "off"):
+            if not await triggers.set_pack_trigger_enabled(
+                pack_id=pack.id, key=key, enabled=action == "on", actor_user_id=user_id, via="chat"
+            ):
+                raise missing
+            return Result.success(f"{pack.name} trigger {key} is {action} wherever {pack.name} is")
+        if action == "cooldown":
+            current = triggers.pack_trigger(pack.id, key)
+            if current is None:
+                raise missing
+            if len(v) == 5:
+                return Result.success(f"{key}: {cooldowns_text(current)}", _pack_trigger_data(current))
+            if len(v) > 7 or (len(v) == 7 and current.type in NO_CHATTER):
+                raise CommandError(f"usage: {PACK_TRIGGER_USAGE}")
+            updated = await triggers.set_pack_trigger_cooldowns(
+                pack_id=pack.id,
+                key=key,
+                cooldown_s=parse_duration(v[5]),
+                user_cooldown_s=parse_duration(v[6]) if len(v) == 7 else None,
+                actor_user_id=user_id,
+                via="chat",
+            )
+            if updated is None:
+                raise missing
+            return Result.success(f"{key}: {cooldowns_text(updated)}", _pack_trigger_data(updated))
+        if action != "add":
+            raise CommandError(f"usage: {PACK_TRIGGER_USAGE}")
+        need(v, 6, PACK_TRIGGER_USAGE)
+        type_, match, schedule, expr = _pack_trigger_spec(v[5].lower(), args.raw_tail or " ".join(v[6:]))
+        trigger, new = await triggers.set_pack_trigger(
+            pack_id=pack.id,
+            key=key,
+            type_=type_,
+            expr=expr,
+            match=match,
+            schedule=schedule,
+            commands={c.name for c in await packs.members(pack.id, internal=False)},
+            internal=await packs.internal_names(pack.id),
+            actor_user_id=user_id,
+            via="chat",
+        )
+    except TriggerError as exc:
+        raise CommandError(str(exc)) from exc
+    return Result.success(
+        f"{pack.name} trigger {key} {'added' if new else 'replaced'}: it runs wherever {pack.name} is published"
+        f" and its module is on{capability_note(type_)}",
+        _pack_trigger_data(trigger),
+    )
 
 
 async def _pack_internal(ctx: CommandContext, packs: PackService, pack: Pack, rest: list[str], user_id: str) -> Result:
@@ -485,10 +633,20 @@ async def _publish_pack(ctx: CommandContext, v: list[str], scope: str) -> Result
     if pack.owner_user_id != user_id:
         owners = {c.owner_login for c in members}
         owner_note = " " + EDIT_WARNING.format(owner="@" + ", @".join(sorted(owners)))
+    keys = _trigger_keys(ctx, pack)
+    # A pack's triggers run on their own wherever it is published (ADR-0032), so publishing says so.
+    triggers = (
+        f" ⚠ Its trigger(s) {', '.join(keys)} run {_where(scope)} on their own;"
+        f" {ctx.channel.prefix}module disable {pack.name} turns them off."
+        if keys
+        else ""
+    )
     return Result.success(
         f"published pack {pack.name} {_where(scope)} ({names}).{owner_note} "
-        f"⚠ Commands added to the pack later appear {_where(scope)} too." + _grant_warning(ctx, list(members), scope),
-        {"pack": pack.name, "commands": [c.name for c in members]},
+        f"⚠ Commands and triggers added to the pack later appear {_where(scope)} too."
+        + triggers
+        + _grant_warning(ctx, list(members), scope),
+        {"pack": pack.name, "commands": [c.name for c in members], "triggers": keys},
     )
 
 
@@ -644,7 +802,7 @@ _SUBCOMMANDS = {
         default_cooldowns={"everyone": Cooldown(tier_s=0, user_s=5)},
         log_level=LogLevel.INVOCATIONS,
     ),
-    raw_tail_subcommands=(("add", 3), ("edit", 3)),
+    raw_tail_subcommands=(("add", 3), ("edit", 3), ("pack trigger add", 7)),
 )
 async def cc_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
     values = list(args.values)
