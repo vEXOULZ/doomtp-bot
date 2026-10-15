@@ -35,8 +35,9 @@ def remove_prefix(text: str | None) -> str | None:
     if text is None:
         return text
     if text.startswith(_DEFAULT_FACT_PREFIX):
-        return text[len(_DEFAULT_FACT_PREFIX):]
+        return text[len(_DEFAULT_FACT_PREFIX) :]
     return text
+
 
 async def _say(harness: Harness, who: str, text: str) -> RunReport:
     ctx = harness.runtime.make_context(channel=_info(harness), invoker=_chatter(harness, who))
