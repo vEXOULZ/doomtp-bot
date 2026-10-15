@@ -51,7 +51,7 @@ TRIGGER_USAGE = (
 )
 
 
-def _leading_arg(raw: str, usage: str, *, slashes: bool = False) -> tuple[str, str]:
+def leading_arg(raw: str, usage: str, *, slashes: bool = False) -> tuple[str, str]:
     """Split a raw tail into its first argument and the expression after it (ADR-0018: no `=>`).
 
     The argument is one word, `"…"` when it has spaces, or `/…/` for a regex when `slashes` is set.
@@ -79,7 +79,14 @@ def _service(ctx: CommandContext) -> TriggerService:
     return ctx.service("triggers")  # type: ignore[no-any-return]
 
 
-def _describe(trigger: Trigger) -> str:
+def describe(trigger: Trigger) -> str:
+    pack = f" ({trigger.pack} pack)" if trigger.pack else ""
+    held = f" [{cooldowns_text(trigger)}]" if trigger.cooldown_s or trigger.user_cooldown_s else ""
+    return f"{trigger.id}:{trigger_what(trigger)}{'' if trigger.enabled else ' (off)'}{pack}{held} → {trigger.expr}"
+
+
+def trigger_what(trigger: Trigger) -> str:
+    """What sets it off: a listener's regex, a timer's interval, a cron's schedule or the event's type."""
     if trigger.type == "listener":
         what = f"{trigger.name} /{trigger.regex}/" if trigger.name else f"/{trigger.regex}/"
     elif trigger.type == "timer":
@@ -88,9 +95,7 @@ def _describe(trigger: Trigger) -> str:
         what = describe_cron(trigger.cron)
     else:
         what = trigger.type
-    pack = f" ({trigger.pack} pack)" if trigger.pack else ""
-    held = f" [{_cooldowns(trigger)}]" if trigger.cooldown_s or trigger.user_cooldown_s else ""
-    return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'}{pack}{held} → {trigger.expr}"
+    return what
 
 
 def _seconds(value: int) -> str:
@@ -100,7 +105,7 @@ def _seconds(value: int) -> str:
     return f"{value}s"
 
 
-def _cooldowns(trigger: Trigger) -> str:
+def cooldowns_text(trigger: Trigger) -> str:
     """`cooldown 30s, 2m per chatter`, or `no cooldown`."""
     parts = []
     if trigger.cooldown_s:
@@ -115,7 +120,7 @@ async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
     if not found:
         return Result.success("none here", [])
     return Result.success(
-        "; ".join(_describe(t) for t in found),
+        "; ".join(describe(t) for t in found),
         [
             {"id": t.id, "type": t.type, "enabled": t.enabled, "expr": t.expr}
             | {"cooldown_s": t.cooldown_s, "user_cooldown_s": t.user_cooldown_s}
@@ -182,7 +187,7 @@ async def _cooldown(ctx: CommandContext, values: list[str], usage: str, *, named
         raise CommandError(f"no entry {entry_id} here")
     if len(values) == 2:
         return Result.success(
-            f"{values[1]}: {_cooldowns(current)}",
+            f"{values[1]}: {cooldowns_text(current)}",
             {"cooldown_s": current.cooldown_s, "user_cooldown_s": current.user_cooldown_s},
         )
     if len(values) > 4 or (len(values) == 4 and current.type in NO_CHATTER):
@@ -204,7 +209,7 @@ async def _cooldown(ctx: CommandContext, values: list[str], usage: str, *, named
     if updated is None:
         raise CommandError(f"no entry {entry_id} here")
     return Result.success(
-        f"{values[1]}: {_cooldowns(updated)}",
+        f"{values[1]}: {cooldowns_text(updated)}",
         {"cooldown_s": updated.cooldown_s, "user_cooldown_s": updated.user_cooldown_s},
     )
 
@@ -233,13 +238,19 @@ async def _add(
         raise CommandError(str(exc)) from exc
 
 
-def _warning(ctx: CommandContext, type_: str) -> str:
+def capability_warning(ctx: CommandContext, type_: str) -> str:
     """Say up front when a trigger is stored but can't fire here yet (ADR-0007)."""
     needed = REQUIRED_CAPABILITY.get(type_)
     if needed and needed not in ctx.channel.capabilities:
         how = "mod the bot" if needed == "followers" else "the broadcaster has to connect the channel"
         return f" ⚠ it stays quiet until this channel grants {needed}: {how}"
     return ""
+
+
+def capability_note(type_: str) -> str:
+    """For a pack's trigger, which fires in many channels: where it stays quiet (ADR-0007, ADR-0032)."""
+    needed = REQUIRED_CAPABILITY.get(type_)
+    return f", in the channels that granted {needed}" if needed else ""
 
 
 # ── !listen ─────────────────────────────────────────────────────────────────
@@ -282,7 +293,7 @@ async def listen_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         raise CommandError("a listener's name is a letter, then up to 31 letters, digits or _")
     if _listener(ctx, name) is not None:
         raise CommandError(f"there's already a listener called {name}: rm it first")
-    regex, expr = _leading_arg(args.raw_tail or " ".join(values[2:]), LISTEN_USAGE, slashes=True)
+    regex, expr = leading_arg(args.raw_tail or " ".join(values[2:]), LISTEN_USAGE, slashes=True)
     created = await _add(ctx, "listener", expr, match={"regex": regex, "name": name})
     return Result.success(f"listener {name} added ({created.id})", {"id": created.id, "name": name})
 
@@ -338,7 +349,7 @@ async def event_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
     if not expr:
         raise CommandError(f"usage: {EVENT_USAGE}")
     created = await _add(ctx, type_, expr)
-    return Result.success(f"{type_} event {created.id} added{_warning(ctx, type_)}", {"id": created.id})
+    return Result.success(f"{type_} event {created.id} added{capability_warning(ctx, type_)}", {"id": created.id})
 
 
 # ── !timer ──────────────────────────────────────────────────────────────────
@@ -374,13 +385,20 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         raise CommandError(f"usage: {TIMER_USAGE}")
 
     need(values, 2, TIMER_USAGE)
+    schedule, expr = timer_schedule(values[1], args.raw_tail or " ".join(values[2:]), TIMER_USAGE)
+    created = await _add(ctx, "timer", expr, schedule=schedule)
+    every = schedule["every_s"]
+    return Result.success(f"timer {created.id} every {every}s", {"id": created.id, "every_s": every})
+
+
+def timer_schedule(every: str, rest: str, usage: str) -> tuple[dict[str, Any], str]:
+    """`15m [jitter=<d>] [only_live] [min_lines=<n>] <expression>` → the timer's schedule and expression."""
     try:
-        schedule: dict[str, Any] = {"every_s": parse_every(values[1])}
+        schedule: dict[str, Any] = {"every_s": parse_every(every)}
     except TriggerError as exc:
         raise CommandError(str(exc)) from exc
-    rest = (args.raw_tail or " ".join(values[2:])).strip()
     expr_words: list[str] = []
-    for word in rest.split():
+    for word in rest.strip().split():
         lowered = word.lower()
         if lowered == "only_live":
             schedule["only_live"] = True
@@ -395,15 +413,13 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
             expr_words.append(word)
     expr = " ".join(expr_words)
     if not expr:
-        raise CommandError(f"usage: {TIMER_USAGE}")
-    created = await _add(ctx, "timer", expr, schedule=schedule)
-    every = schedule["every_s"]
-    return Result.success(f"timer {created.id} every {every}s", {"id": created.id, "every_s": every})
+        raise CommandError(f"usage: {usage}")
+    return schedule, expr
 
 
 async def _add_cron(ctx: CommandContext, args: Args, values: list[str]) -> Result:
     """`timer cron "0 18 * * fri" echo we live at six`, in the channel's timezone."""
-    schedule_text, expr = _leading_arg(args.raw_tail or " ".join(values[1:]), TIMER_USAGE)
+    schedule_text, expr = leading_arg(args.raw_tail or " ".join(values[1:]), TIMER_USAGE)
     created = await _add(ctx, "cron", expr, schedule={"cron": schedule_text.strip()})
     when = describe_cron(created.cron)
     return Result.success(
@@ -444,7 +460,7 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
     match: dict[str, Any] = {}
     if action == "listen":
         type_ = "listener"
-        match["regex"], expr = _leading_arg(expr, TRIGGER_USAGE)
+        match["regex"], expr = leading_arg(expr, TRIGGER_USAGE)
     elif action == "add":
         need(values, 2, TRIGGER_USAGE)
         type_ = values[1].lower()
@@ -454,7 +470,7 @@ async def trigger_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> 
         raise CommandError(f"usage: {TRIGGER_USAGE}")
     created = await _add(ctx, type_, expr, match=match)
     return Result.success(
-        f"added {type_} trigger {created.id}{_warning(ctx, type_)}{_going_away(ctx.channel.prefix)}",
+        f"added {type_} trigger {created.id}{capability_warning(ctx, type_)}{_going_away(ctx.channel.prefix)}",
         {"id": created.id},
     )
 

@@ -592,7 +592,7 @@ async def _install_triggers(
     pack = await packs.by_owner(owner_user_id, name)
     triggers = TriggerService(conn)
     await triggers.reload()
-    stored = {t.pack_key: t for t in triggers.pack_triggers(name)}
+    stored = {t.pack_key: t for t in triggers.pack_triggers(pack.id)} if pack is not None else {}
     done: list[str] = []
     for wanted in declared:
         current = stored.get(wanted.key)

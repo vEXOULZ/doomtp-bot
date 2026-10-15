@@ -42,11 +42,12 @@ as `ARCH-N`, and close the same way: build it, or change the architecture so it 
 | [0028](adr/0028-chat-watchers-and-the-pyramid-pack.md) | Chat watchers, and emote pyramids as a pack | 5/5 | Built: watchers, trigger badges, `PyramidWatcher` and the `pyramid` pack |
 | [0030](adr/0030-view-as-preview-header.md) | View as, scoped on the server | 2/3 | Built: `X-View-As` on the API; doomtp-web drops its emulation next |
 | [0031](adr/0031-trigger-cooldowns.md) | Trigger cooldowns, per channel and per chatter | 3/4 | Built: the columns, the runner's check, chat and the API; doomtp-web's trigger form is next |
+| [0032](adr/0032-triggers-on-your-own-packs.md) | Triggers on your own packs | 4/5 | Built: the service's rules, `cc pack trigger`, the API; doomtp-web's My packs section is next |
 | — | [Architecture promises](#promised-in-the-architecture-not-yet-built) (`ARCH-1`…`ARCH-9`) | 9/9 | Complete: six built, three taken out |
 
-**146 of 157 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
+**150 of 162 ADR action items are closed.** Two are waiting on a person, not on code: ADR-0008 item 4, and ADR-0023
 item 2 (switching the shared sign-in on once vexoulz-auth is deployed); six are the rest of ADR-0024 and ADR-0025,
-both accepted on 2026-09-28, and one the rest of ADR-0027, accepted on 2026-09-30; one is doomtp-web adopting ADR-0030, and the last is its trigger form for ADR-0031. **All 9 architecture promises are closed**: six built,
+both accepted on 2026-09-28, and one the rest of ADR-0027, accepted on 2026-09-30; one is doomtp-web adopting ADR-0030, one is its trigger form for ADR-0031, and the last is its My packs triggers for ADR-0032. **All 9 architecture promises are closed**: six built,
 and three (`storage/repos/`, the `weather` module, a pluggable `Authenticator`) taken out of the
 architecture with the reason written where the promise was.
 

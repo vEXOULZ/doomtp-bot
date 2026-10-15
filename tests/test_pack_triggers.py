@@ -1,4 +1,5 @@
-"""Triggers owned by a pack (ADR-0029): any type, firing wherever the pack is published and its module is on."""
+"""Triggers owned by a pack (ADR-0029): any type, firing wherever the pack is published and its module is on.
+Since ADR-0032 a pack's owner writes them from chat too, under tighter rules than a channel's own triggers."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import pytest
 
 from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.customcmds.packs import Pack, PackService
+from doomtp_bot.customcmds.resolution import CustomCommandLoader
 from doomtp_bot.customcmds.service import CustomCommandService
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
@@ -63,15 +65,22 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = await policy_with_channels(dbs.bot, A, B, joined=True, clock=TickingClock())
     filters = FilterService(dbs.bot)
     await filters.reload()
-    packs = PackService(dbs.bot, CustomCommandService(dbs.bot, filters=filters))
+    customcmds = CustomCommandService(dbs.bot, filters=filters)
+    packs = PackService(dbs.bot, customcmds)
     pack = await packs.create(owner_user_id=OWNER, name="chimes", actor_via="script")
     triggers = TriggerService(dbs.bot, filters=filters, scope=policy)
     await triggers.reload()
     packs.on_published = triggers.reload
     sender = Sender()
     outbox = Outbox(sender, None)
-    runtime = Runtime(builtin_registry(), policy=policy, services={"policy": policy, "triggers": triggers})
+    runtime = Runtime(
+        builtin_registry(),
+        policy=policy,
+        custom=CustomCommandLoader(customcmds, packs),
+        services={"policy": policy, "triggers": triggers, "packs": packs, "customcmds": customcmds},
+    )
     triggers.parser_params = runtime.parser_params
+    triggers.everywhere = lambda name: runtime.registry.get(name) is not None
     clock = FakeClock()
     scheduler = TimerScheduler(
         triggers=triggers,
@@ -143,18 +152,18 @@ async def test_install_is_checked_updates_in_place_and_drops_what_is_gone(h: Har
         pack_id=h.pack.id, key="hourly", type_="timer", expr="echo the hour", schedule={"every_s": 3600},
         run_as_rank=80, created_by=OWNER,
     )  # fmt: skip
-    first = h.triggers.pack_triggers("chimes")[0]
+    first = h.triggers.pack_triggers(h.pack.id)[0]
     await _hourly(h, "echo the new hour")
-    [updated] = h.triggers.pack_triggers("chimes")
+    [updated] = h.triggers.pack_triggers(h.pack.id)
     assert (updated.id, updated.expr) == (first.id, "echo the new hour")
     assert await h.triggers.remove_pack_triggers(pack_id=h.pack.id, keep=[], actor_user_id=OWNER) == ["hourly"]
-    assert h.triggers.pack_triggers("chimes") == []
+    assert h.triggers.pack_triggers(h.pack.id) == []
 
 
 async def test_a_channel_sees_a_pack_trigger_but_cannot_change_it(h: Harness) -> None:
     await _hourly(h)
     await _publish(h, GLOBAL)
-    trigger = h.triggers.pack_triggers("chimes")[0]
+    trigger = h.triggers.pack_triggers(h.pack.id)[0]
     listing = await h.say(A, "!timer list")
     assert listing is not None and f"{trigger.id}:every 3600s (chimes pack)" in listing
     for action in ("off", "rm"):
@@ -164,4 +173,82 @@ async def test_a_channel_sees_a_pack_trigger_but_cannot_change_it(h: Harness) ->
         await h.triggers.update(
             channel_id=A[0], trigger_id=trigger.id, expr="echo mine", actor_user_id="300", prefix="!", via="api"
         )
-    assert h.triggers.pack_triggers("chimes")[0].enabled
+    assert h.triggers.pack_triggers(h.pack.id)[0].enabled
+
+
+# ── written by the pack's owner (ADR-0032) ──────────────────────────────────
+async def _bells(h: Harness) -> Pack:
+    """The moderator's own pack, `bells`, with a public `ding` and an internal `quiet`."""
+    for line in (
+        "!cc add ding echo ding {$chatter.display ?? nobody}",
+        "!cc add quiet echo shh",
+        "!cc add loose echo not in the pack",
+        "!cc pack create bells",
+        "!cc pack add bells ding quiet",
+        "!cc pack internal bells quiet on",
+    ):
+        await h.say(A, line)
+    pack = await h.packs.by_owner("300", "bells")
+    assert pack is not None
+    return pack
+
+
+async def test_the_owner_adds_a_timer_from_chat_and_it_runs_wherever_the_pack_is(h: Harness) -> None:
+    pack = await _bells(h)
+    added = await h.say(A, "!cc pack trigger add bells hourly timer 1h ding")
+    assert added is not None and "bells trigger hourly added" in added
+    [trigger] = h.triggers.pack_triggers(pack.id)
+    assert (trigger.type, trigger.schedule, trigger.run_as_rank) == ("timer", {"every_s": 3600}, 0)
+    published = await h.say(A, "!cc publish pack bells")
+    assert published is not None and "Its trigger(s) hourly run here on their own" in published
+    assert await h.scheduler.tick() == []
+    h.clock.now = 3601
+    assert [t.channel_id for t in await h.scheduler.tick()] == [A[0]]
+    assert h.sender.sent == [(A[0], "ding nobody")]
+    info = await h.say(A, "!cc pack info bells")
+    assert info is not None and "triggers: hourly" in info
+
+
+async def test_a_listener_keeps_its_backslashes_and_the_rest_of_the_grammar_works(h: Harness) -> None:
+    pack = await _bells(h)
+    await h.say(A, r"!cc pack trigger add bells hi listen /\bhi\b/ ding")
+    await h.say(A, '!cc pack trigger add bells nightly cron "0 22 * * *" ding')
+    await h.say(A, "!cc pack trigger add bells raids event raid ding")
+    found = {t.pack_key: t for t in h.triggers.pack_triggers(pack.id)}
+    assert found["hi"].regex == r"\bhi\b" and found["nightly"].cron == "0 22 * * *" and found["raids"].type == "raid"
+    listing = await h.say(A, "!cc pack trigger list bells")
+    assert listing is not None and r"hi:/\bhi\b/ → ding" in listing
+
+    held = await h.say(A, "!cc pack trigger cooldown bells hi 30s 2m")
+    assert held == "hi: cooldown 30s for the channel, 2m per chatter"
+    assert await h.say(A, "!cc pack trigger cooldown bells nightly 1m 1m") is not None  # usage: no chatter
+    assert h.triggers.pack_trigger(pack.id, "nightly").cooldown_s == 0  # type: ignore[union-attr]
+    replaced = await h.say(A, r"!cc pack trigger add bells hi listen /\bhey\b/ ding")
+    assert replaced is not None and "replaced" in replaced
+    assert h.triggers.pack_trigger(pack.id, "hi").user_cooldown_s == 120  # type: ignore[union-attr]
+
+    assert await h.say(A, "!cc pack trigger off bells hi") == "bells trigger hi is off wherever bells is"
+    assert not h.triggers.pack_trigger(pack.id, "hi").enabled  # type: ignore[union-attr]
+    assert await h.say(A, "!cc pack trigger rm bells hi") == "removed bells trigger hi"
+    assert await h.say(A, "!cc pack trigger rm bells hi") == "bells has no trigger hi"
+
+
+async def test_a_pack_trigger_is_held_to_the_pack_rules(h: Harness) -> None:
+    await _bells(h)
+    for line, why in (
+        ("!cc pack trigger add bells fast timer 5m ding", "every 15m"),
+        ('!cc pack trigger add bells often cron "*/10 * * * *" ding', "every 15 minutes"),
+        ("!cc pack trigger add bells other event raid loose", "loose is neither"),
+        ("!cc pack trigger add bells inside event raid quiet", "quiet is internal"),
+        ("!cc pack trigger add bells mine event raid @ding", "can't call @ding"),
+        ("!cc pack trigger add bells Bad-Key event raid ding", "a trigger's key"),
+    ):
+        answer = await h.say(A, line)
+        assert answer is not None and why in answer, (line, answer)
+    assert await h.say(A, '!cc pack trigger add bells quarter cron "0,15,30,45 * * * *" echo tick') is not None
+    for n in range(9):
+        await h.say(A, f"!cc pack trigger add bells r{n} event raid echo raid")
+    capped = await h.say(A, "!cc pack trigger add bells one_more event raid echo raid")
+    assert capped is not None and "at most 10 triggers" in capped
+    refused = await h.say(A, "!cc pack trigger add chimes x event raid echo hi")  # someone else's pack
+    assert refused == "you have no pack named chimes"

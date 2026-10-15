@@ -27,6 +27,7 @@ from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.snapshot import ChannelSettings
 from doomtp_bot.runtime.values import MISSING, render
 from doomtp_bot.runtime.variables import VariableError, WriteOp, key_for
+from doomtp_bot.triggers.service import MAX_COOLDOWN_S, Trigger, TriggerError, TriggerService
 from doomtp_bot.variables.store import Entry
 
 router = APIRouter(prefix="/api/v1", tags=["commands"])
@@ -41,6 +42,10 @@ def _commands(request: Request) -> CustomCommandService:
 
 def _packs(request: Request) -> PackService:
     return _state(request, "packs")  # type: ignore[no-any-return]
+
+
+def _triggers(request: Request) -> TriggerService:
+    return _state(request, "triggers")  # type: ignore[no-any-return]
 
 
 def _me(caller: Caller) -> tuple[str, str]:
@@ -327,6 +332,20 @@ async def _pack_json(request: Request, pack: Pack) -> dict[str, Any]:
         "commands": [{"name": c.name, "internal": c.name in internal, "shareable": c.shareable} for c in members],
         "shareable": bool(members) and all(c.shareable for c in members),
         "published": published,
+        "triggers": [_pack_trigger_json(t) for t in _triggers(request).pack_triggers(pack.id)],
+    }
+
+
+def _pack_trigger_json(trigger: Trigger) -> dict[str, Any]:
+    return {
+        "key": trigger.pack_key,
+        "type": trigger.type,
+        "expr": trigger.expr,
+        "match": trigger.match,
+        "schedule": trigger.schedule,
+        "enabled": trigger.enabled,
+        "cooldown_s": trigger.cooldown_s,
+        "user_cooldown_s": trigger.user_cooldown_s,
     }
 
 
@@ -429,6 +448,105 @@ async def remove_pack_member(
     if not await _packs(request).remove_member(pack, member, actor_via=caller.actor.via):
         raise HTTPException(status_code=404, detail=f"{member.name} isn't in {pack.name}")
     return await _pack_json(request, pack)
+
+
+# ── my packs' triggers (`cc pack trigger …`, ADR-0032) ──────────────────────
+class PackTriggerBody(BaseModel):
+    """`cc pack trigger add`: the whole trigger. Cooldowns left out keep what it had (0 for a new one)."""
+
+    type: str
+    expr: str = Field(min_length=1)
+    match: dict[str, Any] | None = None
+    schedule: dict[str, Any] | None = None
+    cooldown_s: int | None = Field(default=None, ge=0, le=MAX_COOLDOWN_S)
+    user_cooldown_s: int | None = Field(default=None, ge=0, le=MAX_COOLDOWN_S)
+
+
+class PackTriggerPatch(BaseModel):
+    """`cc pack trigger on|off` and `cc pack trigger cooldown`."""
+
+    enabled: bool | None = None
+    cooldown_s: int | None = Field(default=None, ge=0, le=MAX_COOLDOWN_S)
+    user_cooldown_s: int | None = Field(default=None, ge=0, le=MAX_COOLDOWN_S)
+
+
+def _pack_trigger(request: Request, pack: Pack, key: str) -> Trigger:
+    found = _triggers(request).pack_trigger(pack.id, key.lower())
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"{pack.name} has no trigger {key.lower()}")
+    return found
+
+
+@router.get("/me/packs/{name}/triggers")
+async def pack_triggers(request: Request, name: str, caller: Caller = PERSONAL_READ) -> dict[str, Any]:
+    user_id, _ = _me(caller)
+    pack = await _own_pack(request, user_id, name, writable=False)
+    return {"triggers": [_pack_trigger_json(t) for t in _triggers(request).pack_triggers(pack.id)]}
+
+
+@router.put("/me/packs/{name}/triggers/{key}")
+async def set_pack_trigger(
+    request: Request, name: str, key: str, body: PackTriggerBody, caller: Caller = PERSONAL_WRITE
+) -> dict[str, Any]:
+    """Add or replace one of the pack's triggers, which run wherever it is published and its module is on."""
+    user_id, _ = _me(caller)
+    pack = await _own_pack(request, user_id, name)
+    packs = _packs(request)
+    try:
+        trigger, created = await _triggers(request).set_pack_trigger(
+            pack_id=pack.id,
+            key=key,
+            type_=body.type,
+            expr=body.expr,
+            match=body.match,
+            schedule=body.schedule,
+            cooldown_s=body.cooldown_s,
+            user_cooldown_s=body.user_cooldown_s,
+            commands={c.name for c in await packs.members(pack.id, internal=False)},
+            internal=await packs.internal_names(pack.id),
+            actor_user_id=user_id,
+            via=caller.actor.via,
+        )
+    except TriggerError as exc:
+        raise _refused(exc) from exc
+    return {**_pack_trigger_json(trigger), "created": created}
+
+
+@router.patch("/me/packs/{name}/triggers/{key}")
+async def patch_pack_trigger(
+    request: Request, name: str, key: str, body: PackTriggerPatch, caller: Caller = PERSONAL_WRITE
+) -> dict[str, Any]:
+    user_id, _ = _me(caller)
+    pack = await _own_pack(request, user_id, name)
+    current, triggers, via = _pack_trigger(request, pack, key), _triggers(request), caller.actor.via
+    if body.cooldown_s is not None or body.user_cooldown_s is not None:
+        try:
+            await triggers.set_pack_trigger_cooldowns(
+                pack_id=pack.id,
+                key=current.pack_key,
+                cooldown_s=current.cooldown_s if body.cooldown_s is None else body.cooldown_s,
+                user_cooldown_s=body.user_cooldown_s,
+                actor_user_id=user_id,
+                via=via,
+            )
+        except TriggerError as exc:
+            raise _refused(exc) from exc
+    if body.enabled is not None:
+        await triggers.set_pack_trigger_enabled(
+            pack_id=pack.id, key=current.pack_key, enabled=body.enabled, actor_user_id=user_id, via=via
+        )
+    return _pack_trigger_json(_pack_trigger(request, pack, key))
+
+
+@router.delete("/me/packs/{name}/triggers/{key}")
+async def remove_pack_trigger(request: Request, name: str, key: str, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
+    user_id, _ = _me(caller)
+    pack = await _own_pack(request, user_id, name)
+    current = _pack_trigger(request, pack, key)
+    await _triggers(request).remove_pack_trigger(
+        pack_id=pack.id, key=current.pack_key, actor_user_id=user_id, via=caller.actor.via
+    )
+    return {"key": current.pack_key, "removed": True}
 
 
 # ── my variables and runs ───────────────────────────────────────────────────
@@ -616,6 +734,8 @@ async def publish_pack_in(request: Request, scope: str, body: PackRef, caller: C
     return {
         "pack": pack.name,
         "commands": [c.name for c in members],
+        # They run there on their own (ADR-0032), which the site says when a pack is published.
+        "triggers": [t.pack_key for t in _triggers(request).pack_triggers(pack.id)],
         "needs_grants": _missing_grants(request, scope, members),
     }
 

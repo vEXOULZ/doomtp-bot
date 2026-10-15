@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -20,10 +20,11 @@ from doomtp_bot.audit.log import write_audit
 from doomtp_bot.clock import now_ms
 from doomtp_bot.core import capabilities
 from doomtp_bot.lang import SYNTAX_VERSION
+from doomtp_bot.lang.ast import invocations
 from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import Context, ParserParams, parse
 from doomtp_bot.patterns import PatternError, compile_pattern, search
-from doomtp_bot.policy.roles import GLOBAL
+from doomtp_bot.policy.roles import BUILTIN_RANKS, GLOBAL
 from doomtp_bot.runtime.spec import LogLevel
 from doomtp_bot.storage.db import Connection, fetch_value, transaction
 from doomtp_bot.triggers.cron import Cron, CronError, parse_cron
@@ -68,6 +69,12 @@ MIN_TIMER_EVERY_S = 60
 MAX_COOLDOWN_S = 24 * 3600
 # Triggers that fire with nobody behind them, so a per-chatter cooldown has no one to hold (ADR-0031).
 NO_CHATTER: frozenset[str] = frozenset({"timer", "cron", "stream_online", "stream_offline"})
+# A pack's own triggers (ADR-0032) fire in every channel that has the pack, so they are held tighter than a
+# channel's: at most this many a pack, a clock no more often than every 15 minutes, and at everyone's rank.
+MAX_PACK_TRIGGERS = 10
+MIN_PACK_EVERY_S = 15 * 60
+PACK_TRIGGER_RANK = BUILTIN_RANKS["everyone"]
+PACK_KEY = re.compile(r"[a-z][a-z0-9_]{0,31}")
 
 
 class TriggerError(ValueError):
@@ -107,6 +114,7 @@ class Trigger:
     #: trigger is handed out as a copy per channel where it applies, with that channel's id.
     pack: str | None = None
     pack_key: str = ""
+    pack_id: str | None = None
     #: Seconds before it fires again anywhere in the channel, and for the same chatter (ADR-0031); 0 is none.
     cooldown_s: int = 0
     user_cooldown_s: int = 0
@@ -147,6 +155,23 @@ def check_cooldowns(type_: str, cooldown_s: int, user_cooldown_s: int) -> None:
             raise TriggerError("a cooldown is between 0 and 24h")
     if user_cooldown_s and type_ in NO_CHATTER:
         raise TriggerError(f"a {type_} trigger has no chatter, so it takes only the channel-wide cooldown")
+
+
+def check_pack_schedule(type_: str, schedule: dict[str, Any] | None) -> None:
+    """A pack's timer or cron fires at most every 15 minutes, wherever the pack is (ADR-0032)."""
+    schedule = schedule or {}
+    if type_ == "timer" and int(schedule.get("every_s") or 0) < MIN_PACK_EVERY_S:
+        raise TriggerError("a pack's timer runs every 15m or less often")
+    if type_ == "cron":
+        try:
+            cron = parse_cron(str(schedule.get("cron", "")))
+        except CronError as exc:
+            raise TriggerError(str(exc)) from exc
+        # The minutes of the day it fires on, around the clock: the smallest gap is how often it can fire.
+        times = sorted(h * 60 + m for h in cron.hour for m in cron.minute)
+        gaps = [b - a for a, b in zip(times, times[1:], strict=False)] + [times[0] + 1440 - times[-1]]
+        if min(gaps) * 60 < MIN_PACK_EVERY_S:
+            raise TriggerError("a pack's cron fires at most every 15 minutes")
 
 
 def parse_every(text: str) -> int:
@@ -205,7 +230,10 @@ class TriggerService:
         self._listeners: dict[int, Pattern] = {}
         self._crons: dict[int, Cron] = {}
         self._pack_triggers: list[Trigger] = []
-        self._pack_scopes: dict[str, frozenset[str]] = {}  # pack name → channels it is published in, or '*'
+        self._pack_scopes: dict[str, frozenset[str]] = {}  # pack id → channels it is published in, or '*'
+        # Whether a name runs in every channel: a built-in or a system pack's member. A pack's own trigger
+        # may call those and its pack's public commands, nothing else (ADR-0032). Wired in with the runtime.
+        self.everywhere: Callable[[str], bool] = lambda _name: False
 
     async def reload(self) -> None:
         by_channel: dict[str, list[Trigger]] = {}
@@ -214,11 +242,11 @@ class TriggerService:
         listeners: dict[int, Pattern] = {}
         crons: dict[int, Cron] = {}
         async with await self.conn.execute(
-            "SELECT k.name, p.channel_id FROM custom_command_pack_publications p"
+            "SELECT p.pack_id, p.channel_id FROM custom_command_pack_publications p"
             " JOIN custom_command_packs k ON k.id = p.pack_id WHERE p.status = 'active' AND k.status = 'active'"
         ) as cur:
             for row in await cur.fetchall():
-                pack_scopes.setdefault(row["name"], set()).add(row["channel_id"])
+                pack_scopes.setdefault(row["pack_id"], set()).add(row["channel_id"])
         async with await self.conn.execute(
             "SELECT t.*, k.name AS pack_name FROM triggers t LEFT JOIN custom_command_packs k ON k.id = t.pack_id"
             " WHERE t.pack_id IS NULL OR k.status = 'active' ORDER BY t.id"
@@ -237,6 +265,7 @@ class TriggerService:
                     created_by=row["created_by"],
                     pack=row["pack_name"],
                     pack_key=row["pack_key"] or "",
+                    pack_id=row["pack_id"],
                     cooldown_s=row["cooldown_s"],
                     user_cooldown_s=row["user_cooldown_s"],
                 )
@@ -256,18 +285,17 @@ class TriggerService:
                         log.warning("trigger.bad_cron", trigger=trigger.id)
         self._by_channel, self._listeners, self._crons = by_channel, listeners, crons
         self._pack_triggers = pack_triggers
-        self._pack_scopes = {name: frozenset(scopes) for name, scopes in pack_scopes.items()}
+        self._pack_scopes = {pack_id: frozenset(scopes) for pack_id, scopes in pack_scopes.items()}
 
     def _packs_in(self, channel_id: str) -> list[Trigger]:
         """The pack triggers that apply here (ADR-0029), as copies carrying this channel's id: the pack is
         published here or globally, and its module is on here."""
         found: list[Trigger] = []
         for trigger in self._pack_triggers:
-            pack = trigger.pack or ""
-            scopes = self._pack_scopes.get(pack, frozenset())
+            scopes = self._pack_scopes.get(trigger.pack_id or "", frozenset())
             if GLOBAL not in scopes and channel_id not in scopes:
                 continue
-            if self.scope is not None and not self.scope.module_on(channel_id, pack):
+            if self.scope is not None and not self.scope.module_on(channel_id, trigger.pack or ""):
                 continue
             found.append(dataclasses.replace(trigger, channel_id=channel_id))
         return found
@@ -285,9 +313,12 @@ class TriggerService:
         """The channel's own triggers, then the pack triggers that apply here (marked by `pack`)."""
         return [*self._by_channel.get(channel_id, ()), *self._packs_in(channel_id)]
 
-    def pack_triggers(self, pack: str) -> list[Trigger]:
+    def pack_triggers(self, pack_id: str) -> list[Trigger]:
         """A pack's triggers as stored, with channel `*`, wherever they apply."""
-        return [t for t in self._pack_triggers if t.pack == pack]
+        return [t for t in self._pack_triggers if t.pack_id == pack_id]
+
+    def pack_trigger(self, pack_id: str, key: str) -> Trigger | None:
+        return next((t for t in self._pack_triggers if t.pack_id == pack_id and t.pack_key == key), None)
 
     def of_type(self, channel_id: str, type_: str) -> list[Trigger]:
         return [t for t in self.in_channel(channel_id) if t.type == type_ and t.enabled]
@@ -519,7 +550,7 @@ class TriggerService:
                 raise TriggerError(str(exc)) from exc
         self._check_expression(channel_id, expr, Context.LISTENER if type_ == "listener" else Context.TRIGGER, prefix)
 
-    # ── pack triggers (ADR-0029): written only by the script that owns the pack ──
+    # ── pack triggers (ADR-0029, ADR-0032) ──────────────────────────────────
     async def install_pack_trigger(
         self,
         *,
@@ -535,47 +566,146 @@ class TriggerService:
         prefix: str = "!",
         via: str = "script",
     ) -> bool:
-        """Add or replace the pack's trigger `key`, checked as `add` checks one. True when it changed."""
+        """The pack script adds or replaces the pack's trigger `key`, checked as `add` checks one. True when
+        it changed."""
         self._check(GLOBAL, type_, expr, match, schedule, prefix)
-        wanted = {
-            "type": type_,
-            "match": json.dumps(match or {}),
-            "schedule": json.dumps(schedule or {}),
-            "expr": expr,
-            "run_as_rank": run_as_rank,
-            "log_level": log_level.value,
-        }
+        return await self._write_pack_trigger(
+            pack_id,
+            key,
+            {"type": type_, "match": match or {}, "schedule": schedule or {}, "expr": expr,
+             "run_as_rank": run_as_rank, "log_level": log_level.value},
+            actor_user_id=created_by,
+            via=via,
+            action="trigger.pack_install",
+        )  # fmt: skip
+
+    async def set_pack_trigger(
+        self,
+        *,
+        pack_id: str,
+        key: str,
+        type_: str,
+        expr: str,
+        match: dict[str, Any] | None = None,
+        schedule: dict[str, Any] | None = None,
+        cooldown_s: int | None = None,
+        user_cooldown_s: int | None = None,
+        commands: Collection[str],
+        internal: Collection[str] = (),
+        actor_user_id: str,
+        via: str,
+    ) -> tuple[Trigger, bool]:
+        """The pack's owner adds or replaces its trigger `key` (ADR-0032): checked as a channel's trigger is,
+        and by the pack's own rules. `commands` are the pack's public members, the only custom commands it
+        may call; `internal` its helpers, named in the refusal. It runs at everyone's rank and keeps its
+        on/off state when replaced, and its cooldowns unless they are given. Returns it and whether it is
+        new. Audited as `trigger.pack_set`."""
+        key = key.lower()
+        if not PACK_KEY.fullmatch(key):
+            raise TriggerError("a trigger's key is a letter, then up to 31 letters, digits or _")
+        existing = self.pack_trigger(pack_id, key)
+        if existing is None and len(self.pack_triggers(pack_id)) >= MAX_PACK_TRIGGERS:
+            raise TriggerError(f"a pack has at most {MAX_PACK_TRIGGERS} triggers")
+        self._check(GLOBAL, type_, expr, match, schedule, "!")
+        if cooldown_s is None:
+            cooldown_s = existing.cooldown_s if existing is not None else 0
+        if user_cooldown_s is None:
+            user_cooldown_s = existing.user_cooldown_s if existing is not None and type_ not in NO_CHATTER else 0
+        check_cooldowns(type_, cooldown_s, user_cooldown_s)
+        check_pack_schedule(type_, schedule)
+        self._check_pack_calls(expr, type_, commands, internal)
+        await self._write_pack_trigger(
+            pack_id,
+            key,
+            {"type": type_, "match": match or {}, "schedule": schedule or {}, "expr": expr,
+             "run_as_rank": PACK_TRIGGER_RANK, "log_level": LogLevel.OUTPUT.value,
+             "cooldown_s": cooldown_s, "user_cooldown_s": user_cooldown_s},
+            actor_user_id=actor_user_id,
+            via=via,
+            action="trigger.pack_set",
+        )  # fmt: skip
+        found = self.pack_trigger(pack_id, key)
+        assert found is not None
+        return found, existing is None
+
+    async def set_pack_trigger_enabled(
+        self, *, pack_id: str, key: str, enabled: bool, actor_user_id: str, via: str
+    ) -> bool:
+        """Turn a pack's trigger on or off everywhere the pack is. False when the pack has no such key."""
         async with transaction(self.conn):
-            async with await self.conn.execute(
-                "SELECT * FROM triggers WHERE pack_id = %s AND pack_key = %s", (pack_id, key)
-            ) as cur:
-                row = await cur.fetchone()
-            if row is not None and all(row[k] == v for k, v in wanted.items()):
-                return False
-            if row is None:
-                await self.conn.execute(
-                    "INSERT INTO triggers (channel_id, type, match, schedule, expr, run_as_rank, log_level,"
-                    " syntax_version, created_by, created_at, updated_at, pack_id, pack_key)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (GLOBAL, *wanted.values(), SYNTAX_VERSION, created_by, now_ms(), now_ms(), pack_id, key),
+            cur = await self.conn.execute(
+                "UPDATE triggers SET enabled = %s, updated_at = %s WHERE pack_id = %s AND pack_key = %s",
+                (enabled, now_ms(), pack_id, key.lower()),
+            )
+            if cur.rowcount:
+                await write_audit(
+                    self.conn,
+                    action="trigger.pack_enable" if enabled else "trigger.pack_disable",
+                    actor_user_id=actor_user_id,
+                    via=via,
+                    channel_id=GLOBAL,
+                    target=f"{pack_id}:{key.lower()}",
                 )
-            else:
-                await self.conn.execute(
-                    "UPDATE triggers SET type = %s, match = %s, schedule = %s, expr = %s, run_as_rank = %s,"
-                    " log_level = %s, syntax_version = %s, updated_at = %s WHERE id = %s",
-                    (*wanted.values(), SYNTAX_VERSION, now_ms(), row["id"]),
-                )
+        if cur.rowcount:
+            await self.reload()
+        return bool(cur.rowcount)
+
+    async def set_pack_trigger_cooldowns(
+        self,
+        *,
+        pack_id: str,
+        key: str,
+        cooldown_s: int,
+        user_cooldown_s: int | None,
+        actor_user_id: str,
+        via: str,
+    ) -> Trigger | None:
+        """A pack trigger's cooldowns (ADR-0031); `user_cooldown_s=None` keeps the per-chatter one. None when
+        the pack has no such key. Audited as `trigger.pack_edit`."""
+        current = self.pack_trigger(pack_id, key.lower())
+        if current is None:
+            return None
+        user_s = current.user_cooldown_s if user_cooldown_s is None else user_cooldown_s
+        check_cooldowns(current.type, cooldown_s, user_s)
+        before = {"cooldown_s": current.cooldown_s, "user_cooldown_s": current.user_cooldown_s}
+        after = {"cooldown_s": cooldown_s, "user_cooldown_s": user_s}
+        if before == after:
+            return current
+        async with transaction(self.conn):
+            await self.conn.execute(
+                "UPDATE triggers SET cooldown_s = %s, user_cooldown_s = %s, updated_at = %s WHERE id = %s",
+                (cooldown_s, user_s, now_ms(), current.id),
+            )
             await write_audit(
                 self.conn,
-                action="trigger.pack_install",
-                actor_user_id=created_by,
+                action="trigger.pack_edit",
+                actor_user_id=actor_user_id,
                 via=via,
                 channel_id=GLOBAL,
-                target=f"{pack_id}:{key}",
-                after={"type": type_, "expr": expr, "match": match or {}, "schedule": schedule or {}},
+                target=f"{pack_id}:{current.pack_key}",
+                before=before,
+                after=after,
             )
         await self.reload()
-        return True
+        return self.pack_trigger(pack_id, current.pack_key)
+
+    async def remove_pack_trigger(self, *, pack_id: str, key: str, actor_user_id: str, via: str) -> bool:
+        async with transaction(self.conn):
+            cur = await self.conn.execute(
+                "DELETE FROM triggers WHERE pack_id = %s AND pack_key = %s", (pack_id, key.lower())
+            )
+            if cur.rowcount:
+                await write_audit(
+                    self.conn,
+                    action="trigger.pack_remove",
+                    actor_user_id=actor_user_id,
+                    via=via,
+                    channel_id=GLOBAL,
+                    target=f"{pack_id}:{key.lower()}",
+                )
+        if cur.rowcount:
+            await self.reload()
+        return bool(cur.rowcount)
 
     async def remove_pack_triggers(
         self, *, pack_id: str, keep: Iterable[str], actor_user_id: str, via: str = "script"
@@ -599,6 +729,59 @@ class TriggerService:
         if removed:
             await self.reload()
         return removed
+
+    async def _write_pack_trigger(
+        self, pack_id: str, key: str, wanted: dict[str, Any], *, actor_user_id: str, via: str, action: str
+    ) -> bool:
+        """Insert or update the pack's row for `key` with `wanted`'s columns. True when anything changed."""
+        columns = {k: json.dumps(v) if k in ("match", "schedule") else v for k, v in wanted.items()}
+        async with transaction(self.conn):
+            async with await self.conn.execute(
+                "SELECT * FROM triggers WHERE pack_id = %s AND pack_key = %s", (pack_id, key)
+            ) as cur:
+                row = await cur.fetchone()
+            if row is not None and all(row[k] == v for k, v in columns.items()):
+                return False
+            if row is None:
+                names = ", ".join(columns)
+                await self.conn.execute(
+                    f"INSERT INTO triggers (channel_id, {names}, syntax_version, created_by, created_at, updated_at,"
+                    f" pack_id, pack_key) VALUES (%s, {', '.join(['%s'] * len(columns))}, %s, %s, %s, %s, %s, %s)",
+                    (GLOBAL, *columns.values(), SYNTAX_VERSION, actor_user_id, now_ms(), now_ms(), pack_id, key),
+                )
+            else:
+                sets = ", ".join(f"{k} = %s" for k in columns)
+                await self.conn.execute(
+                    f"UPDATE triggers SET {sets}, syntax_version = %s, updated_at = %s WHERE id = %s",
+                    (*columns.values(), SYNTAX_VERSION, now_ms(), row["id"]),
+                )
+            await write_audit(
+                self.conn,
+                action=action,
+                actor_user_id=actor_user_id,
+                via=via,
+                channel_id=GLOBAL,
+                target=f"{pack_id}:{key}",
+                after={k: wanted[k] for k in ("type", "expr", "match", "schedule")}
+                | {k: wanted[k] for k in ("cooldown_s", "user_cooldown_s") if wanted.get(k)},
+            )
+        await self.reload()
+        return True
+
+    def _check_pack_calls(self, expr: str, type_: str, commands: Collection[str], internal: Collection[str]) -> None:
+        """A pack's trigger calls only its pack's public commands and what runs everywhere (ADR-0032): what
+        else a name means differs from one channel to the next."""
+        context = Context.LISTENER if type_ == "listener" else Context.TRIGGER
+        for inv in invocations(parse(expr, context, self.parser_params("!"))):
+            if inv.personal:
+                raise TriggerError(f"a pack's trigger can't call @{inv.name}: links differ for every chatter")
+            if inv.name in commands or self.everywhere(inv.name):
+                continue
+            if inv.name in internal:
+                raise TriggerError(f"{inv.name} is internal: a pack's trigger calls the pack's public commands")
+            raise TriggerError(
+                f"a pack's trigger calls only its pack's commands and the built-ins, and {inv.name} is neither"
+            )
 
     def _check_expression(self, channel_id: str, expr: str, context: Context, prefix: str) -> None:
         """Parse the expression the way it will run, and filter it: it is read out later (architecture §9)."""

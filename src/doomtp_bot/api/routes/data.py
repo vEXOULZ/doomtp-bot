@@ -830,6 +830,7 @@ def _trigger_json(trigger: Any) -> dict[str, Any]:
         "user_cooldown_s": trigger.user_cooldown_s,
         "created_by": trigger.created_by,
         "pack": trigger.pack,  # set on a pack's trigger, which can't be changed here (ADR-0029)
+        "pack_key": trigger.pack_key or None,
     }
 
 

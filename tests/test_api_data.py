@@ -99,6 +99,7 @@ async def app_and_keys(
         services={"policy": policy, "customcmds": customcmds, "packs": packs},
     )
     triggers.parser_params = runtime.parser_params
+    triggers.everywhere = lambda name: runtime.registry.get(name) is not None
     health = HealthRegistry()
     health.register("databases", _ok_check)
     twitch = FakeTwitch()
