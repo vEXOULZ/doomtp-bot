@@ -286,6 +286,9 @@ async def run(settings: Settings) -> None:
         nonlocal retry_in
         retry_in = min(max(retry_in * 2, FIRST_RETRY_S), MAX_RETRY_S)
         log.warning("twitch.restarting", in_s=retry_in)
+        # The log stopped when the bot last heard chat, not now: ending the sessions there leaves a gap
+        # that the startup backfill fills once the client is back.
+        await writer.end_all_sessions("restart", at=twitch.heard_at if twitch is not None else None)
         await asyncio.sleep(retry_in)
         await start_twitch()
 

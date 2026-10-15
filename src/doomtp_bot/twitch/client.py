@@ -18,6 +18,7 @@ import twitchio
 from twitchio import eventsub
 from twitchio.eventsub.websockets import Websocket
 
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core import metrics
 from doomtp_bot.core.events import (
     ChatCleared,
@@ -243,6 +244,8 @@ class TwitchService:
         self.watch_s = WATCH_S
         #: Why the watchdog last found the bot deaf, while it still is; None while chat reaches it.
         self.deaf: str | None = None
+        #: When the watchdog last found everything arriving (ms): where the log's gap starts if it stops.
+        self.heard_at: int = now_ms()
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     async def start(self) -> bool:
@@ -276,6 +279,7 @@ class TwitchService:
         self._wanted.clear()
         self._channel_events.clear()
         self.deaf = None
+        self.heard_at = now_ms()
         await self.client.login()
         self._task = asyncio.create_task(self._run(self.client), name="twitch-client")
         self._watch = asyncio.create_task(self._watchdog(self.client), name="twitch-watchdog")
@@ -345,6 +349,8 @@ class TwitchService:
             reason = self.deaf_reason()
             misses = misses + 1 if reason else 0
             self.deaf = reason
+            if reason is None:
+                self.heard_at = now_ms()
             if reason is None or misses < DEAF_AFTER:
                 continue
             self.last_error = f"deaf: {reason}"
