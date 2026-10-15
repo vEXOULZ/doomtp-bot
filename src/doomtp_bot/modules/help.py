@@ -1,5 +1,6 @@
-"""`help` module: lists only the commands the caller can run here (architecture §8, F9), and links the
-channel's command page on the web site when WEB_SITE_URL is set.
+"""`help` module: `commands` and `help` list only the commands the caller can run here (architecture §8, F9).
+When WEB_SITE_URL is set, `commands` links the channel's command page on the web site and `help` the site
+itself, where the language and the docs are.
 
 Custom commands appear alongside built-ins: what this channel publishes, plus the caller's own
 aliases (ADR-0009). Each is checked against the same policy gate as a built-in.
@@ -26,10 +27,16 @@ MODULE = "help"
 HIDDEN_MODULES = frozenset({"core", "http"})  # http: only admins' commands can call it
 
 
+def site_root(ctx: CommandContext) -> str | None:
+    """The web site's home, with the docs and the language."""
+    site: str | None = ctx.exec.services.get("site_url")
+    return f"{site.rstrip('/')}/" if site else None
+
+
 def site_link(ctx: CommandContext) -> str | None:
     """The channel's page on the web site, which lists every command with its usage."""
-    site: str | None = ctx.exec.services.get("site_url")
-    return f"{site.rstrip('/')}/channels/{ctx.channel.login}" if site else None
+    root = site_root(ctx)
+    return f"{root}channels/{ctx.channel.login}" if root else None
 
 
 def _custom(ctx: CommandContext) -> CustomCommandService | None:
@@ -60,39 +67,10 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
     return specs
 
 
-@command(
-    CommandSpec(
-        name="help",
-        module=MODULE,
-        aliases=("commands",),
-        summary="List commands you can use, or show how to use one",
-        params=(Param("1", "command", description="A command name"),),
-        examples=(
-            Example("{sign}help", "commands: explain, help, random, …"),
-            Example("{sign}help random", "{sign}random [range]: …"),
-        ),
-        default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
-    )
-)
-async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+async def _listing(ctx: CommandContext, link: str | None, how: str) -> Result:
+    """`commands: …; custom: …`, the ones the caller can run here, then `; <how> <link>` when the site is set."""
     registry: CommandRegistry = ctx.service("registry")
     policy = ctx.service("runtime").policy
-    prefix = ctx.channel.prefix
-    name = args.get("command")
-    if name:
-        wanted = strip_prefix(name, prefix).lower().removeprefix("@")
-        # The runtime's own resolver: the built-ins and the system packs' sentinels (ADR-0019).
-        found = ctx.service("runtime").resolver.resolve_name(ctx.exec, wanted)
-        spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
-        if spec is None or not policy.is_permitted(ctx.exec, spec):
-            return Result.failure(Code.NOT_FOUND, f"no command named {name}")
-        text = f"{prefix}{spec.usage()}: {with_sign(spec.summary, prefix)}"
-        if spec.aliases:
-            text += f" (aliases: {', '.join(spec.aliases)})"
-        if spec.params:
-            text += f". {cc_params.describe(spec.params)}"
-        return Result.success(text, {"name": spec.name, "usage": spec.usage(), "summary": spec.summary})
-
     builtins = [
         c.spec.name
         for c in registry.all()
@@ -102,10 +80,55 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     text = "commands: " + ", ".join(builtins)
     if custom:
         text += "; custom: " + ", ".join(custom)
-    link = site_link(ctx)
     if link:
-        text += f"; more at {link}"
+        text += f"; {how} {link}"
     return Result.success(text, {"builtin": builtins, "custom": custom, "link": link})
 
 
-COMMANDS: tuple[Command, ...] = (help_cmd,)
+@command(
+    CommandSpec(
+        name="help",
+        module=MODULE,
+        summary="List commands you can use, or show how to use one, with a link to the bot's docs",
+        params=(Param("1", "command", description="A command name"),),
+        examples=(
+            Example("{sign}help", "commands: explain, help, random, …; docs at …"),
+            Example("{sign}help random", "{sign}random [range]: …"),
+        ),
+        default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
+    )
+)
+async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+    policy = ctx.service("runtime").policy
+    prefix = ctx.channel.prefix
+    name = args.get("command")
+    if not name:
+        return await _listing(ctx, site_root(ctx), "docs at")
+    wanted = strip_prefix(name, prefix).lower().removeprefix("@")
+    # The runtime's own resolver: the built-ins and the system packs' sentinels (ADR-0019).
+    found = ctx.service("runtime").resolver.resolve_name(ctx.exec, wanted)
+    spec = found.spec if found is not None else (await _custom_specs(ctx)).get(wanted)
+    if spec is None or not policy.is_permitted(ctx.exec, spec):
+        return Result.failure(Code.NOT_FOUND, f"no command named {name}")
+    text = f"{prefix}{spec.usage()}: {with_sign(spec.summary, prefix)}"
+    if spec.aliases:
+        text += f" (aliases: {', '.join(spec.aliases)})"
+    if spec.params:
+        text += f". {cc_params.describe(spec.params)}"
+    return Result.success(text, {"name": spec.name, "usage": spec.usage(), "summary": spec.summary})
+
+
+@command(
+    CommandSpec(
+        name="commands",
+        module=MODULE,
+        summary="List commands you can use here, with a link to this channel's command page",
+        examples=(Example("{sign}commands", "commands: explain, help, random, …; more at …/channels/<channel>"),),
+        default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
+    )
+)
+async def commands_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+    return await _listing(ctx, site_link(ctx), "more at")
+
+
+COMMANDS: tuple[Command, ...] = (help_cmd, commands_cmd)
