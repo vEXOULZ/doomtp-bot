@@ -543,6 +543,8 @@ def rule_json(policy: PolicyService, scope: str, spec: CommandSpec) -> dict[str,
         "toggleable": spec.toggleable,
         "fixed_policy": spec.fixed_policy,
         "required_role": required,
+        # The rank its pack sets (ADR-0033): what `required_role` can't go under here.
+        "min_role": spec.min_role,
         "allowed_roles": list(allowed) if allowed else None,
         "cooldowns": {
             role: {"tier_s": cd.tier_s, "user_s": cd.user_s} for role, cd in policy.cooldown_rules(scope, spec).items()
@@ -599,6 +601,13 @@ async def apply_command_rule(
     unknown = sorted({r for r in named if r is not None and policy.rank_of(scope, r) is None})
     if unknown:
         raise HTTPException(status_code=400, detail=f"no role named {', '.join(unknown)}")
+    lower = [fields.get("required_role"), *(body.allowed_roles or [])]
+    if any(r is not None and policy.below_floor(scope, spec, r) for r in lower):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{spec.name} needs {spec.min_role} at least: its {spec.module} pack sets that,"
+            " and a channel can only raise it",
+        )
 
     async def write(repo: Any) -> None:
         if "enabled" in fields or "log_level" in fields:

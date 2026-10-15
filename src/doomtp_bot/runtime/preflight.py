@@ -172,7 +172,11 @@ def preflight(
         spec = resolved.spec
         decision = policy.check(here, spec)
         if not decision.allowed:
-            message = "permission denied" if decision.code == Code.DENIED else f"unknown command: {inv.name}"
+            if decision.code == Code.DENIED:
+                needed = decision.info.get("required_role")
+                message = f"that takes {needed} rank" if needed else "permission denied"
+            else:
+                message = f"unknown command: {inv.name}"
             refusal = Result.failure(decision.code, message, dict(decision.info))
             if not branch:
                 return fail(inv.index, inv.name, refusal)

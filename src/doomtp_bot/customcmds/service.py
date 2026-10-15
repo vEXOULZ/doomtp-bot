@@ -59,6 +59,8 @@ class CustomCommand:
     visibility: Literal["private", "shareable"]
     status: Status
     params: tuple[dict[str, Any], ...] = ()
+    #: The rank its pack sets on it (ADR-0033), when it was read as a pack member. None is everyone.
+    pack_role: str | None = None
 
     @property
     def shareable(self) -> bool:
@@ -139,6 +141,7 @@ class CustomCommandService:
             visibility=row["visibility"],
             status=row["status"],
             params=tuple(json.loads(row["params"] or "[]")),
+            pack_role=row.get("member_role"),
         )
 
     _SELECT = (

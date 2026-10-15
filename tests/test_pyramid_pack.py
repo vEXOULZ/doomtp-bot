@@ -202,7 +202,7 @@ async def test_channel_facts_and_the_shared_switch(h: Harness) -> None:  # noqa:
 async def test_settings_take_moderator_rank_and_valid_values(h: Harness) -> None:  # noqa: F811
     await _setup(h)
     for setting in ("chance 50", "exempt mod", "addfact x", "delfact 1", "congrats off"):
-        assert (await _say(h, "alice", f"!pyramid {setting}")).send == "changing pyramid settings takes moderator rank"
+        assert (await _say(h, "alice", f"!pyramid {setting}")).send == "that takes moderator rank"
     assert (await _say(h, "mod", "!pyramid chance 101")).send == "usage: pyramid chance <0-100>"
     assert (await _say(h, "mod", "!pyramid minpeak 1")).send == "usage: pyramid minpeak <2-50>"
     assert (

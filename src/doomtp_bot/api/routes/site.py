@@ -95,7 +95,11 @@ async def _packs_json(request: Request, channel_id: str, *, include_global: bool
                 "owner_user_id": pack.owner_user_id,
                 "owner": members[0].owner_login if members else None,
                 # An internal member is only called by the pack's own commands; chat can't type it (ADR-0012).
-                "commands": [{**_custom_json(m), "internal": m.name in internal} for m in members],
+                # `role` is the rank the pack sets, which no channel goes under (ADR-0033).
+                "commands": [
+                    {**_custom_json(m), "internal": m.name in internal, "role": m.pack_role or "everyone"}
+                    for m in members
+                ],
             }
         )
     return found

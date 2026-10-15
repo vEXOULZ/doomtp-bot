@@ -176,6 +176,12 @@ async def _role(ctx: CommandContext, v: list[str], args: Args) -> Result:
 PERM_USAGE = "perm show <command> | set <command> <role> | allow <command> <role,role> | clear <command>"
 
 
+def _floor_note(spec: CommandSpec) -> str:
+    return (
+        f"{spec.name} needs {spec.min_role} at least: its {spec.module} pack sets that, and a channel can only raise it"
+    )
+
+
 @_handler
 async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
     policy = policy_of(ctx)
@@ -194,6 +200,8 @@ async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
         role = v[2].lower()
         if policy.rank_of(channel_id, role) is None:
             raise CommandError(f"unknown role {role}")
+        if policy.below_floor(channel_id, spec, role):
+            return Result.failure(Code.FAIL, _floor_note(spec))
         await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.key, role, None, actor(ctx)))
         return Result.success(f"{spec.name} now requires {role}")
     if action == "allow":
@@ -202,6 +210,8 @@ async def _perm(ctx: CommandContext, v: list[str], args: Args) -> Result:
         unknown = [r for r in roles if policy.rank_of(channel_id, r) is None]
         if not roles or unknown:
             raise CommandError(f"unknown role(s): {', '.join(unknown) or '(none given)'}")
+        if any(policy.below_floor(channel_id, spec, r) for r in roles):
+            return Result.failure(Code.FAIL, _floor_note(spec))
         required, _ = policy.required_role(channel_id, spec)
         await _write(ctx, lambda repo: repo.set_command_rule(channel_id, spec.key, required, roles, actor(ctx)))
         return Result.success(f"{spec.name} is also allowed for: {', '.join(roles)}")
