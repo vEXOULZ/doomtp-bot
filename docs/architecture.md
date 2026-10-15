@@ -499,6 +499,7 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
                             -- crons:  {"cron": "0 18 * * fri"} in the channel's timezone
          expr text, syntax_version text,   -- pipeline expression, and the grammar it was parsed with
          run_as_rank integer,   -- capped at the rank of the mod who created it
+         cooldown_s integer, user_cooldown_s integer,  -- ADR-0031: per channel, per chatter; 0 is none
          enabled boolean, log_level text, created_by text, created_at bigint, updated_at bigint)
 ```
 
@@ -511,6 +512,7 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
   - *Changed in revision 5:* earlier revisions said `re` plus an RE2-compatible check through `google-re2`. `re` can't be interrupted, so a timeout guard around it would have needed a thread per match; `regex` gives the timeout directly, and an RE2 check would only have refused patterns (backreferences, lookarounds) that moderators do write and that the timeout already makes safe.
   - Listener captures are available as `{match.1}` and `{match.name}`.
 - Every trigger passes through the same runtime, including preflight, cooldowns (keyed by trigger), the moderation index (for listeners and redemptions) and the Outbox.
+- **Cooldowns** (ADR-0031): a trigger's own `cooldown_s` holds it for the whole channel and `user_cooldown_s` for the chatter who set it off, like a command's shared and personal buckets. `TriggerRunner` checks and takes them before the run, in memory, and skips a firing inside either. Timers, crons and stream events have no chatter, so only the first. `!listen|event|timer cooldown <id> [<channel> [<user>]]` sets them.
 - Some trigger types need capabilities. Redemptions need the full tier, and follows need moderator status (ADR-0007).
 
 - **Crons** are timers told *when* instead of *how often*: the five standard fields (`minute hour day month weekday`, with `*`, lists, ranges, steps and names) evaluated in the channel's `timezone`. The scheduler keeps both clocks — monotonic for intervals, so correcting the machine's clock can't skip a timer, and wall clock for crons, which is the whole point of them. A matching minute fires once, and the minute is marked handled even when `only_live` holds it back, so a cron waits for its next time instead of firing late.

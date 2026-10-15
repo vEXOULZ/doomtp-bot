@@ -18,9 +18,11 @@ from doomtp_bot.runtime.result import CommandError, Result
 from doomtp_bot.runtime.spec import CommandSpec, Example, LogLevel, Param
 from doomtp_bot.triggers.cron import describe as describe_cron
 from doomtp_bot.triggers.service import (
+    NO_CHATTER,
     REQUIRED_CAPABILITY,
     TRIGGER_TYPES,
     TriggerError,
+    parse_duration,
     parse_every,
 )
 
@@ -30,11 +32,18 @@ if TYPE_CHECKING:
 MODULE = "automation"
 EVENT_TYPES = tuple(t for t in TRIGGER_TYPES if t not in ("listener", "timer", "cron"))
 LISTENER_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")
-LISTEN_USAGE = 'listen list | add <name> </regex/|"regex"> <expression> | test <text> | rm|on|off <name|id>'
-EVENT_USAGE = "event list | add <" + "|".join(EVENT_TYPES) + "> <expression> | rm|on|off <id>"
+LISTEN_USAGE = (
+    'listen list | add <name> </regex/|"regex"> <expression> | test <text> | rm|on|off <name|id>'
+    " | cooldown <name|id> [<channel> [<user>]]"
+)
+EVENT_USAGE = (
+    "event list | add <"
+    + "|".join(EVENT_TYPES)
+    + "> <expression> | rm|on|off <id> | cooldown <id> [<channel> [<user>]]"
+)
 TIMER_USAGE = (
     "timer list | add <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression>"
-    ' | cron "<m h dom mon dow>" <expression> | rm|on|off <id>'
+    ' | cron "<m h dom mon dow>" <expression> | rm|on|off <id> | cooldown <id> [<channel>]'
 )
 TRIGGER_USAGE = (
     "trigger list | add <" + "|".join(EVENT_TYPES) + "> <expression> |"
@@ -80,7 +89,25 @@ def _describe(trigger: Trigger) -> str:
     else:
         what = trigger.type
     pack = f" ({trigger.pack} pack)" if trigger.pack else ""
-    return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'}{pack} → {trigger.expr}"
+    held = f" [{_cooldowns(trigger)}]" if trigger.cooldown_s or trigger.user_cooldown_s else ""
+    return f"{trigger.id}:{what}{'' if trigger.enabled else ' (off)'}{pack}{held} → {trigger.expr}"
+
+
+def _seconds(value: int) -> str:
+    for unit, size in (("h", 3600), ("m", 60)):
+        if value and value % size == 0:
+            return f"{value // size}{unit}"
+    return f"{value}s"
+
+
+def _cooldowns(trigger: Trigger) -> str:
+    """`cooldown 30s, 2m per chatter`, or `no cooldown`."""
+    parts = []
+    if trigger.cooldown_s:
+        parts.append(f"{_seconds(trigger.cooldown_s)} for the channel")
+    if trigger.user_cooldown_s:
+        parts.append(f"{_seconds(trigger.user_cooldown_s)} per chatter")
+    return "cooldown " + ", ".join(parts) if parts else "no cooldown"
 
 
 async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
@@ -91,6 +118,7 @@ async def _listing(ctx: CommandContext, types: tuple[str, ...]) -> Result:
         "; ".join(_describe(t) for t in found),
         [
             {"id": t.id, "type": t.type, "enabled": t.enabled, "expr": t.expr}
+            | {"cooldown_s": t.cooldown_s, "user_cooldown_s": t.user_cooldown_s}
             | ({"name": t.name} if t.name else {})
             | ({"pack": t.pack} if t.pack else {})
             for t in found
@@ -142,6 +170,45 @@ async def _remove_or_toggle(
     return Result.success(f"{values[1]} is {'on' if action == 'on' else 'off'}")
 
 
+async def _cooldown(ctx: CommandContext, values: list[str], usage: str, *, named: bool = False) -> Result:
+    """`<listen|event|timer> cooldown <id> [<channel> [<user>]]` (ADR-0031): with no durations, what it is;
+    with them, the whole-channel and per-chatter windows, `0` for none. Leaving out the per-chatter one
+    keeps it."""
+    need(values, 2, usage)
+    entry_id = _entry_id(ctx, values[1], named=named)
+    service = _service(ctx)
+    current = next((t for t in service.in_channel(ctx.channel.id) if t.id == entry_id), None)
+    if current is None:
+        raise CommandError(f"no entry {entry_id} here")
+    if len(values) == 2:
+        return Result.success(
+            f"{values[1]}: {_cooldowns(current)}",
+            {"cooldown_s": current.cooldown_s, "user_cooldown_s": current.user_cooldown_s},
+        )
+    if len(values) > 4 or (len(values) == 4 and current.type in NO_CHATTER):
+        raise CommandError(f"usage: {usage}")
+    try:
+        channel_s = parse_duration(values[2])
+        user_s = parse_duration(values[3]) if len(values) == 4 else None
+        updated = await service.update(
+            channel_id=ctx.channel.id,
+            trigger_id=entry_id,
+            cooldown_s=channel_s,
+            user_cooldown_s=user_s,
+            actor_user_id=ctx.invoker.id if ctx.invoker else None,
+            prefix=ctx.channel.prefix,
+            via="chat",
+        )
+    except TriggerError as exc:  # a bad duration, or a pack's trigger (ADR-0029)
+        raise CommandError(str(exc)) from exc
+    if updated is None:
+        raise CommandError(f"no entry {entry_id} here")
+    return Result.success(
+        f"{values[1]}: {_cooldowns(updated)}",
+        {"cooldown_s": updated.cooldown_s, "user_cooldown_s": updated.user_cooldown_s},
+    )
+
+
 async def _add(
     ctx: CommandContext,
     type_: str,
@@ -189,6 +256,7 @@ def _warning(ctx: CommandContext, type_: str) -> str:
             Example(r"{sign}listen add hello /\bhello\b/ echo hi {$chatter.display}", ""),
             Example(r"{sign}listen add intro /my name is (?P<name>\w+)/ echo nice to meet you {match.name}", ""),
             Example("{sign}listen test hello there", ""),
+            Example("{sign}listen cooldown hello 30s 5m", "hello: cooldown 30s for the channel, 5m per chatter"),
         ),
     ),
     raw_tail_subcommands=(("add", 3), ("test", 2)),
@@ -201,6 +269,8 @@ async def listen_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         return await _listing(ctx, ("listener",))
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, LISTEN_USAGE, named=True)
+    if action == "cooldown":
+        return await _cooldown(ctx, values, LISTEN_USAGE, named=True)
     if action == "test":
         return _test(ctx, (args.raw_tail or " ".join(values[1:])).strip())
     if action != "add":
@@ -256,6 +326,8 @@ async def event_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         return await _listing(ctx, EVENT_TYPES)
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, EVENT_USAGE)
+    if action == "cooldown":
+        return await _cooldown(ctx, values, EVENT_USAGE)
     if action != "add":
         raise CommandError(f"usage: {EVENT_USAGE}")
     need(values, 2, EVENT_USAGE)
@@ -294,6 +366,8 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         return await _listing(ctx, ("timer", "cron"))
     if action in ("rm", "on", "off"):
         return await _remove_or_toggle(ctx, action, values, TIMER_USAGE)
+    if action == "cooldown":
+        return await _cooldown(ctx, values, TIMER_USAGE)
     if action == "cron":
         return await _add_cron(ctx, args, values)
     if action != "add":

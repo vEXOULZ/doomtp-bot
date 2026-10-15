@@ -16,6 +16,7 @@ from doomtp_bot.core.outbox import Outbox, SendResult
 from doomtp_bot.core.streams import StreamStatus
 from doomtp_bot.filters.service import FilterService
 from doomtp_bot.modules import builtin_registry
+from doomtp_bot.policy.cooldowns import CooldownTracker
 from doomtp_bot.policy.repository import Actor
 from doomtp_bot.policy.service import PolicyService
 from doomtp_bot.runtime.engine import Runtime
@@ -640,3 +641,50 @@ async def test_the_old_trigger_command_still_works_and_says_it_is_going(h: Harne
 async def test_the_module_is_called_automation(h: Harness) -> None:
     names = {"listen", "event", "timer", "trigger"}
     assert {c.spec.module for c in builtin_registry().all() if c.spec.name in names} == {"automation"}
+
+
+# ── cooldowns (ADR-0031) ────────────────────────────────────────────────────
+async def test_a_listener_has_a_channel_and_a_chatter_cooldown(h: Harness) -> None:
+    clock = FakeClock()
+    h.runner.cooldowns = CooldownTracker(clock=lambda: clock.now)
+    await h.say("mod", r"!listen add hi /\bhi\b/ echo hello {$chatter.display}")
+    assert await h.say("mod", "!listen cooldown hi") == "hi: no cooldown"
+    assert await h.say("mod", "!listen cooldown hi 30s 2m") == "hi: cooldown 30s for the channel, 2m per chatter"
+    trigger = h.triggers.in_channel(CHANNEL_ID)[0]
+    assert (trigger.cooldown_s, trigger.user_cooldown_s) == (30, 120)
+    listing = await h.say("mod", "!listen list")
+    assert listing is not None and "[cooldown 30s for the channel, 2m per chatter]" in listing
+
+    async def fire(who: str) -> bool:
+        return await h.runner.run(trigger, channel_login=CHANNEL_LOGIN, user=USERS[who]) is not None
+
+    assert await fire("alice")
+    assert not await fire("mod")  # the channel's window holds everyone
+    clock.now = 31
+    assert not await fire("alice")  # alice's own still holds her
+    assert await fire("mod")
+    clock.now = 121
+    assert await fire("alice")
+    assert h.sender.sent == ["hello Alice", "hello Mod", "hello Alice"]
+
+    # Leaving the per-chatter one out keeps it; 0 clears.
+    assert await h.say("mod", "!listen cooldown hi 0") == "hi: cooldown 2m per chatter"
+    assert await h.say("mod", "!listen cooldown hi 0 0") == "hi: no cooldown"
+
+
+async def test_a_cooldown_is_checked_like_chat_checks_it(h: Harness) -> None:
+    await h.say("mod", "!timer add 15m echo hydrate")
+    await h.say("mod", "!event add stream_online echo we're live")
+    timer, online = h.triggers.in_channel(CHANNEL_ID)
+    assert await h.say("mod", f"!timer cooldown {timer.id} 1h") == f"{timer.id}: cooldown 1h for the channel"
+    assert await h.say("mod", f"!timer cooldown {timer.id} 1h 5m") is not None  # usage: a timer has no chatter
+    assert h.triggers.in_channel(CHANNEL_ID)[0].user_cooldown_s == 0
+    refused = await h.say("mod", f"!event cooldown {online.id} 0 5m")
+    assert refused is not None and refused.startswith("usage:")
+    with pytest.raises(TriggerError, match="no chatter"):
+        await h.triggers.update(
+            channel_id=CHANNEL_ID, trigger_id=online.id, user_cooldown_s=60, actor_user_id=None, prefix="!", via="api"
+        )
+    assert await h.say("mod", f"!timer cooldown {timer.id} 2d") == "a cooldown looks like 0, 30s, 2m or 1h"
+    assert await h.say("mod", f"!timer cooldown {timer.id} 25h") == "a cooldown is at most 24h"
+    assert await h.say("mod", "!event cooldown 9999 1m") == "no entry 9999 here"

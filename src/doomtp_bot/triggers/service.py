@@ -65,6 +65,9 @@ REQUIRED_CAPABILITY: dict[str, str] = {
 MAX_REGEX_CHARS = 200
 MAX_TIMER_EVERY_S = 24 * 3600
 MIN_TIMER_EVERY_S = 60
+MAX_COOLDOWN_S = 24 * 3600
+# Triggers that fire with nobody behind them, so a per-chatter cooldown has no one to hold (ADR-0031).
+NO_CHATTER: frozenset[str] = frozenset({"timer", "cron", "stream_online", "stream_offline"})
 
 
 class TriggerError(ValueError):
@@ -104,6 +107,9 @@ class Trigger:
     #: trigger is handed out as a copy per channel where it applies, with that channel's id.
     pack: str | None = None
     pack_key: str = ""
+    #: Seconds before it fires again anywhere in the channel, and for the same chatter (ADR-0031); 0 is none.
+    cooldown_s: int = 0
+    user_cooldown_s: int = 0
 
     @property
     def regex(self) -> str:
@@ -121,6 +127,26 @@ class Trigger:
     @property
     def cron(self) -> str:
         return str(self.schedule.get("cron", ""))
+
+
+def parse_duration(text: str) -> int:
+    """A cooldown: `0`, `30`, `30s`, `2m`, `1h` → seconds, up to 24h. Raises TriggerError."""
+    match = re.fullmatch(r"(\d+)\s*([smh]?)", text.strip().lower())
+    if match is None:
+        raise TriggerError("a cooldown looks like 0, 30s, 2m or 1h")
+    seconds = int(match.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[match.group(2)]
+    if seconds > MAX_COOLDOWN_S:
+        raise TriggerError("a cooldown is at most 24h")
+    return seconds
+
+
+def check_cooldowns(type_: str, cooldown_s: int, user_cooldown_s: int) -> None:
+    """Both within 0–24h, and a per-chatter one only where the trigger has a chatter (ADR-0031)."""
+    for value in (cooldown_s, user_cooldown_s):
+        if not 0 <= value <= MAX_COOLDOWN_S:
+            raise TriggerError("a cooldown is between 0 and 24h")
+    if user_cooldown_s and type_ in NO_CHATTER:
+        raise TriggerError(f"a {type_} trigger has no chatter, so it takes only the channel-wide cooldown")
 
 
 def parse_every(text: str) -> int:
@@ -211,6 +237,8 @@ class TriggerService:
                     created_by=row["created_by"],
                     pack=row["pack_name"],
                     pack_key=row["pack_key"] or "",
+                    cooldown_s=row["cooldown_s"],
+                    user_cooldown_s=row["user_cooldown_s"],
                 )
                 if trigger.pack is not None:
                     pack_triggers.append(trigger)
@@ -314,21 +342,28 @@ class TriggerService:
         schedule: dict[str, Any] | None = None,
         run_as_rank: int,
         log_level: LogLevel = LogLevel.OUTPUT,
+        cooldown_s: int = 0,
+        user_cooldown_s: int = 0,
         created_by: str | None,
         prefix: str,
         via: str,
     ) -> Trigger:
         """Store a trigger. `prefix` is the channel's command sign, which the expression is parsed under."""
         self._check(channel_id, type_, expr, match, schedule, prefix)
+        check_cooldowns(type_, cooldown_s, user_cooldown_s)
         async with transaction(self.conn):
             trigger_id = await fetch_value(
                 self.conn,
                 "INSERT INTO triggers (channel_id, type, match, schedule, expr, syntax_version,"
-                " run_as_rank, log_level, created_by, created_at, updated_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                " run_as_rank, log_level, cooldown_s, user_cooldown_s, created_by, created_at, updated_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (channel_id, type_, json.dumps(match or {}), json.dumps(schedule or {}), expr,
-                 SYNTAX_VERSION, run_as_rank, log_level.value, created_by or "system", now_ms(), now_ms()),
+                 SYNTAX_VERSION, run_as_rank, log_level.value, cooldown_s, user_cooldown_s,
+                 created_by or "system", now_ms(), now_ms()),
             )  # fmt: skip
+            cooldowns = (
+                {"cooldown_s": cooldown_s, "user_cooldown_s": user_cooldown_s} if cooldown_s or user_cooldown_s else {}
+            )
             await write_audit(
                 self.conn,
                 action="trigger.add",
@@ -336,7 +371,7 @@ class TriggerService:
                 via=via,
                 channel_id=channel_id,
                 target=f"{type_}:{trigger_id}",
-                after={"expr": expr, "match": match or {}, "schedule": schedule or {}},
+                after={"expr": expr, "match": match or {}, "schedule": schedule or {}, **cooldowns},
             )
         await self.reload()
         found = next(t for t in self.in_channel(channel_id) if t.id == int(trigger_id or 0))
@@ -352,6 +387,8 @@ class TriggerService:
         schedule: dict[str, Any] | None = None,
         run_as_rank: int | None = None,
         log_level: LogLevel | None = None,
+        cooldown_s: int | None = None,
+        user_cooldown_s: int | None = None,
         actor_user_id: str | None,
         prefix: str,
         via: str,
@@ -367,7 +404,10 @@ class TriggerService:
             "schedule": current.schedule if schedule is None else schedule,
             "run_as_rank": current.run_as_rank if run_as_rank is None else run_as_rank,
             "log_level": current.log_level if log_level is None else log_level,
+            "cooldown_s": current.cooldown_s if cooldown_s is None else cooldown_s,
+            "user_cooldown_s": current.user_cooldown_s if user_cooldown_s is None else user_cooldown_s,
         }
+        check_cooldowns(current.type, new["cooldown_s"], new["user_cooldown_s"])
         if current.type == "listener":
             compile_listener(str(new["match"].get("regex", "")))
         if current.type == "timer" and not new["schedule"].get("every_s"):
@@ -387,9 +427,11 @@ class TriggerService:
         async with transaction(self.conn):
             await self.conn.execute(
                 "UPDATE triggers SET expr = %s, match = %s, schedule = %s, run_as_rank = %s, log_level = %s,"
-                " syntax_version = %s, updated_at = %s WHERE id = %s AND channel_id = %s",
+                " cooldown_s = %s, user_cooldown_s = %s, syntax_version = %s, updated_at = %s"
+                " WHERE id = %s AND channel_id = %s",
                 (new["expr"], json.dumps(new["match"]), json.dumps(new["schedule"]), new["run_as_rank"],
-                 new["log_level"].value, SYNTAX_VERSION, now_ms(), trigger_id, channel_id),
+                 new["log_level"].value, new["cooldown_s"], new["user_cooldown_s"], SYNTAX_VERSION, now_ms(),
+                 trigger_id, channel_id),
             )  # fmt: skip
             await write_audit(
                 self.conn,
