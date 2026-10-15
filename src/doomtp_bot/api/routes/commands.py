@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from doomtp_bot.api.access import PERSONAL_READ, PERSONAL_WRITE, Caller, check_setting_role
-from doomtp_bot.api.routes.data import MAX_ROWS, _channel, _custom_json, _policy, _state
-from doomtp_bot.api.routes.manage import _filter_check
+from doomtp_bot.api.routes.data import MAX_ROWS, _channel, _custom_json, _limits_json, _policy, _state
+from doomtp_bot.api.routes.manage import ValueBody, _filter_check, commit
 from doomtp_bot.customcmds import params
 from doomtp_bot.customcmds.packs import Pack, PackService, SystemPackError
 from doomtp_bot.customcmds.service import CustomCommand, CustomCommandError, CustomCommandService
@@ -25,6 +25,8 @@ from doomtp_bot.lang.errors import ParseError
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, Context, parse
 from doomtp_bot.policy.roles import GLOBAL
 from doomtp_bot.policy.snapshot import ChannelSettings
+from doomtp_bot.runtime.values import MISSING, render
+from doomtp_bot.runtime.variables import VariableError, WriteOp, key_for
 from doomtp_bot.triggers.service import MAX_COOLDOWN_S, Trigger, TriggerError, TriggerService
 from doomtp_bot.variables.store import Entry
 
@@ -569,6 +571,61 @@ async def my_variables(request: Request, caller: Caller = PERSONAL_READ) -> dict
     entries = await _state(request, "variable_store").entries_of_user(user_id)
     logins = _logins(request)
     return {"variables": [_entry_json(e, logins) for e in entries]}
+
+
+def _my_context(request: Request, caller: Caller) -> Any:
+    """A run context for the user's own `chatter.*` writes, which belong to no channel."""
+    user_id, login = _me(caller)
+    policy = _policy(request)
+    invoker = policy.build_chatter(GLOBAL, user_id, login)
+    return _state(request, "runtime").make_context(
+        channel=policy.channel_info(GLOBAL, ""), invoker=invoker, trigger_type=caller.actor.via
+    )
+
+
+def _my_key(ctx: Any, name: str) -> Any:
+    try:
+        return key_for(ctx, "chatter", name)
+    except VariableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/me/variables/chatter/{name}")
+async def set_my_variable(
+    request: Request, name: str, body: ValueBody, caller: Caller = PERSONAL_WRITE
+) -> dict[str, Any]:
+    """`!var set chatter.<name> <value>`: everyone may set their own. Everything is public, so the page
+    says not to keep anything private here (variable-access-matrix.md §4.2)."""
+    if body.value is None:
+        raise HTTPException(status_code=400, detail="a value can't be null; delete the variable instead")
+    _filter_check(request, GLOBAL, render(body.value))
+    ctx = _my_context(request, caller)
+    await commit(request, ctx, WriteOp("set", _my_key(ctx, name), body.value))
+    return {"name": name, "value": body.value}
+
+
+@router.delete("/me/variables/chatter/{name}")
+async def delete_my_variable(request: Request, name: str, caller: Caller = PERSONAL_WRITE) -> dict[str, Any]:
+    """`!var del chatter.<name>`."""
+    ctx = _my_context(request, caller)
+    key = _my_key(ctx, name)
+    if await _state(request, "variable_store").get(key) is MISSING:
+        raise HTTPException(status_code=404, detail=f"chatter.{name} isn't set")
+    await commit(request, ctx, WriteOp("delete", key))
+    return {"name": name, "removed": True}
+
+
+@router.get("/me/storage")
+async def my_storage(request: Request, caller: Caller = PERSONAL_READ) -> dict[str, Any]:
+    """`!var usage chatter` and `!var usage publisher`: what the user keeps, and what their commands do."""
+    user_id, _ = _me(caller)
+    store = _state(request, "variable_store")
+    found: dict[str, Any] = {}
+    for kind in ("chatter", "publisher"):
+        used = await store.usage(kind, user_id)
+        limits = await store.limits_for(kind, user_id)
+        found[kind] = {"used_bytes": sum(used.values()), "namespaces": used, **_limits_json(limits)}
+    return found
 
 
 @router.get("/me/runs")

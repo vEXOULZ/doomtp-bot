@@ -41,7 +41,8 @@ if TYPE_CHECKING:
 MODULE = "variables"
 USAGE = (
     "var get <ns.name[path]> [user] | set <ns.name[path]> <value> | incr <ns.name[path]> [amount]"
-    " | del <ns.name[path]> [user] | pop <ns.name[path]> [index] | list <ns> [user] | top <ns.name> [count]"
+    " | del <ns.name[path]> [user] | pop <ns.name[path]> [index] | list <ns> [user] | list publisher.<…> <owner> [user]"
+    " | top <ns.name> [count]"
     " | usage [ns]"
 )
 
@@ -89,6 +90,32 @@ def _key_for_user(ctx: CommandContext, ns: str, name: str, user_id: str) -> VarK
     return dataclasses.replace(key_for(ctx.exec, ns, name), **{column: user_id})
 
 
+async def _publisher_space(ctx: CommandContext, ns: str, rest: list[str]) -> Space:
+    """`var list publisher.channel <owner> [user]`: typed, there is no publisher, so the line names whose
+    commands' space to read. Everything is public (variable-access-matrix.md §4.2); `channel` is this one and
+    `chatter` the user named, or the invoker."""
+    if not rest:
+        raise CommandError(f"usage: var list {ns} <owner>" + (" [user]" if "chatter" in ns else ""))
+    owner = (await user_arg(ctx, rest[0]))["id"]
+    chatter = ""
+    if "chatter" in ns.split("."):
+        if len(rest) > 1:
+            chatter = (await user_arg(ctx, rest[1]))["id"]
+        elif ctx.invoker is not None:
+            chatter = ctx.invoker.id
+        else:
+            raise CommandError(f"usage: var list {ns} <owner> <user>")
+    match ns:
+        case "publisher":
+            return Space(ns, owner, "", "")
+        case "publisher.chatter":
+            return Space(ns, owner, chatter, "")
+        case "publisher.channel":
+            return Space(ns, owner, ctx.channel.id, "")
+        case _:  # publisher.channel.chatter
+            return Space(ns, owner, ctx.channel.id, chatter)
+
+
 def _var_admin(ctx: CommandContext) -> bool:
     policy = ctx.exec.services.get("policy")
     return policy is not None and bool(policy.reaches_setting_role(ctx.exec, "var_admin_role"))
@@ -131,11 +158,15 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
         if len(v) < 2 or v[1] not in VAR_NAMESPACES:
             raise CommandError("usage: var list <" + "|".join(VAR_NAMESPACES) + "> [user]")
         ns = v[1]
-        probe = key_for(ctx.exec, ns, "probe")
-        if len(v) > 2:
-            user = await user_arg(ctx, v[2])
-            probe = _key_for_user(ctx, ns, "probe", user["id"])
-        entries = await _store(ctx).entries(Space(probe.ns, probe.key1, probe.key2, probe.key3))
+        if ns.startswith("publisher") and ctx.exec.publisher is None:
+            space = await _publisher_space(ctx, ns, v[2:])
+        else:
+            probe = key_for(ctx.exec, ns, "probe")
+            if len(v) > 2:
+                user = await user_arg(ctx, v[2])
+                probe = _key_for_user(ctx, ns, "probe", user["id"])
+            space = Space(probe.ns, probe.key1, probe.key2, probe.key3)
+        entries = await _store(ctx).entries(space)
         if not entries:
             return Result.success(f"no {ns} variables", {})
         return Result.success(
@@ -255,10 +286,16 @@ async def _var(ctx: CommandContext, v: list[str]) -> Result:
 
 async def _usage(ctx: CommandContext, ns: str) -> Result:
     """How much of its owner's quota a namespace's owner uses: `channel` and `channel.chatter` both count
-    against the channel (ADR-0019)."""
+    against the channel (ADR-0019). Typed, `publisher` is the invoker's own commands."""
     if ns not in VAR_NAMESPACES:
         raise CommandError("usage: var usage [" + "|".join(VAR_NAMESPACES) + "]")
-    kind, owner_id = owner_of(key_for(ctx.exec, ns, "probe"))
+    if ns.startswith("publisher") and ctx.exec.publisher is None:
+        # Typed, there is no publisher: what the invoker's own commands keep.
+        if ctx.invoker is None:
+            raise CommandError("publisher storage needs a chatter")
+        kind, owner_id = "publisher", ctx.invoker.id
+    else:
+        kind, owner_id = owner_of(key_for(ctx.exec, ns, "probe"))
     store = _store(ctx)
     used = await store.usage(kind, owner_id)
     quota = (await store.limits_for(kind, owner_id)).quota_bytes

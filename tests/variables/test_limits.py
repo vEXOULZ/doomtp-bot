@@ -198,6 +198,8 @@ async def test_var_usage_counts_every_namespace_of_the_owner(h: Harness) -> None
         "namespaces": {"channel": 100, "channel.chatter": 2048},
     }
     assert (await h.run("alice", "!var usage")).send == "chatter storage: 0 B of 1 MB (0%)"
+    # Typed, `publisher` is what the invoker's own commands keep.
+    assert (await h.run("alice", "!var usage publisher")).send == "publisher storage: 0 B of 1 MB (0%)"
 
 
 async def test_a_run_over_quota_fails_with_e_quota(h: Harness) -> None:

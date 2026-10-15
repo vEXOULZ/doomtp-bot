@@ -282,6 +282,24 @@ async def test_everything_is_readable_including_other_users(h: Harness) -> None:
     assert await h.reply("alice", "!var list chatter bob") == "location=Porto"
 
 
+async def test_var_list_reads_what_someones_commands_keep(h: Harness) -> None:
+    """Typed, there's no publisher, so `var list publisher.…` names whose commands' space to read."""
+    ctx = h.ctx("alice")
+    await h.store.commit(
+        [
+            WriteOp("set", VarKey("publisher.channel", "401", CHANNEL_ID, name="round"), 3),
+            WriteOp("set", VarKey("publisher.channel", "401", "elsewhere", name="round"), 8),
+            WriteOp("set", VarKey("publisher.channel.chatter", "401", CHANNEL_ID, "402", name="score"), 7),
+            WriteOp("set", VarKey("publisher.channel.chatter", "401", CHANNEL_ID, "400", name="score"), 2),
+        ],
+        ctx,
+    )
+    assert await h.reply("alice", "!var list publisher.channel bob") == "round=3"
+    assert await h.reply("alice", "!var list publisher.channel.chatter bob carol") == "score=7"
+    assert await h.reply("alice", "!var list publisher.channel.chatter bob") == "score=2"
+    assert await h.reply("alice", "!var list publisher.channel") == "usage: var list publisher.channel <owner>"
+
+
 async def test_var_top_leaderboard(h: Harness) -> None:
     await h.reply("alice", "!var incr channel.chatter.points 10")
     await h.reply("bob", "!var incr channel.chatter.points 30")

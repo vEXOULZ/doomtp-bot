@@ -93,7 +93,7 @@ Notes:
 - **Every variable in every namespace is readable.** There are no private variables, no `public` flag and no read grants.
 - Access control covers **writes only.**
 - **Reads by pipelines** are still limited to what the pipeline can *address*: the invoker's own row, the current channel, and the running command's owner. That comes from the namespace keys, not from privacy rules.
-- **Reads through `!var`, the API and the web UI** can target any user's or channel's rows. For example `!var get @alice chatter.location` or `GET /api/v1/users/{id}/variables`.
+- **Reads through `!var`, the API and the web UI** can target any user's or channel's rows. For example `!var get chatter.location @alice`, `!var list publisher.channel <owner>` (typed, the line names the owner, since there is no publisher), or `GET /api/v1/channels/{login}/variables?ns=channel.chatter`.
 - **Consequence for users:** don't store anything private in variables. `!var set` and the web UI should say so.
 - **Future consideration:** private variables, a per-key `private` flag, and per-link read grants. Tracked in §7.
 

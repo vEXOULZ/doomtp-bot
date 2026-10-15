@@ -19,6 +19,7 @@ Writes are audited as the caller: `via="api"`, or `via="web"` with the user's id
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -67,8 +68,8 @@ from doomtp_bot.runtime.variables import (
     MAX_QUOTA_BYTES,
     MAX_VALUE_BYTES,
     OWNER_KINDS,
+    VAR_NAME_RE,
     Limits,
-    Space,
 )
 from doomtp_bot.triggers.service import (
     MAX_COOLDOWN_S,
@@ -1026,24 +1027,107 @@ async def set_publication(
 
 
 # ── variables, logs and the audit trail ─────────────────────────────────────
+# The namespaces a channel's page shows: its own, its chatters', and what published commands keep here
+# (variable-access-matrix.md §5: all of them are public).
+ChannelNamespace = Literal["channel", "channel.chatter", "publisher.channel", "publisher.channel.chatter"]
+
+
+async def _user_id(request: Request, login: str) -> str:
+    """A Twitch login as `!var` takes it, `@` or not. 404 when Twitch knows nobody by that name."""
+    found = await _state(request, "twitch").resolve_user(login)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"no Twitch user named {login.lstrip('@')}")
+    return str(found["id"])
+
+
+async def _logins_for(request: Request, user_ids: set[str], known: dict[str, str]) -> dict[str, str | None]:
+    ids = sorted(user_ids)
+    found = await asyncio.gather(*(_login_of(request, uid, known) for uid in ids))
+    return dict(zip(ids, found, strict=True))
+
+
+def _checked_name(name: str | None) -> str | None:
+    if name is not None and not VAR_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail=f"{name} isn't a variable name")
+    return name
+
+
 @router.get("/channels/{login}/variables")
-async def channel_variables(request: Request, login: str, caller: Caller = READ) -> dict[str, Any]:
-    """The channel's own variables, with the login of whoever last set each when it's known."""
+async def channel_variables(
+    request: Request,
+    login: str,
+    ns: ChannelNamespace = "channel",
+    name: str | None = Query(default=None, max_length=32),
+    user: str | None = Query(default=None, max_length=32, description="a chatter's login, for *.chatter"),
+    publisher: str | None = Query(default=None, max_length=32, description="a command owner's login"),
+    limit: int = Query(default=100, ge=1, le=MAX_ROWS),
+    offset: int = Query(default=0, ge=0),
+    caller: Caller = READ,
+) -> dict[str, Any]:
+    """The variables kept in this channel, one namespace at a time, as `!var list` reads them: the channel's
+    own, each chatter's (`channel.chatter`), and what published commands keep here (`publisher.channel`,
+    `publisher.channel.chatter`). Logins come with the ids when they're known."""
     settings = _channel(request, login)
     store = _state(request, "variable_store")
-    entries = await store.entries(Space("channel", settings.channel_id, "", ""))
+    chatter_column = {"channel.chatter": "key2", "publisher.channel.chatter": "key3"}.get(ns)
+    match = {"key2": settings.channel_id} if ns.startswith("publisher") else {"key1": settings.channel_id}
+    if user is not None:
+        if chatter_column is None:
+            raise HTTPException(status_code=400, detail=f"{ns} has no per-chatter values")
+        match[chatter_column] = await _user_id(request, user)
+    if publisher is not None:
+        if not ns.startswith("publisher"):
+            raise HTTPException(status_code=400, detail=f"{ns} belongs to no command owner")
+        match["key1"] = await _user_id(request, publisher)
+    entries = await store.rows(ns, match=match, name=_checked_name(name), limit=limit + 1, offset=offset)
+    more, entries = len(entries) > limit, entries[:limit]
+
+    def chatter_of(e: Any) -> str | None:
+        return getattr(e.key, chatter_column) if chatter_column else None
+
+    def publisher_of(e: Any) -> str | None:
+        return e.key.key1 if ns.startswith("publisher") else None
+
     known = {c.channel_id: c.login for c in _policy(request).channels()}
+    ids = {i for e in entries for i in (e.updated_by, chatter_of(e), publisher_of(e)) if i}
+    logins = await _logins_for(request, ids, known)
+    rows = []
+    for e in entries:
+        row: dict[str, Any] = {
+            "name": e.key.name,
+            "value": e.value,
+            "updated_at": e.updated_at,
+            "updated_by": e.updated_by,
+            "updated_by_login": logins.get(e.updated_by) if e.updated_by else None,
+        }
+        if (chatter := chatter_of(e)) is not None:
+            row |= {"chatter_id": chatter, "chatter_login": logins.get(chatter)}
+        if (owner := publisher_of(e)) is not None:
+            row |= {"publisher_id": owner, "publisher_login": logins.get(owner)}
+        rows.append(row)
+    return {"namespace": ns, "variables": rows, "has_more": more}
+
+
+@router.get("/channels/{login}/variables/top")
+async def channel_variable_top(
+    request: Request,
+    login: str,
+    name: str = Query(max_length=32),
+    count: int = Query(default=5, ge=1, le=25),
+    caller: Caller = READ,
+) -> dict[str, Any]:
+    """`!var top channel.chatter.<name> [count]`: the chatters with the highest number in it."""
+    settings = _channel(request, login)
+    store = _state(request, "variable_store")
+    rows = await store.top("channel.chatter", settings.channel_id, "", _checked_name(name) or name, count)
+    known = {c.channel_id: c.login for c in _policy(request).channels()}
+    logins = await _logins_for(request, {uid for uid, _ in rows}, known)
     return {
-        "variables": [
-            {
-                "name": e.key.name,
-                "value": e.value,
-                "updated_at": e.updated_at,
-                "updated_by": e.updated_by,
-                "updated_by_login": await _login_of(request, e.updated_by, known),
-            }
-            for e in entries
-        ]
+        "name": name,
+        "top": [
+            {"rank": i, "chatter_id": uid, "chatter_login": logins.get(uid), "value": value}
+            for i, (uid, value) in enumerate(rows, start=1)
+        ],
     }
 
 
