@@ -259,9 +259,10 @@ _NOBODY = 100000  # an exempt rank above bot_owner: nobody is exempt
 _MOD_ONLY = "fail changing pyramid settings takes moderator rank"
 _WHAT = '(arg.1 ?? "-")'
 # Post a fact and remember that this pyramid has had its try.
+_DEFAULT_FACT_PREFIX = "/me ▲ fact: "
 _BREAK = (
     f"( pyramid_fact 0 -> {_PY}[last_fact] && var set {_PY}[attempt] {{event.pyramid_id}}"
-    f" && echo /me ▲ fact: {{{_PY}[last_fact][value]}} ) || true"
+    f" && echo {_DEFAULT_FACT_PREFIX}{{{_PY}[last_fact][value]}} ) || true"
 )
 _CHANCES = f"{{{_PY}[chance_up] ?? 25}}% going up, {{{_PY}[chance_down] ?? 75}}% going down"
 _IS_PYRAMID = '(event.type ?? "-") == "pyramid"'
