@@ -34,16 +34,16 @@ EVENT_TYPES = tuple(t for t in TRIGGER_TYPES if t not in ("listener", "timer", "
 LISTENER_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")
 LISTEN_USAGE = (
     'listen list | add <name> </regex/|"regex"> <expression> | test <text> | rm|on|off <name|id>'
-    " | cooldown <name|id> [<channel> [<user>]]"
+    " | cooldown <name|id> [<channel> [<user>]] | log <name|id> [<level>]"
 )
 EVENT_USAGE = (
     "event list | add <"
     + "|".join(EVENT_TYPES)
-    + "> <expression> | rm|on|off <id> | cooldown <id> [<channel> [<user>]]"
+    + "> <expression> | rm|on|off <id> | cooldown <id> [<channel> [<user>]] | log <id> [<level>]"
 )
 TIMER_USAGE = (
     "timer list | add <every> [jitter=<d>] [only_live] [min_lines=<n>] <expression>"
-    ' | cron "<m h dom mon dow>" <expression> | rm|on|off <id> | cooldown <id> [<channel>]'
+    ' | cron "<m h dom mon dow>" <expression> | rm|on|off <id> | cooldown <id> [<channel>] | log <id> [<level>]'
 )
 TRIGGER_USAGE = (
     "trigger list | add <" + "|".join(EVENT_TYPES) + "> <expression> |"
@@ -214,6 +214,35 @@ async def _cooldown(ctx: CommandContext, values: list[str], usage: str, *, named
     )
 
 
+async def _log_level(ctx: CommandContext, values: list[str], usage: str, *, named: bool = False) -> Result:
+    """`<listen|event|timer> log <id> [<level>]`: which of its runs go to the channel's run log, as `!cmd log`
+    sets a command's. With no level, what it is."""
+    need(values, 2, usage)
+    entry_id = _entry_id(ctx, values[1], named=named)
+    service = _service(ctx)
+    current = next((t for t in service.in_channel(ctx.channel.id) if t.id == entry_id), None)
+    if current is None:
+        raise CommandError(f"no entry {entry_id} here")
+    if len(values) == 2:
+        return Result.success(f"{values[1]} logs: {current.log_level.value}", {"log_level": current.log_level.value})
+    if len(values) > 3 or values[2].lower() not in LogLevel:
+        raise CommandError(f"log level must be one of: {', '.join(LogLevel)}")
+    try:
+        updated = await service.update(
+            channel_id=ctx.channel.id,
+            trigger_id=entry_id,
+            log_level=LogLevel(values[2].lower()),
+            actor_user_id=ctx.invoker.id if ctx.invoker else None,
+            prefix=ctx.channel.prefix,
+            via="chat",
+        )
+    except TriggerError as exc:  # a pack's trigger (ADR-0029)
+        raise CommandError(str(exc)) from exc
+    if updated is None:
+        raise CommandError(f"no entry {entry_id} here")
+    return Result.success(f"{values[1]} logs: {updated.log_level.value}", {"log_level": updated.log_level.value})
+
+
 async def _add(
     ctx: CommandContext,
     type_: str,
@@ -282,6 +311,8 @@ async def listen_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> R
         return await _remove_or_toggle(ctx, action, values, LISTEN_USAGE, named=True)
     if action == "cooldown":
         return await _cooldown(ctx, values, LISTEN_USAGE, named=True)
+    if action == "log":
+        return await _log_level(ctx, values, LISTEN_USAGE, named=True)
     if action == "test":
         return _test(ctx, (args.raw_tail or " ".join(values[1:])).strip())
     if action != "add":
@@ -339,6 +370,8 @@ async def event_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         return await _remove_or_toggle(ctx, action, values, EVENT_USAGE)
     if action == "cooldown":
         return await _cooldown(ctx, values, EVENT_USAGE)
+    if action == "log":
+        return await _log_level(ctx, values, EVENT_USAGE)
     if action != "add":
         raise CommandError(f"usage: {EVENT_USAGE}")
     need(values, 2, EVENT_USAGE)
@@ -379,6 +412,8 @@ async def timer_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Re
         return await _remove_or_toggle(ctx, action, values, TIMER_USAGE)
     if action == "cooldown":
         return await _cooldown(ctx, values, TIMER_USAGE)
+    if action == "log":
+        return await _log_level(ctx, values, TIMER_USAGE)
     if action == "cron":
         return await _add_cron(ctx, args, values)
     if action != "add":
