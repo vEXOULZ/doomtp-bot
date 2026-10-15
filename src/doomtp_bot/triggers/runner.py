@@ -6,6 +6,9 @@ the raider, the subscriber, the person who matched — and a timer has none.
 
 A trigger's own cooldowns (ADR-0031) hold it back before it runs: one window for the whole channel and one
 per chatter, kept in memory like a command's buckets. A firing inside either is skipped quietly.
+
+Each run is written to the run log (`command_runs`) as a chat run is, under the trigger's own log level, so
+the channel's Runs page shows what its triggers did.
 """
 
 from __future__ import annotations
@@ -14,7 +17,9 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from doomtp_bot.core.dispatch import should_log_run
 from doomtp_bot.core.streams import live_fields
+from doomtp_bot.lang.ast import invocations
 from doomtp_bot.lang.parser import Context
 from doomtp_bot.policy.cooldowns import CooldownTracker
 from doomtp_bot.runtime.executor import ScopeArgs
@@ -24,6 +29,7 @@ from doomtp_bot.triggers.service import MIN_CHANNEL_COOLDOWN_S, Trigger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from doomtp_bot.chatlog.writer import ChatLogWriter
     from doomtp_bot.core.outbox import Outbox
     from doomtp_bot.core.streams import StreamStatus
     from doomtp_bot.policy.service import PolicyService
@@ -41,8 +47,10 @@ class TriggerRunner:
         outbox: Outbox,
         streams: StreamStatus | None = None,
         cooldowns: CooldownTracker | None = None,
+        writer: ChatLogWriter | None = None,
     ) -> None:
         self.runtime = runtime
+        self.writer = writer
         self.policy = policy
         self.outbox = outbox
         self.streams = streams
@@ -115,6 +123,7 @@ class TriggerRunner:
                 is_invalidated=is_cancelled or (lambda: False),
                 run_ref=ctx.run_id,
             )
+        await self._log_run(trigger, user_id, report, ctx.run_id)
         log.info(
             "trigger.ran",
             trigger=trigger.id,
@@ -123,3 +132,24 @@ class TriggerRunner:
             code=report.result.code,
         )
         return report
+
+    async def _log_run(self, trigger: Trigger, user_id: str | None, report: RunReport, run_ref: str) -> None:
+        """One `command_runs` row, typed by the trigger's type, if its log level keeps this run."""
+        if self.writer is None or not should_log_run(report, trigger.log_level):
+            return
+        resolved: list[dict[str, object]] = []
+        if report.ast is not None:
+            resolved = [{"index": i.index, "name": i.name, "personal": i.personal} for i in invocations(report.ast)]
+        await self.writer.command_run(
+            channel_id=trigger.channel_id,
+            user_id=user_id,
+            trigger_type=trigger.type,
+            trigger_id=str(trigger.id),
+            expr=report.expr,
+            resolved=resolved,
+            code=report.result.code,
+            message=report.result.message,
+            duration_ms=report.duration_ms,
+            cancelled_reason="moderated" if report.cancelled else None,
+            run_ref=run_ref,
+        )
