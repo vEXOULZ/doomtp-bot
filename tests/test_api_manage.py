@@ -219,6 +219,48 @@ async def test_channel_variables_are_written_by_the_role_the_channel_names(clien
     assert (await client.delete(f"{OWN}/variables/goal", headers=csrf)).status_code == 404
 
 
+async def test_a_chatters_value_is_cleared_by_them_or_the_var_admin_role(client: httpx.AsyncClient, app: Any) -> None:
+    """`!var del channel.chatter.<name> @user`: your own, or anyone's from `var_admin_role` up."""
+    for user in ("200", "300"):
+        await app.state.bot_db.execute(
+            "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at)"
+            " VALUES ('channel.chatter', %s, %s, '', 'points', '5', 0)",
+            (CHANNEL_ID, user),
+        )
+    csrf = as_user(client, app)
+    assert (await client.delete(f"{OWN}/chatters/300/variables/points", headers=csrf)).status_code == 403
+    assert (await client.delete(f"{OWN}/chatters/200/variables/points", headers=csrf)).status_code == 200
+    assert (await client.delete(f"{OWN}/chatters/200/variables/points", headers=csrf)).status_code == 404
+    csrf = as_mod(client, app)
+    await app.state.bot_db.execute(
+        "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at)"
+        " VALUES ('channel.chatter', %s, '200', '', 'points', '5', 0)",
+        (CHANNEL_ID,),
+    )
+    assert (await client.delete(f"{OWN}/chatters/200/variables/points", headers=csrf)).status_code == 200
+    assert (await client.delete(f"{OWN}/chatters/200/variables/bad-name", headers=csrf)).status_code == 400
+    audit = (await client.get("/api/v1/audit", params={"action": "variable.delete"})).json()
+    assert any(e["target"] == "channel.chatter.points@200" for e in audit["entries"])
+
+
+async def test_your_own_chatter_variables_are_yours_to_change(client: httpx.AsyncClient, app: Any) -> None:
+    """`!var set|del chatter.<name>` and `!var usage chatter|publisher`, on the web."""
+    csrf = as_user(client, app)
+    assert (
+        await client.put("/api/v1/me/variables/chatter/location", json={"value": "Porto"}, headers=csrf)
+    ).status_code == 200
+    mine = (await client.get("/api/v1/me/variables")).json()["variables"]
+    assert [(v["namespace"], v["name"], v["value"]) for v in mine] == [("chatter", "location", "Porto")]
+    storage = (await client.get("/api/v1/me/storage")).json()
+    assert storage["chatter"]["used_bytes"] > 0 and storage["publisher"]["used_bytes"] == 0
+    assert storage["chatter"]["quota_bytes"] == 1048576
+    bad = await client.put("/api/v1/me/variables/chatter/data", json={"value": 1}, headers=csrf)
+    assert bad.status_code == 400  # a reserved name, as in chat
+    assert (await client.put("/api/v1/me/variables/chatter/x", json={"value": None}, headers=csrf)).status_code == 400
+    assert (await client.delete("/api/v1/me/variables/chatter/location", headers=csrf)).status_code == 200
+    assert (await client.delete("/api/v1/me/variables/chatter/location", headers=csrf)).status_code == 404
+
+
 async def test_filter_and_listener_tests_run_nothing(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_mod(client, app)
     added = await client.post(

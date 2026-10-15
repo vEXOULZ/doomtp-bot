@@ -32,7 +32,7 @@ from doomtp_bot.policy.roles import (
 from doomtp_bot.policy.snapshot import ChannelSettings
 from doomtp_bot.runtime.context import ExecContext
 from doomtp_bot.runtime.values import MISSING
-from doomtp_bot.runtime.variables import VariableError, WriteOp, key_for
+from doomtp_bot.runtime.variables import VAR_NAME_RE, VariableError, VarKey, WriteOp, key_for
 
 router = APIRouter(prefix="/api/v1", tags=["manage"])
 
@@ -364,6 +364,24 @@ async def delete_channel_variable(
         raise HTTPException(status_code=404, detail=f"channel.{name} isn't set")
     await commit(request, ctx, WriteOp("delete", key))
     return {"name": name, "removed": True}
+
+
+@router.delete("/channels/{login}/chatters/{user_id}/variables/{name}")
+async def delete_chatter_variable(
+    request: Request, login: str, user_id: str, name: str, caller: Caller = PERSONAL_WRITE
+) -> dict[str, Any]:
+    """`!var del channel.chatter.<name> @user`: a chatter clears their own value, and whoever reaches the
+    channel's `var_admin_role` anyone's. Nobody edits someone else's (variable-access-matrix.md §5)."""
+    settings = _channel(request, login)
+    if caller.user_id != user_id:
+        check_setting_role(request, caller, settings.login, "var_admin_role", "reset chatters' variables")
+    if not VAR_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail=f"{name} isn't a variable name")
+    key = VarKey("channel.chatter", settings.channel_id, user_id, name=name)
+    if await _state(request, "variable_store").get(key) is MISSING:
+        raise HTTPException(status_code=404, detail=f"channel.chatter.{name} isn't set for that chatter")
+    await commit(request, web_context(request, settings, caller), WriteOp("delete", key))
+    return {"name": name, "chatter_id": user_id, "removed": True}
 
 
 # ── capabilities ────────────────────────────────────────────────────────────

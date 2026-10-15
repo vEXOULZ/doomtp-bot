@@ -542,6 +542,58 @@ async def test_channel_variables_are_readable(
     ]
 
 
+async def test_every_namespace_kept_in_a_channel_is_readable(
+    client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], write_key: str
+) -> None:
+    """`!var list channel.chatter @user`, `!var top` and `!var list publisher.channel <owner>`, on the web."""
+    rows = [
+        ("channel.chatter", CHANNEL_ID, "200", "", "points", "30"),
+        ("channel.chatter", CHANNEL_ID, "400", "", "points", "50"),
+        ("channel.chatter", CHANNEL_ID, "400", "", "note", '"hi"'),
+        ("channel.chatter", "elsewhere", "400", "", "points", "99"),
+        ("publisher.channel", "200", CHANNEL_ID, "", "round", "3"),
+        ("publisher.channel", "200", "elsewhere", "", "round", "8"),
+        ("publisher.channel.chatter", "200", CHANNEL_ID, "400", "score", "12"),
+    ]
+    for ns, k1, k2, k3, name, value in rows:
+        await app_and_keys[0].state.bot_db.execute(
+            "INSERT INTO variables (ns, key1, key2, key3, name, value, updated_at, updated_by)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)",
+            (ns, k1, k2, k3, name, value, now_ms()),
+        )
+    url, headers = f"/api/v1/channels/{CHANNEL_LOGIN}/variables", auth(write_key)
+
+    async def names(**params: Any) -> list[tuple[Any, ...]]:
+        found = await client.get(url, params=params, headers=headers)
+        assert found.status_code == 200, found.text
+        return [
+            (v["name"], v.get("chatter_login"), v.get("publisher_login"), v["value"]) for v in found.json()["variables"]
+        ]
+
+    assert await names(ns="channel.chatter") == [
+        ("note", "alice", None, "hi"),
+        ("points", "friend", None, 30),
+        ("points", "alice", None, 50),
+    ]
+    assert await names(ns="channel.chatter", user="@alice", name="points") == [("points", "alice", None, 50)]
+    assert await names(ns="publisher.channel") == [("round", None, "friend", 3)]
+    assert await names(ns="publisher.channel.chatter", publisher="friend") == [("score", "alice", "friend", 12)]
+    paged = (await client.get(url, params={"ns": "channel.chatter", "limit": 2}, headers=headers)).json()
+    assert len(paged["variables"]) == 2 and paged["has_more"] is True
+
+    assert (await client.get(url, params={"ns": "channel", "user": "alice"}, headers=headers)).status_code == 400
+    assert (
+        await client.get(url, params={"ns": "channel.chatter", "user": "nobody"}, headers=headers)
+    ).status_code == 404
+    assert (await client.get(url, params={"ns": "chatter"}, headers=headers)).status_code == 422
+
+    top = (await client.get(f"{url}/top", params={"name": "points", "count": 5}, headers=headers)).json()
+    assert top["top"] == [
+        {"rank": 1, "chatter_id": "400", "chatter_login": "alice", "value": 50},
+        {"rank": 2, "chatter_id": "200", "chatter_login": "friend", "value": 30},
+    ]
+
+
 async def test_storage_limits_are_set_like_admin_quota(client: httpx.AsyncClient, write_key: str) -> None:
     headers = auth(write_key)
     body = (await client.get("/api/v1/variable-limits", headers=headers)).json()

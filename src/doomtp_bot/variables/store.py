@@ -114,6 +114,34 @@ class PostgresVariableStore:
                 for r in await cur.fetchall()
             ]
 
+    async def rows(
+        self, ns: str, *, match: dict[str, str], name: str | None = None, limit: int = 100, offset: int = 0
+    ) -> list[Entry]:
+        """Every row of `ns` whose key columns equal `match` ({"key1": channel} for `channel.chatter`), across
+        whatever columns `match` leaves open, for the channel's Variables page. Optionally one variable name."""
+        if not match or set(match) - {"key1", "key2", "key3"}:
+            raise ValueError(f"match on key columns, not {sorted(match)}")
+        where = ["ns = %s", *(f"{column} = %s" for column in sorted(match))]
+        params: list[Any] = [ns, *(match[c] for c in sorted(match))]
+        if name is not None:
+            where.append("name = %s")
+            params.append(name)
+        rows = await fetch_all(
+            self.conn,
+            "SELECT key1, key2, key3, name, value, updated_at, updated_by FROM variables"
+            f" WHERE {' AND '.join(where)} ORDER BY name, key1, key2, key3 LIMIT %s OFFSET %s",
+            (*params, limit, offset),
+        )
+        return [
+            Entry(
+                VarKey(ns, r["key1"], r["key2"], r["key3"], r["name"]),
+                json.loads(r["value"]),
+                r["updated_at"],
+                r["updated_by"],
+            )
+            for r in rows
+        ]
+
     async def top(self, ns: str, key1: str, key2: str, name: str, limit: int = 10) -> list[tuple[str, Any]]:
         """Leaderboard over the chatter-keyed column of a space prefix, numeric values only, highest first."""
         column = CHATTER_KEY.get(ns)
