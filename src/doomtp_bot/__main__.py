@@ -232,7 +232,7 @@ async def run(settings: Settings) -> None:
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
     runtime.services["outbox"] = outbox  # `mecho` sends its lines itself, one message each
-    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
+    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams, writer=writer)
     timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
         runtime=runtime,
