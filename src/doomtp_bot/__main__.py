@@ -231,7 +231,7 @@ async def run(settings: Settings) -> None:
         links_allowed_for=links_allowed_for,
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
-    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
+    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams, writer=writer)
     timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
         runtime=runtime,
