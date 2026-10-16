@@ -82,10 +82,20 @@ class FakeTwitch:
 
 
 @dataclass
+class FakeOutbox:
+    sent: list[tuple[str, str]] = field(default_factory=list)
+
+    async def send(self, channel_id: str, text: str, **kwargs: Any) -> list[Any]:
+        self.sent.append((channel_id, text))
+        return []
+
+
+@dataclass
 class Harness:
     policy: PolicyService
     runtime: Runtime
     twitch: FakeTwitch
+    outbox: FakeOutbox
     live: bool = False
     removed: bool = False  # the moderation index says the asking message is gone
     reply_to: dict[str, str] | None = None  # the message the asking one replies to
@@ -116,14 +126,14 @@ async def h(dbs: Databases) -> AsyncIterator[Harness]:
     policy = await policy_with_channels(
         dbs.bot, (CHANNEL_ID, CHANNEL_LOGIN), joined=True, bot_owner_ids=frozenset({"1"})
     )
-    twitch = FakeTwitch()
+    twitch, outbox = FakeTwitch(), FakeOutbox()
     runtime = Runtime(
         builtin_registry(),
         policy=policy,
         resolve_user=twitch.resolve_user,
-        services={"policy": policy, "twitch": twitch},
+        services={"policy": policy, "twitch": twitch, "outbox": outbox},
     )
-    harness = Harness(policy, runtime, twitch)
+    harness = Harness(policy, runtime, twitch, outbox)
     await harness.moderator_here(True)
     yield harness
 
@@ -237,6 +247,44 @@ async def test_announce_takes_an_optional_colour_and_is_its_own_output(h: Harnes
     )
     await h.run("mod", "!announce purple")  # a colour word alone is the text
     assert h.twitch.actions[-1] == ("announce", (CHANNEL_ID, "purple", "primary"))
+
+
+async def test_mecho_says_each_quoted_line_as_its_own_message(h: Harness) -> None:
+    report = await h.run("mod", '!mecho "hi {$chatter.display}" "second line"  "third"')
+    assert report.result.code == 0 and report.send is None
+    assert h.outbox.sent == [(CHANNEL_ID, "hi Mod"), (CHANNEL_ID, "second line"), (CHANNEL_ID, "third")]
+
+
+async def test_mecho_takes_at_most_ten_lines(h: Harness) -> None:
+    too_many = await h.run("mod", "!mecho " + " ".join(f'"line {n}"' for n in range(11)))
+    assert too_many.result.code == Code.USAGE and "at most 10" in (too_many.result.message or "")
+    assert h.outbox.sent == []
+
+
+async def test_mecho_is_for_moderators_where_the_bot_is_one(h: Harness) -> None:
+    denied = await h.run("alice", '!mecho "a" "b"')
+    assert denied.result.code == Code.DENIED and h.outbox.sent == []
+
+    await h.moderator_here(False)
+    unavailable = await h.run("mod", '!mecho "a" "b"')
+    assert unavailable.result.code != 0 and "moderate" in str(unavailable.result.data)
+    assert h.outbox.sent == []
+
+
+async def test_mecho_waits_out_its_channel_cooldown_and_never_sends_under_explain(h: Harness) -> None:
+    report = await explain(h.runtime, '!mecho "a" "b"', h.context("mod"), run=True)
+    assert report.ran and report.would_send is None and h.outbox.sent == []
+
+    await h.run("mod", '!mecho "a" "b"')
+    again = await h.run("owner", '!mecho "c"')
+    assert again.result.code == Code.COOLDOWN and h.outbox.sent == [(CHANNEL_ID, "a"), (CHANNEL_ID, "b")]
+
+
+async def test_a_channel_cannot_open_mecho_to_everyone(h: Harness) -> None:
+    resolved = h.runtime.resolver.resolve_name(h.context("mod"), "mecho")
+    assert resolved is not None
+    assert h.policy.below_floor(CHANNEL_ID, resolved.spec, "vip")
+    assert not h.policy.below_floor(CHANNEL_ID, resolved.spec, "broadcaster")
 
 
 async def test_chatmode_turns_each_mode_on_and_off(h: Harness) -> None:
