@@ -93,7 +93,11 @@ async def test_a_public_log_shows_what_chat_saw_and_can_be_closed(
     client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], chatlog: Connection
 ) -> None:
     body = (await client.get(LOG)).json()
-    assert [e["kind"] for e in body["items"]] == ["message", "notification", "message", "message"]
+    assert [e["kind"] for e in body["items"]] == ["message", "message", "notification", "message", "message"]
+    deleted = body["items"][1]  # removed messages show to everyone, flagged
+    assert deleted["id"] == "m-c" and same_time(deleted["deleted_at"], T + 20)
+    hidden = (await client.get(LOG, params={"hide_removed": "true"})).json()
+    assert [e["kind"] for e in hidden["items"]] == ["message", "notification", "message", "message"]
     refused = await client.get(LOG, params={"kind": "moderation"})
     assert (refused.status_code, refused.json()["code"]) == (403, "forbidden")
 
@@ -103,6 +107,21 @@ async def test_a_public_log_shows_what_chat_saw_and_can_be_closed(
     closed = await client.get(LOG)
     assert closed.status_code == 401 and closed.headers["content-type"] == "application/problem+json"
     assert (await client.get(f"{LOG}/coverage", params={"since": iso(T)})).status_code == 401
+
+
+async def test_raw_adds_each_row_as_stored(client: httpx.AsyncClient, chatlog: Connection, write_key: str) -> None:
+    plain = (await client.get(LOG, headers=auth(write_key))).json()["items"]
+    assert all(e["raw"] is None for e in plain)
+    items = (await client.get(LOG, params={"raw": "true"}, headers=auth(write_key))).json()["items"]
+    by_id = {(e["kind"], e["id"]): e["raw"] for e in items}
+    assert by_id[("message", "m-c")] == {
+        "format": "legacy",
+        "data": {
+            "message": {"text": "the deleted one", "fragments": [{"type": "text", "text": "the deleted one"}]},
+            "badges": [{"set_id": "vip", "id": "1"}],
+        },
+    }
+    assert all(r is not None and r["format"] == "legacy" for r in by_id.values())
 
 
 async def test_coverage_names_its_gaps_in_iso_times(

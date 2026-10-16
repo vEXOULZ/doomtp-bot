@@ -52,6 +52,14 @@ class CommandRun(_Model):
     message: str | None
 
 
+class RawRow(_Model):
+    """The row as the log stored it: EventSub's `event` object, an IRC line as `{"line": …}`, or a
+    rebuild of a row from before raw events were kept."""
+
+    format: Literal["eventsub", "irc", "legacy"] | None
+    data: dict[str, Any] | None
+
+
 class MessageEntry(_Model):
     kind: Literal["message"]
     id: str
@@ -74,6 +82,7 @@ class MessageEntry(_Model):
     deleted_at: UtcDatetime | None
     cleared_at: UtcDatetime | None
     run: CommandRun | None
+    raw: RawRow | None = Field(None, description="Only with `raw=true`")
 
 
 class NotificationEntry(_Model):
@@ -84,6 +93,7 @@ class NotificationEntry(_Model):
     type: str
     payload: dict[str, Any] = Field(description="Depends on `type`; a follow's `followed_at` is ISO 8601 too")
     source: str
+    raw: RawRow | None = Field(None, description="Only with `raw=true`")
 
 
 class ModerationEntry(_Model):
@@ -97,6 +107,7 @@ class ModerationEntry(_Model):
     duration_s: int | None
     reason: str | None
     source: str
+    raw: RawRow | None = Field(None, description="Only with `raw=true`")
 
 
 Entry = Annotated[MessageEntry | NotificationEntry | ModerationEntry, Field(discriminator="kind")]
@@ -205,17 +216,18 @@ def log_router() -> APIRouter:
         user: Annotated[str | None, Query(min_length=1, max_length=40, description="A login, old ones too")] = None,
         q: Annotated[str | None, Query(min_length=1, max_length=queries.MAX_QUERY_CHARS)] = None,
         hide_removed: bool = False,
+        raw: Annotated[bool, Query(description="Add each entry's row as stored, what Twitch sent")] = False,
         cursor: Annotated[str | None, Query(max_length=512)] = None,
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
         caller: Caller = LOG_READ,
     ) -> Page[Any]:
         """The channel's messages, notifications and moderation as one timeline, a page at a time: pass
         `next_cursor` back as `cursor`, with the same filters. The public get messages and notifications
-        only, without removed messages."""
+        only; removed messages are in, flagged by `deleted_at` and `cleared_at`, unless `hide_removed`."""
         settings = _channel(request, login)
         kinds = list(kind or timeline.KINDS)
         if _is_public(caller):
-            kinds, hide_removed = [k for k in kinds if k != "moderation"], True
+            kinds = [k for k in kinds if k != "moderation"]
             if not kinds:
                 raise ApiError(403, "forbidden", f"only a moderator can read {login}'s moderation log")
         conn = _chatlog(request)
@@ -225,6 +237,7 @@ def log_router() -> APIRouter:
             entries, following = await timeline.read(
                 conn, settings.channel_id, kinds=kinds, since=_ms(since), until=_ms(until), cursor=after,
                 order=order, limit=limit, user_ids=user_ids, query=q, hide_removed=hide_removed,
+                raw=raw,
             )  # fmt: skip
         except timeline.CursorError as exc:
             raise ApiError(400, "bad_cursor", str(exc)) from exc

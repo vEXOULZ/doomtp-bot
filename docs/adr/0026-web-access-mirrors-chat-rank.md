@@ -1,6 +1,6 @@
 # ADR-0026: Web access mirrors chat rank
 
-**Status:** Accepted — 2026-09-29 (amends ADR-0017)
+**Status:** Accepted — 2026-09-29 (amends ADR-0017); amended 2026-10-16 (public logs show removed messages)
 **Date:** 2026-09-29
 **Deciders:** Project owner
 
@@ -94,7 +94,9 @@ the channel at once rather than at the next refresh.
 A channel setting, `public_log`, is on by default. While it and `log_enabled` are on, `GET …/messages` and
 `GET …/log` need no sign-in: anyone can read and search the log, as on the public channel page. Such a
 reader gets messages and notifications only, without removed messages or moderation entries, and a per-
-address rate limit. A moderator or the broadcaster can turn `public_log` off, and then the log is for the
+address rate limit. *Amended 2026-10-16:* `…/log` gives such a reader removed messages too, flagged by
+`deleted_at`/`cleared_at` as moderators see them, so the public log shows what was removed (the owner's call);
+`hide_removed` still leaves them out. `…/messages`, like `logsearch` in chat, still leaves them out. A moderator or the broadcaster can turn `public_log` off, and then the log is for the
 channel's moderators again.
 
 ## Options Considered
