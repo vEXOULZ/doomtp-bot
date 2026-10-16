@@ -258,10 +258,11 @@ async def test_a_cursor_is_checked(client: httpx.AsyncClient, chatlog: Connectio
 async def test_a_public_log_shows_what_chat_saw_and_can_be_closed(
     client: httpx.AsyncClient, app_and_keys: tuple[Any, ApiKeyService], chatlog: Connection
 ) -> None:
-    """Without signing in: messages and notifications only, no removed messages (ADR-0026)."""
+    """Without signing in: messages and notifications only, removed messages flagged (ADR-0026)."""
     body = (await client.get(LOG)).json()
     assert _ids(body["entries"]) == [
         ("message", "m-d"),
+        ("message", "m-c"),
         ("notification", "n-1"),
         ("message", "m-b"),
         ("message", "m-a"),

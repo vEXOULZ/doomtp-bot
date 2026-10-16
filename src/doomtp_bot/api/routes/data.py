@@ -1395,11 +1395,11 @@ async def channel_log(
 ) -> dict[str, Any]:
     """The channel's log as one timeline of messages, notifications and moderation, a page at a time.
     Pass `next` back as `cursor`, with the same filters, for the page after. The public get
-    messages and notifications only, without removed messages."""
+    messages and notifications only; removed messages are in, flagged, unless `hide_removed`."""
     settings = _channel(request, login)
     kinds = list(kind or timeline.KINDS)
     if _is_public(caller):
-        kinds, hide_removed = [k for k in kinds if k != "moderation"], True
+        kinds = [k for k in kinds if k != "moderation"]
         if not kinds:
             raise HTTPException(status_code=403, detail=f"only a moderator can read {login}'s moderation log")
     conn = _state(request, "chatlog_db")
