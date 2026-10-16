@@ -1,6 +1,7 @@
 """`help` module: `commands` and `help` list only the commands the caller can run here (architecture §8, F9).
-When WEB_SITE_URL is set, `commands` links the channel's command page on the web site and `help` the site
-itself, where the language and the docs are.
+When WEB_SITE_URL is set they post only a link instead: `commands` to the channel's command page on the web
+site and `help` to the site itself, where the language and the docs are. Without it the list is cut to one
+chat message.
 
 Custom commands appear alongside built-ins: what this channel publishes, plus the caller's own
 aliases (ADR-0009). Each is checked against the same policy gate as a built-in.
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from doomtp_bot.core.outbox import MAX_CHUNK
 from doomtp_bot.customcmds import params as cc_params
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.resolution import spec_for
@@ -68,7 +70,8 @@ async def _custom_specs(ctx: CommandContext) -> dict[str, CommandSpec]:
 
 
 async def _listing(ctx: CommandContext, link: str | None, how: str) -> Result:
-    """`commands: …; custom: …`, the ones the caller can run here, then `; <how> <link>` when the site is set."""
+    """`<how> <link>` alone when the site is set; otherwise `commands: …; custom: …`, the ones the caller can
+    run here, cut to one chat message."""
     registry: CommandRegistry = ctx.service("registry")
     policy = ctx.service("runtime").policy
     builtins = [
@@ -77,22 +80,30 @@ async def _listing(ctx: CommandContext, link: str | None, how: str) -> Result:
         if c.spec.module not in HIDDEN_MODULES and policy.is_permitted(ctx.exec, c.spec)
     ]
     custom = sorted(n for n, spec in (await _custom_specs(ctx)).items() if policy.is_permitted(ctx.exec, spec))
+    data = {"builtin": builtins, "custom": custom, "link": link}
+    if link:
+        return Result.success(f"{how} {link}", data)
     text = "commands: " + ", ".join(builtins)
     if custom:
         text += "; custom: " + ", ".join(custom)
-    if link:
-        text += f"; {how} {link}"
-    return Result.success(text, {"builtin": builtins, "custom": custom, "link": link})
+    return Result.success(_one_message(text), data)
+
+
+def _one_message(text: str) -> str:
+    """Cut at the last name that fits in one chat message, so a long list isn't sent as several."""
+    if len(text) <= MAX_CHUNK:
+        return text
+    return text[: text.rfind(", ", 0, MAX_CHUNK - 2)] + " …"
 
 
 @command(
     CommandSpec(
         name="help",
         module=MODULE,
-        summary="List commands you can use, or show how to use one, with a link to the bot's docs",
+        summary="Link the bot's docs (or list the commands you can use), or show how to use one",
         params=(Param("1", "command", description="A command name"),),
         examples=(
-            Example("{sign}help", "commands: explain, help, random, …; docs at …"),
+            Example("{sign}help", "docs at https://…/"),
             Example("{sign}help random", "{sign}random [range]: …"),
         ),
         default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
@@ -122,13 +133,13 @@ async def help_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Res
     CommandSpec(
         name="commands",
         module=MODULE,
-        summary="List commands you can use here, with a link to this channel's command page",
-        examples=(Example("{sign}commands", "commands: explain, help, random, …; more at …/channels/<channel>"),),
+        summary="Link this channel's command page, or list the commands you can use here",
+        examples=(Example("{sign}commands", "commands at https://…/channels/<channel>"),),
         default_cooldowns={"everyone": Cooldown(tier_s=5, user_s=15)},
     )
 )
 async def commands_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
-    return await _listing(ctx, site_link(ctx), "more at")
+    return await _listing(ctx, site_link(ctx), "commands at")
 
 
 COMMANDS: tuple[Command, ...] = (help_cmd, commands_cmd)
