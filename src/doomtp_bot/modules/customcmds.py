@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from doomtp_bot.customcmds import params
-from doomtp_bot.customcmds.packs import Pack, PackService, SystemPackError
+from doomtp_bot.customcmds.packs import PACK_ROLES, Pack, PackService, SystemPackError
 from doomtp_bot.customcmds.resolution import spec_for
 from doomtp_bot.customcmds.service import (
     CustomCommand,
@@ -48,6 +48,7 @@ USAGE = (
     " param <name> <pos> name=<n> [type=…] [required=yes] <description> | describe <name> <summary> |"
     " run <id> [args…] |"
     " pack create|add|rm|share|list|info|delete <pack> [commands…] | pack internal <pack> <commands…> on|off |"
+    " pack role <pack> <commands…> <role> |"
     " pack trigger list|add|rm|on|off|cooldown <pack> … |"
     " publish pack <pack> [global] |"
     " link <@owner name|name> [alias] | unlink <alias> | publish <name> [as <name>] | unpublish <name> |"
@@ -312,7 +313,10 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
             if k.id == pack.id and p.status == "active"
         ]
         where = "system pack" if pack.is_system else (", ".join(published) or "not published here")
-        shown = [f"{c.name} (internal)" if c.name in internal else c.name for c in members]
+        shown = [
+            c.name + "".join(f" ({tag})" for tag in ("internal" if c.name in internal else None, c.pack_role) if tag)
+            for c in members
+        ]
         keys = _trigger_keys(ctx, pack)
         return Result.success(
             f"{pack.name}: {', '.join(shown) or 'empty'} ({where})"
@@ -321,6 +325,7 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
                 "pack": pack.name,
                 "commands": [c.name for c in members],
                 "internal": sorted(internal),
+                "roles": {c.name: c.pack_role for c in members if c.pack_role},
                 "published": published,
                 "triggers": keys,
             },
@@ -329,6 +334,8 @@ async def _pack(ctx: CommandContext, v: list[str], args: Args) -> Result:
         raise SystemPackError(pack)
     if action == "internal":
         return await _pack_internal(ctx, packs, pack, v[3:], user_id)
+    if action == "role":
+        return await _pack_role(ctx, packs, pack, v[3:], user_id)
     if action == "delete":
         await packs.delete(pack)
         return Result.success(f"deleted pack {pack.name}; it is no longer published anywhere")
@@ -498,6 +505,28 @@ async def _pack_internal(ctx: CommandContext, packs: PackService, pack: Pack, re
             changed.append(command.name)
     state = "internal: only its commands can call them" if internal else "public again"
     return Result.success(f"{', '.join(changed) or 'nothing'} in {pack.name} now {state}", changed)
+
+
+async def _pack_role(ctx: CommandContext, packs: PackService, pack: Pack, rest: list[str], user_id: str) -> Result:
+    """The rank a member needs wherever the pack is published: a floor a channel can raise, not lower
+    (ADR-0033)."""
+    if len(rest) < 2:
+        raise CommandError(f"usage: {ctx.channel.prefix}cc pack role <pack> <command…> <{'|'.join(PACK_ROLES)}>")
+    role = rest[-1].lower()
+    if role not in PACK_ROLES:
+        raise CommandError(f"a pack sets one of: {', '.join(PACK_ROLES)}")
+    members = {c.name for c in await packs.members(pack.id)}
+    changed: list[str] = []
+    for command_name in rest[:-1]:
+        command = await _service(ctx).by_owner(user_id, command_name)
+        if command is None:
+            raise CommandError(f"you don't have a command named {command_name}")
+        if command.name not in members:
+            raise CommandError(f"{command.name} isn't in {pack.name}")
+        if await packs.set_role(pack, command, role):
+            changed.append(command.name)
+    rank = "open to everyone" if role == "everyone" else f"{role} and up, wherever it's published"
+    return Result.success(f"{', '.join(changed) or 'nothing'} in {pack.name} now {rank}", changed)
 
 
 async def _share(ctx: CommandContext, v: list[str], args: Args) -> Result:

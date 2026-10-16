@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 from doomtp_bot.clock import now_ms
 from doomtp_bot.customcmds.service import NAME_RE, CustomCommand, CustomCommandError, CustomCommandService
-from doomtp_bot.policy.roles import GLOBAL
+from doomtp_bot.policy.roles import BROADCASTER_RANK, BUILTIN_RANKS, GLOBAL
 from doomtp_bot.storage.db import Connection, Row, fetch_one, transaction
 
 if TYPE_CHECKING:
@@ -39,6 +39,11 @@ RESERVED_PACK_NAMES = frozenset(
         "variables",
     }
 )
+
+
+# The ranks a pack can set on a member (ADR-0033): the built-in ones a channel has. A channel's own roles
+# don't exist in the others, and a pack is published to many.
+PACK_ROLES = tuple(r for r, rank in sorted(BUILTIN_RANKS.items(), key=lambda kv: kv[1]) if rank <= BROADCASTER_RANK)
 
 
 def new_pack_id() -> str:
@@ -128,7 +133,7 @@ class PackService:
         """The pack's commands; `internal=False` only the ones a channel can type, `True` only its helpers."""
         flag = "" if internal is None else (" AND m.internal" if internal else " AND NOT m.internal")
         async with await self.conn.execute(
-            f"{self.commands._SELECT} JOIN custom_command_pack_members m ON m.command_id = c.id"
+            f"{self._member_select()} JOIN custom_command_pack_members m ON m.command_id = c.id"
             f" WHERE m.pack_id = %s AND c.status = 'active'{flag} ORDER BY c.name",
             (pack_id,),
         ) as cur:
@@ -139,11 +144,15 @@ class PackService:
         """The pack's internal member `name`, which only its own commands' bodies can call."""
         row = await fetch_one(
             self.conn,
-            f"{self.commands._SELECT} JOIN custom_command_pack_members m ON m.command_id = c.id"
+            f"{self._member_select()} JOIN custom_command_pack_members m ON m.command_id = c.id"
             " WHERE m.pack_id = %s AND m.internal AND c.status = 'active' AND c.name = %s",
             (pack_id, name.lower()),
         )
         return self.commands._command(row) if row else None
+
+    def _member_select(self) -> str:
+        """A command with its member row's rank, for a query that joins `custom_command_pack_members m`."""
+        return self.commands._SELECT.replace("SELECT c.*", "SELECT c.*, m.role AS member_role", 1)
 
     async def internal_names(self, pack_id: str) -> set[str]:
         return {c.name for c in await self.members(pack_id, internal=True)}
@@ -218,7 +227,7 @@ class PackService:
     async def find_in_scope(self, channel_id: str, name: str) -> tuple[CustomCommand, Pack] | None:
         """A command named `name` offered by a pack published here, else by one published globally.
         Internal members aren't offered: only their own pack's bodies reach them."""
-        select = self.commands._SELECT.replace("SELECT c.*", self._WITH_PACK, 1)
+        select = self.commands._SELECT.replace("SELECT c.*", self._WITH_PACK + ", m.role AS member_role", 1)
         for scope in (channel_id, GLOBAL):
             row = await fetch_one(
                 self.conn,
@@ -303,6 +312,34 @@ class PackService:
                     {"command": command.name, "internal": internal},
                 )
         return bool(cur.rowcount)
+
+    async def set_role(self, pack: Pack, command: CustomCommand, role: str, *, actor_via: str = "chat") -> bool:
+        """Set the rank a member needs wherever the pack is published (ADR-0033); `everyone` clears it. A
+        channel can raise it with `!perm`, never lower it. False when it isn't a member or already was."""
+        if role not in PACK_ROLES:
+            raise CustomCommandError(f"a pack sets one of: {', '.join(PACK_ROLES)}")
+        stored = None if role == "everyone" else role
+        async with transaction(self.conn):
+            row = await fetch_one(
+                self.conn,
+                "SELECT role FROM custom_command_pack_members WHERE pack_id = %s AND command_id = %s FOR UPDATE",
+                (pack.id, command.id),
+            )
+            if row is None or row["role"] == stored:
+                return False
+            await self.conn.execute(
+                "UPDATE custom_command_pack_members SET role = %s WHERE pack_id = %s AND command_id = %s",
+                (stored, pack.id, command.id),
+            )
+            await self.commands._audit(
+                actor_via,
+                pack.owner_user_id,
+                "pack.role",
+                pack.id,
+                {"command": command.name, "role": row["role"] or "everyone"},
+                {"command": command.name, "role": role},
+            )
+        return True
 
     async def set_system_version(self, pack: Pack, version: int, *, actor_via: str = "script") -> None:
         async with transaction(self.conn):
