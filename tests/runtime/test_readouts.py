@@ -8,8 +8,10 @@ from typing import Any
 import pytest
 
 from doomtp_bot import __version__
+from doomtp_bot.core import build
 from doomtp_bot.core.schedule import FAILED_TTL_S, NextStreams
 from doomtp_bot.customcmds.resolution import SystemResolver
+from doomtp_bot.runtime import executor
 from doomtp_bot.runtime.engine import Runtime
 from doomtp_bot.runtime.result import ErrorCode
 from doomtp_bot.runtime.variables import InMemoryVariableStore, VarKey
@@ -127,3 +129,23 @@ async def test_human_says_seconds_in_its_two_largest_units(seconds: Any, text: s
 async def test_human_needs_a_number_of_seconds(value: str) -> None:
     report = await run(readouts(), f"!echo {{{value}:human}}")
     assert report.result.code == ErrorCode.E_TYPE
+
+
+async def test_bot_fields_say_what_it_was_built_from_and_how_long_it_has_been_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = Runtime(registry(), resolver=with_core(registry()))
+    report = await run(rt, "!echo {$bot.release ?? none} {$bot.commit ?? none} {$bot.uptime > -1}")
+    assert report.send == "none none true"  # a checkout: no build info
+    built = build.BuildInfo(version=__version__, release="v9.9.9", commit="0123456789abcdef")
+    monkeypatch.setattr(executor, "BUILD", built)
+    report = await run(rt, "!echo {$bot.release} {$bot.commit}")
+    assert report.send == "v9.9.9 0123456"
+
+
+def test_build_info_comes_from_the_files_ci_writes(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(build, "BUILD_INFO_DIR", tmp_path)
+    assert build._read("ref") is None
+    (tmp_path / "ref").write_text("v0.13.0\n")
+    (tmp_path / "commit").write_text("\n")
+    assert (build._read("ref"), build._read("commit")) == ("v0.13.0", None)

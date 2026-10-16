@@ -172,3 +172,35 @@ async def test_joining_a_channel_probes_it(h: Harness) -> None:
 
     await h.channels.join("900", "newcomer", Actor(None, "test"))
     assert h.policy.channel_settings("900").tier == "moderator"  # type: ignore[union-attr]
+
+
+async def test_the_probe_says_when_the_bot_becomes_or_stops_being_a_moderator(h: Harness) -> None:
+    """`bot_modded` and `bot_unmodded` (ADR-0034): only a change, never every hourly probe."""
+    seen: list[tuple[str, bool]] = []
+
+    async def on_moderator(channel_id: str, modded: bool) -> None:
+        seen.append((channel_id, modded))
+
+    probe = CapabilityProbe(policy=h.policy, channels=h.channels, prober=h.helix)
+    probe.on_moderator = on_moderator
+    await probe.probe_all()
+    h.helix.moderator_in = {CHANNEL_ID}
+    await probe.probe_all()
+    await probe.probe_all()
+    h.helix.moderator_in = set()
+    await probe.probe_all()
+    assert seen == [(CHANNEL_ID, True), (CHANNEL_ID, False)]
+
+
+async def test_a_join_someone_asked_for_says_so_and_a_failed_one_does_not(h: Harness) -> None:
+    joined: list[str] = []
+
+    async def on_join(channel_id: str) -> None:
+        joined.append(channel_id)
+
+    h.channels.on_join = on_join
+    assert await h.channels.join("300", "newcomer", Actor(None, "test")) == []
+    h.channels.subscriber.failing.add("400")  # type: ignore[union-attr]
+    assert await h.channels.join("400", "broken", Actor(None, "test")) == ["chat.message"]
+    await h.channels.subscribe_all()  # a start subscribes every channel again: no join there
+    assert joined == ["300"]

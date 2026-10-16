@@ -12,7 +12,9 @@ from httpx import ASGITransport
 from doomtp_bot.api.app import create_app
 from doomtp_bot.api.grammar import GRAMMAR_RULES
 from doomtp_bot.api.keys import ApiKeyService
+from doomtp_bot.api.routes import site
 from doomtp_bot.api.sessions import LOCAL_NETWORKS, AdminAuth, LoginLimiter, address_in, parse_networks
+from doomtp_bot.clock import now_ms
 from doomtp_bot.core.health import ComponentHealth, HealthRegistry, Status
 from doomtp_bot.customcmds.packs import PackService
 from doomtp_bot.customcmds.service import CustomCommandService
@@ -375,3 +377,44 @@ async def test_command_listings_carry_what_the_command_table_shows(client: httpx
     await packs.publish(channel_id=GLOBAL, pack=games, published_by="1")
     (listed,) = (await client.get("/api/v1/packs")).json()["packs"][0]["commands"]
     assert [(p["position"], p["name"]) for p in listed["params"]] == [("1", "target")]
+
+
+async def test_the_bots_counts_are_public_and_cached(client: httpx.AsyncClient, app: Any, dbs: Databases) -> None:
+    site._stats_cache.clear()
+    app.state.chatlog_db = dbs.chatlog
+    now = now_ms()
+    for message_id, ago in (("a", 10_000), ("b", 600_000), ("c", 7_200_000), ("old", 90_000_000)):
+        await dbs.chatlog.execute(
+            "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+            " received_at) VALUES (%s, %s, '400', 'alice', 'hi', '{}', 'legacy', %s, %s)",
+            (message_id, CHANNEL_ID, now - ago, now - ago),
+        )
+    for dropped, ago in ((None, 5_000), ("moderated", 5_000), (None, 4_000_000)):
+        await dbs.chatlog.execute(
+            "INSERT INTO outbound_msgs (channel_id, text_sent, dropped_reason, at) VALUES (%s, 'hey', %s, %s)",
+            (CHANNEL_ID, dropped, now - ago),
+        )
+    for code, cancelled in ((0, None), (0, None), (1, None), (0, "moderated")):
+        await dbs.chatlog.execute(
+            "INSERT INTO command_runs (channel_id, trigger_type, expr, code, duration_ms, cancelled_reason, at)"
+            " VALUES (%s, 'chat', 'ping', %s, 1, %s, %s)",
+            (CHANNEL_ID, code, cancelled, now - 1_000),
+        )
+
+    found = (await client.get("/api/v1/stats")).json()
+    assert found["version"] and found["channels"] == 1 and found["uptime_s"] >= 0
+    assert set(found) >= {"release", "commit", "started_at", "at"}
+    assert found["messages_logged"] == {"minute": 1, "hour": 2, "day": 3}
+    assert found["messages_sent"] == {"minute": 1, "hour": 1, "day": 2}
+    assert found["runs_day"] == {"ok": 2, "failed": 1, "cancelled": 1}
+    channel = (await client.get(f"/api/v1/channels/{CHANNEL_LOGIN}/stats")).json()
+    assert channel["channel"] == CHANNEL_LOGIN and channel["messages_logged"]["day"] == 3
+
+    # A second look inside the window is the same answer, without reading the log again.
+    await dbs.chatlog.execute(
+        "INSERT INTO messages (message_id, channel_id, user_id, user_login, text, raw, raw_format, sent_at,"
+        " received_at) VALUES ('d', %s, '400', 'alice', 'hi', '{}', 'legacy', %s, %s)",
+        (CHANNEL_ID, now, now),
+    )
+    assert (await client.get("/api/v1/stats")).json()["messages_logged"]["day"] == 3
+    site._stats_cache.clear()
