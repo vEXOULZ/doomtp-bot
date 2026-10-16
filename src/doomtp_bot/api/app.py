@@ -13,6 +13,7 @@ from doomtp_bot import __version__
 from doomtp_bot.api import v2
 from doomtp_bot.api.routes import auth, bot, commands, data, health, language, manage, session, site
 from doomtp_bot.api.sessions import LOCAL_NETWORKS, AdminAuth, LoginLimiter, ReadLimiter, parse_networks
+from doomtp_bot.api.v2_users import parse_origins
 from doomtp_bot.core.health import HealthRegistry
 from doomtp_bot.twitch.auth import TwitchAuth
 
@@ -30,8 +31,10 @@ def create_app(
     admin_password: str | None = None,
     admin_password_networks: str = LOCAL_NETWORKS,
     jobs: JobRuntime | None = None,
+    user_lookup_origins: str = "",
 ) -> FastAPI:
-    """With `jobs`, the job runtime, the app also serves /api/v2 (ADR-0027)."""
+    """With `jobs`, the job runtime, the app also serves /api/v2 (ADR-0027). `user_lookup_origins` is
+    USER_LOOKUP_ORIGINS: the sites on other origins that may read /api/v2/twitch/users (ADR-0035)."""
     app = FastAPI(title="doomtp-bot", version=__version__, docs_url="/docs", redoc_url=None)
     app.state.health = health_registry
     app.state.twitch_auth = twitch_auth
@@ -41,6 +44,7 @@ def create_app(
     app.state.admin_password_networks = parse_networks(admin_password_networks)
     app.state.login_limiter = LoginLimiter()  # failed JSON logins, per client address
     app.state.public_read_limiter = ReadLimiter()  # public chat log reads, per client address (ADR-0026)
+    app.state.user_lookup_origins = parse_origins(user_lookup_origins)
     for name, service in (services or {}).items():  # customcmds, packs, triggers, filters
         setattr(app.state, name, service)
     app.include_router(health.router)

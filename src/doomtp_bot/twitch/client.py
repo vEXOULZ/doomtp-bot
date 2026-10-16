@@ -800,6 +800,30 @@ class TwitchService:
         user = users[0]
         return self._remember(user.id, user.name or fallback_name, user.display_name or fallback_name)
 
+    async def fetch_profile(self, *, user_id: str | None = None, login: str | None = None) -> dict[str, Any] | None:
+        """A user's public Helix profile, by id (preferred) or login: {id, login, display_name, type,
+        broadcaster_type, description, profile_image_url, created_at}. None when Twitch has no such user
+        (a deleted or suspended account answers the same). Never the email Helix adds for the token's own
+        user. Raises if the request fails."""
+        if self.client is None:
+            raise RuntimeError("twitch client is not connected")
+        by: dict[str, list[str]] = {"ids": [user_id]} if user_id else {"logins": [(login or "").lower().lstrip("@")]}
+        users = await self.client.fetch_users(**by)  # type: ignore[arg-type]
+        if not users:
+            return None
+        user = users[0]
+        self._remember(user.id, user.name or "", user.display_name or user.name or "")
+        return {
+            "id": user.id,
+            "login": user.name,
+            "display_name": user.display_name,
+            "type": user.type or None,
+            "broadcaster_type": user.broadcaster_type or None,
+            "description": user.description or None,
+            "profile_image_url": user.profile_image.url if user.profile_image else None,
+            "created_at": user.created_at,
+        }
+
     async def login_for(self, user_id: str) -> str | None:
         user = await self.resolve_user_id(user_id)
         return user["name"] if user else None
