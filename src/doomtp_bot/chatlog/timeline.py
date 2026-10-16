@@ -18,7 +18,8 @@ stored as (ADR-0024 §2), so a live message and a backfilled one look the same; 
 filters, sorts or searches on are read as columns.
 
 Nothing here hides anything by default. The log keeps what moderators removed (architecture §3.1), and
-the caller decides: `hide_removed` leaves out deleted and cleared messages, as chat shows them.
+the caller decides: `hide_removed` leaves out deleted and cleared messages, as chat shows them. With
+`raw`, each entry also carries the row as it was stored: `{"format": "eventsub" | "irc" | "legacy", "data": …}`.
 """
 
 from __future__ import annotations
@@ -369,11 +370,12 @@ async def read(
     user_ids: Sequence[str] | None = None,
     query: str | None = None,
     hide_removed: bool = False,
+    raw: bool = False,
 ) -> tuple[list[dict[str, Any]], Cursor | None]:
     """One page of `channel_id`'s timeline in `order`, and the cursor for the next page (None at the end).
 
     `since` is inclusive and `until` exclusive, both in ms. A `query` searches message text and returns
-    messages only. A `cursor` must come from a page read in the same order.
+    messages only. A `cursor` must come from a page read in the same order. `raw` adds each row as stored.
     """
     if cursor is not None and cursor.order != order:
         raise CursorError(f"this cursor pages {cursor.order}, not {order}")
@@ -390,6 +392,9 @@ async def read(
     merged = list(heapq.merge(*pages, key=lambda pair: pair[0], reverse=order == "desc"))
     page = merged[:limit]
     entries = [_SHAPE[KINDS[sort_key[1]]](row) for sort_key, row in page]
+    if raw:
+        for entry, (_, row) in zip(entries, page, strict=True):
+            entry["raw"] = {"format": row["raw_format"], "data": row["raw"]}
     await _link_runs(conn, channel_id, [e for e in entries if e["kind"] == "message"])
     if len(merged) <= limit:
         return entries, None

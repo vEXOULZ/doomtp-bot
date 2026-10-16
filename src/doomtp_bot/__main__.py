@@ -261,6 +261,7 @@ async def run(settings: Settings) -> None:
     probe.on_moderator = bot_events.moderator_changed
     channels.on_join = bot_events.joined
     down_since: int | None = None  # when the bot last heard chat before Twitch dropped it
+    restart_cause: str | None = None  # why the client was started again: the watchdog's finding, or the error
 
     poller = (
         StreamPoller(source=twitch, channels=channels, status=streams, sink=dispatcher.handle)
@@ -282,7 +283,9 @@ async def run(settings: Settings) -> None:
                 await channels.subscribe_all()
                 await probe.probe_all()  # tier per channel, before anything checks a capability
                 await restore_broadcasters()  # full-tier events, where a broadcaster connected
-                await bot_events.online(last_run, down_since_ms=down_since)  # `bot_online` (ADR-0034)
+                await bot_events.online(
+                    last_run, down_since_ms=down_since, cause=restart_cause
+                )  # `bot_online` (ADR-0034)
                 probe.start()
                 if poller is not None:
                     await poller.poll()
@@ -299,11 +302,12 @@ async def run(settings: Settings) -> None:
         """The client stopped by itself: EventSub gave up, or the token went bad. Start it again, waiting
         longer each time (ADR-0001). Coming back re-runs the startup path, so subscriptions, capabilities
         and the backfill of whatever was missed while it was deaf are all done again (ADR-0008)."""
-        nonlocal retry_in, down_since
+        nonlocal retry_in, down_since, restart_cause
         retry_in = min(max(retry_in * 2, FIRST_RETRY_S), MAX_RETRY_S)
         if twitch is not None:
             down_since = twitch.heard_at
-        log.warning("twitch.restarting", in_s=retry_in)
+            restart_cause = twitch.last_error
+        log.warning("twitch.restarting", in_s=retry_in, cause=restart_cause)
         # The log stopped when the bot last heard chat, not now: ending the sessions there leaves a gap
         # that the startup backfill fills once the client is back.
         await writer.end_all_sessions("restart", at=twitch.heard_at if twitch is not None else None)
@@ -451,6 +455,7 @@ async def run(settings: Settings) -> None:
         admin_password=settings.admin_password_value(),
         admin_password_networks=settings.admin_password_networks,
         jobs=jobs,
+        user_lookup_origins=settings.user_lookup_origins,
     )
     server = uvicorn.Server(
         uvicorn.Config(

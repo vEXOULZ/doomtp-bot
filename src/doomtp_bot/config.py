@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # The public web site (doomtp-web), the same for every channel. When set, `!help` ends with a link to
     # the channel's command page there. Unset, `!help` names no page.
     web_site_url: str | None = None
+    # Sites on other origins that may read /api/v2/twitch/users, the chat user cards' profiles (ADR-0035):
+    # comma-separated, e.g. https://vods.example,https://archive.example. Same-origin sites need nothing.
+    user_lookup_origins: str = ""
     # Comma-separated addresses (or "*") of reverse proxies whose X-Forwarded-For/-Proto uvicorn believes.
     # The default trusts only a proxy on the same host; anything else would let a client pick its address.
     web_forwarded_allow_ips: str = "127.0.0.1"
