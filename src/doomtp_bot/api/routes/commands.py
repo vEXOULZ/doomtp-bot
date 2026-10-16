@@ -329,7 +329,15 @@ async def _pack_json(request: Request, pack: Pack) -> dict[str, Any]:
         "name": pack.name,
         "summary": pack.summary,
         "system": pack.is_system,
-        "commands": [{"name": c.name, "internal": c.name in internal, "shareable": c.shareable} for c in members],
+        "commands": [
+            {
+                "name": c.name,
+                "internal": c.name in internal,
+                "role": c.pack_role or "everyone",
+                "shareable": c.shareable,
+            }
+            for c in members
+        ],
         "shareable": bool(members) and all(c.shareable for c in members),
         "published": published,
         "triggers": [_pack_trigger_json(t) for t in _triggers(request).pack_triggers(pack.id)],
@@ -418,13 +426,15 @@ async def delete_pack(request: Request, name: str, caller: Caller = PERSONAL_WRI
 
 class MemberBody(BaseModel):
     internal: bool | None = None
+    #: The rank it needs wherever the pack is published (ADR-0033); `everyone` clears it.
+    role: str | None = None
 
 
 @router.put("/me/packs/{name}/commands/{command}")
 async def add_pack_member(
     request: Request, name: str, command: str, body: MemberBody, caller: Caller = PERSONAL_WRITE
 ) -> dict[str, Any]:
-    """`cc pack add`, and `cc pack internal … on|off` when `internal` is given."""
+    """`cc pack add`, `cc pack internal … on|off` when `internal` is given and `cc pack role` when `role` is."""
     user_id, _ = _me(caller)
     pack = await _own_pack(request, user_id, name)
     member = await _own(request, user_id, command)
@@ -435,6 +445,11 @@ async def add_pack_member(
         raise _refused(exc) from exc
     if body.internal is not None:
         await packs.set_internal(pack, member, body.internal, actor_via=via)
+    if body.role is not None:
+        try:
+            await packs.set_role(pack, member, body.role, actor_via=via)
+        except CustomCommandError as exc:
+            raise _refused(exc) from exc
     return await _pack_json(request, pack)
 
 

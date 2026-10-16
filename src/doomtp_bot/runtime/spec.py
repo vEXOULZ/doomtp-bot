@@ -98,6 +98,8 @@ class CommandSpec:
     data_schema: dict[str, str] = field(default_factory=dict)
     examples: tuple[Example, ...] = ()
     required_role: str = "everyone"
+    # A pack member's rank (ADR-0033): a channel's rule can raise what it requires, never lower it.
+    min_role: str | None = None
     default_cooldowns: dict[str, Cooldown] = field(default_factory=dict)
     log_level: LogLevel = LogLevel.INVOCATIONS
     side_effects: bool = False
