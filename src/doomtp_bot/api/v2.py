@@ -19,6 +19,9 @@ identified, or one that failed, is audited (`request.denied`, `request.failed`).
     /api/v2/channels/{login}/badges
                           Twitch's global and channel chat badges, cached for an hour, to whoever may
                           read the log
+    /api/v2/twitch/users  a Twitch user's public profile by id or login, for the chat user cards
+                          (`v2_users.py`, ADR-0035): anyone, rate-limited, cached; shared with the
+                          origins in USER_LOOKUP_ORIGINS
     /api/v2/docs          OpenAPI for these routes, for anyone signed in
 """
 
@@ -38,6 +41,7 @@ from vex_platform.audit.router import AuditRefusalsMiddleware, audit_router
 from vex_platform.jobs import JobRuntime
 from vex_platform.jobs.router import jobs_router
 
+from doomtp_bot.api import v2_users
 from doomtp_bot.api.access import Area, Caller, authenticate, check_area, platform_actor
 from doomtp_bot.api.routes.data import _login_of
 from doomtp_bot.api.v2_log import log_router
@@ -107,6 +111,7 @@ def mount(app: FastAPI, jobs: JobRuntime) -> None:
     # The last added runs first: the request id is there for the refusals' rows.
     app.add_middleware(AuditRefusalsMiddleware, write=write, prefix=PREFIX)
     app.add_middleware(RequestIdMiddleware)
+    v2_users.install(app, getattr(app.state, "user_lookup_origins", frozenset()))
 
     admin, personal = require_v2("admin"), require_v2("personal")
     v2 = APIRouter(prefix=PREFIX)
@@ -122,6 +127,7 @@ def mount(app: FastAPI, jobs: JobRuntime) -> None:
         )  # fmt: skip
     )
     v2.include_router(log_router())
+    v2.include_router(v2_users.users_router())
     schema = APIRouter()  # v2 alone, for its own OpenAPI
     schema.include_router(v2)
     docs = APIRouter(prefix=PREFIX, dependencies=[Depends(personal)], include_in_schema=False)
