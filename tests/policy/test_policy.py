@@ -208,23 +208,29 @@ async def test_help_lists_only_runnable_commands(h: Harness) -> None:
     assert await h.reply("viewer", "!help role") == "no command named role"
 
 
-async def test_help_links_the_site_and_commands_the_channel_page_when_the_site_is_set(h: Harness) -> None:
+async def test_help_and_commands_post_only_a_link_when_the_site_is_set(h: Harness) -> None:
     report = await h.say("viewer", "!help")
-    assert report is not None and "docs at" not in (report.send or "")
+    assert report is not None and report.send is not None and report.send.startswith("commands: ")
     assert isinstance(report.result.data, dict) and report.result.data["link"] is None
-    h.clock.now += 100
-    report = await h.say("viewer", "!commands")
-    assert report is not None and "more at" not in (report.send or "")
     h.runtime.services["site_url"] = "https://site.example/"
     h.clock.now += 100
     report = await h.say("viewer", "!help")
-    assert report is not None and report.send is not None
-    assert report.send.startswith("commands: ") and report.send.endswith("; docs at https://site.example/")
+    assert report is not None and report.send == "docs at https://site.example/"
     h.clock.now += 100
     report = await h.say("viewer", "!commands")
-    assert report is not None and report.send is not None
-    assert report.send.startswith("commands: ")
-    assert report.send.endswith(f"; more at https://site.example/channels/{CHANNEL_LOGIN}")
+    assert report is not None and report.send == f"commands at https://site.example/channels/{CHANNEL_LOGIN}"
+    h.clock.now += 100
+    assert await h.reply("viewer", "!help ping") != "docs at https://site.example/"  # one command still explains
+
+
+def test_a_long_list_is_cut_to_one_message() -> None:
+    from doomtp_bot.core.outbox import MAX_CHUNK
+    from doomtp_bot.modules.help import _one_message
+
+    text = "commands: " + ", ".join(f"command{n}" for n in range(100))
+    cut = _one_message(text)
+    assert len(cut) <= MAX_CHUNK and cut.endswith(" …") and ", command" in cut
+    assert _one_message("commands: a, b") == "commands: a, b"
 
 
 @pytest.mark.parametrize(("saved", "typed"), EMOJI_SIGNS)
