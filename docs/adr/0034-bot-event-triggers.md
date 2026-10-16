@@ -29,7 +29,7 @@ event picker would need a second level.
 
 | Type | Fires | `event.*` |
 | --- | --- | --- |
-| `bot_online` | the bot is in chat: at start, or after Twitch dropped it and it came back | `reason` (`start`, `update`, `reconnect`), `down_s`, `version` |
+| `bot_online` | the bot is in chat: at start, or after Twitch dropped it and it came back | `reason` (`start`, `update`, `reconnect`), `cause` (on `reconnect`: what the watchdog found, or the client's error), `down_s`, `version` |
 | `bot_updated` | at start, when the version differs from the last run's; before that start's `bot_online` | `version`, `previous` |
 | `bot_joined` | the bot joined this channel (`!join`, or added on the web) | — |
 | `bot_modded` / `bot_unmodded` | the capability probe saw the bot gain or lose moderator here | — |
@@ -47,4 +47,5 @@ event picker would need a second level.
 ## Consequences
 
 - Chat (`!event add bot_online …`) and the web's trigger list offer the same five types.
+- A reconnect is the Twitch client started again inside the running process (the chat watchdog, or EventSub giving up), so uptime does not reset and `bot_online` can fire without the bot ever having left chat; `cause` says which. The 15-minute floor is what keeps that quiet.
 - `bot_runs` also records which builds ran when, which the stats page can use later.

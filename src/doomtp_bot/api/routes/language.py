@@ -38,6 +38,7 @@ from doomtp_bot.runtime.namespaces import CONTEXT_ROOTS, RESERVED_EVERYWHERE
 from doomtp_bot.runtime.preflight import MAX_CC_DEPTH, MAX_INVOCATIONS
 from doomtp_bot.runtime.result import ErrorCode
 from doomtp_bot.runtime.spec import with_sign
+from doomtp_bot.triggers.reference import reference
 
 router = APIRouter(prefix="/api/v1", tags=["language"])
 
@@ -168,6 +169,7 @@ async def language(request: Request) -> dict[str, Any]:
         "operators": list(OPERATOR_TOKENS),
         "roots": sorted(REGISTERED_ROOTS),
         "bot_fields": {"$" + root: sorted(fields) for root, fields in BOT_FIELDS.items()},
+        **reference(),  # events, bot_field_docs, bot_root_docs: the public docs (ADR-0034)
         "accessors": list(ACCESSORS),
         "expression_commands": sorted(EXPR_COMMANDS),
         "roots_by_context": {str(ctx): sorted(roots) for ctx, roots in CONTEXT_ROOTS.items()},
