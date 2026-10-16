@@ -69,9 +69,12 @@ jobs:
       contents: read
       packages: write
     with:
+      # What the image was built from goes in build-info/, for /api/v1/stats and $bot (core/build.py).
       # The compose files parse (services name `.env`, which is gitignored; the example is what a server
       # copies anyway), and a release tag also matches __version__, so /healthz and $bot.version agree.
       pre-build: |
+        printf '%s\n' "$GITHUB_REF_NAME" > build-info/ref
+        printf '%s\n' "$GITHUB_SHA" > build-info/commit
         cp .env.example .env
         docker compose --profile tools config --quiet
         docker compose -f compose.yaml -f compose.dev.yaml --profile tools --profile test config --quiet
