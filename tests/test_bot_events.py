@@ -59,7 +59,10 @@ async def test_the_first_time_online_says_why_and_an_update_comes_first() -> Non
 
     fired.calls.clear()
     await events.online(None, down_since_ms=2_000_000, now=2_010_000)  # Twitch dropped it and it came back
-    assert fired.calls[0][1:] == ("bot_online", {"reason": "reconnect", "down_s": 10, "version": "0.13.0"})
+    assert fired.calls[0][1:] == (
+        "bot_online",
+        {"reason": "reconnect", "down_s": 10, "version": "0.13.0", "cause": "unknown"},
+    )
 
 
 async def test_a_first_run_or_the_same_version_is_a_plain_start() -> None:
@@ -83,3 +86,14 @@ async def test_one_channels_failure_does_not_stop_the_others() -> None:
     await BotEvents(fire, lambda: ["100", "200"], NEW).joined("100")
     await BotEvents(fire, lambda: ["100", "200"], NEW).online(None)
     assert seen == ["100", "100", "200"]
+
+
+async def test_a_reconnect_says_why_the_connection_was_restarted() -> None:
+    fired = Fired()
+    events = BotEvents(fired, lambda: ["100"], NEW)
+    await events.online(None)
+    await events.online(None, down_since_ms=2_000_000, cause="deaf: no EventSub connection carries chat", now=2_010_000)
+    assert fired.calls[1][2]["cause"] == "deaf: no EventSub connection carries chat"
+    await events.online(None, down_since_ms=2_000_000, now=2_010_000)
+    assert fired.calls[2][2]["cause"] == "unknown"
+    assert "cause" not in fired.calls[0][2]
