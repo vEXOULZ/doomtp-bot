@@ -21,6 +21,7 @@ from doomtp_bot.lang.ast import invocations
 from doomtp_bot.lang.parser import DEFAULT_PREFIX, looks_like_command
 from doomtp_bot.runtime.result import Code
 from doomtp_bot.runtime.spec import LogLevel
+from doomtp_bot.triggers.reference import NOTICE_TRIGGER_TYPE, trigger_payload
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence
@@ -258,17 +259,19 @@ class Dispatcher:
         """Subs, resubs, gift subs, raids and announcements (architecture §7)."""
         if self.triggers is None or self.trigger_runner is None:
             return
-        found = self.triggers.event_triggers(event.channel_id, event.type, event.payload)
+        type_ = NOTICE_TRIGGER_TYPE.get(event.type, event.type)
+        payload = trigger_payload(event.type, event.payload)
+        found = self.triggers.event_triggers(event.channel_id, type_, payload)
         if not found:
             return
         settings = self.policy.channel_settings(event.channel_id)
-        user = event.payload.get("user") or event.payload.get("chatter") or {}
+        user = payload.get("user") or {}
         async with self._slots:
             for trigger in found:
                 await self.trigger_runner.run(
                     trigger,
                     channel_login=settings.login if settings else event.channel_id,
-                    event=event.payload,
+                    event=payload,
                     user=(
                         (
                             event.user_id,

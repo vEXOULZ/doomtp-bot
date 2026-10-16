@@ -2,7 +2,7 @@
 
 - `bot_online`: the bot is in chat again, at start (`event.reason` `start`, or `update` when the version
   changed since the last run) or after Twitch dropped it and it came back (`reconnect`). `event.down_s` is
-  how long it was gone. A channel hears it at most every 15 minutes, whatever the trigger's own cooldown.
+  how long it was gone, and `event.cause` why the connection was started again. A channel hears it at most every 15 minutes, whatever the trigger's own cooldown.
 - `bot_updated`: the version changed since the last run, before that run's `bot_online`: `event.version`
   and `event.previous`.
 - `bot_joined`: the bot was asked into the channel (`!join`, the API), not at every start.
@@ -105,9 +105,16 @@ class BotEvents:
         self.build = build
         self._online_before = False
 
-    async def online(self, last: LastRun | None, *, down_since_ms: int | None = None, now: int | None = None) -> None:
+    async def online(
+        self,
+        last: LastRun | None,
+        *,
+        down_since_ms: int | None = None,
+        cause: str | None = None,
+        now: int | None = None,
+    ) -> None:
         """The bot is in chat: the first time in this process (`last` is the run before), or again after
-        Twitch dropped it (`down_since_ms`, when it last heard chat)."""
+        Twitch dropped it (`down_since_ms`, when it last heard chat; `cause`, what the watchdog found)."""
         now = now_ms() if now is None else now
         updated = False
         if not self._online_before:
@@ -119,6 +126,8 @@ class BotEvents:
             reason, since = "reconnect", down_since_ms
         down_s = max(0, (now - since) // 1000) if since else None
         payload: dict[str, Any] = {"reason": reason, "down_s": down_s, "version": self.build.version}
+        if reason == "reconnect":
+            payload["cause"] = cause or "unknown"
         for channel_id in list(self.channels()):
             if updated and last is not None:
                 await self._fire(channel_id, "bot_updated", {"version": self.build.version, "previous": last.version})

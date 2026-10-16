@@ -99,6 +99,9 @@ async def test_language_describes_the_syntax_for_the_editor(client: httpx.AsyncC
     assert body["exit_codes"]["E_UNBALANCED_GROUP"] == 205 and body["exit_codes"]["E_LIST_FULL"] == 300
     assert body["limits"]["MAX_INVOCATIONS"] == 16
     assert body["raw_tail_commands"]["explain"] == 1 and body["raw_tail_commands"]["cc add"] == 3
+    events = {e["type"]: e for e in body["events"]}
+    assert events["raid"]["variables"][1] == {"name": "viewers", "meaning": "how many came with the raid"}
+    assert body["bot_field_docs"]["bot"]["uptime"] and body["bot_root_docs"]["chatter"]
 
 
 async def test_commands_lists_the_built_ins_with_their_usage(client: httpx.AsyncClient) -> None:
