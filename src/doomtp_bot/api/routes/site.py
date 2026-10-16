@@ -1,11 +1,13 @@
 """Public reads for the web site (doomtp-web, ADR-0016): what its public pages show.
 
 No authentication, and nothing here that the public pages don't print anyway: the channels the bot is
-in, the built-in roles, the grammar, published packs, and an `!explain` report behind its chat link.
+in, the built-in roles, the grammar, published packs, an `!explain` report behind its chat link, and the
+bot's own counts (`/stats`).
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,6 +15,9 @@ from fastapi import APIRouter, HTTPException, Request
 from doomtp_bot import __version__
 from doomtp_bot.api.grammar import GRAMMAR, GRAMMAR_RULES
 from doomtp_bot.api.routes.data import _channel, _custom_json, _state
+from doomtp_bot.chatlog import stats as chatlog_stats
+from doomtp_bot.clock import now_ms
+from doomtp_bot.core.build import BUILD, STARTED_AT, uptime_s
 from doomtp_bot.lang import SYNTAX_VERSION
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
 from doomtp_bot.policy.roles import BUILTIN_RANKS, CUSTOM_RANK_MAX, CUSTOM_RANK_MIN, GLOBAL
@@ -86,6 +91,7 @@ async def _packs_json(request: Request, channel_id: str, *, include_global: bool
         if publication.status != "active":
             continue
         members = await packs.members(pack.id)
+        internal = await packs.internal_names(pack.id)
         found.append(
             {
                 "name": pack.name,
@@ -93,7 +99,12 @@ async def _packs_json(request: Request, channel_id: str, *, include_global: bool
                 "scope": "global" if publication.channel_id == GLOBAL else "channel",
                 "owner_user_id": pack.owner_user_id,
                 "owner": members[0].owner_login if members else None,
-                "commands": [_custom_json(m) for m in members],
+                # An internal member is only called by the pack's own commands; chat can't type it (ADR-0012).
+                # `role` is the rank the pack sets, which no channel goes under (ADR-0033).
+                "commands": [
+                    {**_custom_json(m), "internal": m.name in internal, "role": m.pack_role or "everyone"}
+                    for m in members
+                ],
             }
         )
     return found
@@ -114,3 +125,48 @@ async def channel_packs(request: Request, login: str) -> dict[str, Any]:
         "channel": settings.login,
         "packs": await _packs_json(request, settings.channel_id, include_global=True),
     }
+
+
+# ── the bot's own counts ────────────────────────────────────────────────────
+STATS_TTL_S = 30.0
+# scope (`*` or a channel id) → (when, monotonic; the counts). The counts read a day of the log, so a page
+# that polls, or many viewers at once, share one answer for a while.
+_stats_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+async def _counts(request: Request, scope: str, channel_ids: list[str]) -> dict[str, Any]:
+    cached = _stats_cache.get(scope)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < STATS_TTL_S:
+        return cached[1]
+    conn = getattr(request.app.state, "chatlog_db", None)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="the chat log isn't available")
+    found = {**await chatlog_stats.counts(conn, channel_ids, now_ms()), "at": now_ms()}
+    _stats_cache[scope] = (now, found)
+    return found
+
+
+@router.get("/stats")
+async def stats(request: Request) -> dict[str, Any]:
+    """What the bot is and what it has been doing: its version, the tag or branch and commit it was built
+    from, how long it has been up, the channels it is in, and chat lines logged and sent and runs over the
+    last minute, hour and day in those channels. Counts are at most 30 seconds old."""
+    policy = request.app.state.policy
+    joined = [c.channel_id for c in policy.channels() if c.active and c.status == "joined"]
+    return {
+        "version": BUILD.version,
+        "release": BUILD.release,
+        "commit": BUILD.commit,
+        "started_at": int(STARTED_AT * 1000),
+        "uptime_s": uptime_s(),
+        "channels": len(joined),
+        **await _counts(request, "*", sorted(joined)),
+    }
+
+
+@router.get("/channels/{login}/stats")
+async def channel_stats(request: Request, login: str) -> dict[str, Any]:
+    """The same counts for one channel."""
+    settings = _channel(request, login)
+    return {"channel": settings.login, **await _counts(request, settings.channel_id, [settings.channel_id])}

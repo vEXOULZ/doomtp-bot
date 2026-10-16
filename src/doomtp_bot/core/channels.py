@@ -59,6 +59,8 @@ class ChannelManager:
         # The capability probe, once the channel is subscribed (ADR-0007). Set after construction: the
         # probe needs this manager first.
         self.on_joined: Callable[[str], Awaitable[object]] | None = None
+        # The `bot_joined` triggers, after a join someone asked for, not every start (ADR-0034).
+        self.on_join: Callable[[str], Awaitable[None]] | None = None
 
     def active_channels(self) -> list[ChannelSettings]:
         return [c for c in self.policy.channels() if _is_joined(c)]
@@ -81,6 +83,8 @@ class ChannelManager:
         await self._mark_joined(channel_id, login, actor)
         failed = await self._subscribe(channel_id)
         log.info("channel.join", channel=login, failed=failed)
+        if not failed and self.on_join is not None:
+            await self.on_join(channel_id)
         return failed
 
     async def part(self, channel_id: str, actor: Actor, *, status: str = "parted") -> None:

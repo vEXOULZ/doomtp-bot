@@ -187,30 +187,28 @@ QUOTES: tuple[Derived, ...] = (
         name="quote_add",
         summary="Add a quote (moderators)",
         body=(
-            "ifelse {$chatter.is_mod}"
-            " ( ifelse {arg.1+raw:len > 400} ( fail 2 a quote is at most 400 characters )"
+            "ifelse {arg.1+raw:len > 400} ( fail 2 a quote is at most 400 characters )"
             f" ( var incr {_N} && var set {_Q}[{{{_N}}}][text] {{arg.1+raw}}"
             f" && var set {_Q}[{{{_N}}}][date] {{$now.date}}"
             ' && ( ifelse {$channel.live and ($channel.game ?? "-") != "-"}'
             f" ( var set {_Q}[{{{_N}}}][game] {{$channel.game}} ) )"
-            f" && echo added #{{{_N}}} ) )"
-            " ( fail adding quotes takes moderator rank )"
+            f" && echo added #{{{_N}}} )"
         ),
         declarations=('1+ name=text required=yes "the quote"',),
         internal=True,
+        role="moderator",
     ),
     Derived(
         name="quote_del",
         summary="Delete a quote (moderators); its number stays taken",
         body=(
-            "ifelse {$chatter.is_mod}"
-            f" ( ifelse {{({_Q}[arg.number] ?? 0) != 0}}"
+            f"ifelse {{({_Q}[arg.number] ?? 0) != 0}}"
             f" ( var del {_Q}[{{arg.number}}] && echo deleted #{{arg.number}} )"
-            " ( fail 3 there is no quote #{arg.number} ) )"
-            " ( fail deleting quotes takes moderator rank )"
+            " ( fail 3 there is no quote #{arg.number} )"
         ),
         declarations=('1 name=number type=int required=yes "which quote, by number"',),
         internal=True,
+        role="moderator",
     ),
     Derived(
         name="quote_show",
@@ -256,7 +254,6 @@ PYRAMID_SUMMARY = "Break emote pyramids with a fact, congratulate the ones that 
 _PY, _PS = "publisher.channel.pyramid", "publisher.channel.pyramid_stats"
 _PF, _PSHARED = "publisher.channel.pyramid_facts", "publisher.pyramid_facts"
 _NOBODY = 100000  # an exempt rank above bot_owner: nobody is exempt
-_MOD_ONLY = "fail changing pyramid settings takes moderator rank"
 _WHAT = '(arg.1 ?? "-")'
 # Post a fact and remember that this pyramid has had its try.
 _DEFAULT_FACT_PREFIX = "/me ▲ fact: "
@@ -399,8 +396,7 @@ PYRAMID: tuple[Derived, ...] = (
         name="pyramid_set",
         summary="Change a pyramid setting (moderators)",
         body=(
-            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
-            ' ( ifelse {arg.1 == "chance" or arg.1 == "chanceup" or arg.1 == "chancedown"}'
+            ' ifelse {arg.1 == "chance" or arg.1 == "chanceup" or arg.1 == "chancedown"}'
             " ( ifelse {0 <= (arg.2:int ?? -1) <= 100}"
             f' ( ( ifelse {{arg.1 != "chancedown"}} ( var set {_PY}[chance_up] {{arg.2:int}} ) ( true ) )'
             f' && ( ifelse {{arg.1 != "chanceup"}} ( var set {_PY}[chance_down] {{arg.2:int}} ) ( true ) )'
@@ -421,20 +417,20 @@ PYRAMID: tuple[Derived, ...] = (
             " ( echo pyramid congratulations are off ) ( echo pyramid congratulations set ) ) )"
             " ( fail 2 usage: pyramid <stats|top|fact|settings|chance|chanceup|chancedown|minpeak|exempt|congrats"
             "|sharedfacts"
-            "|addfact|delfact> ) ) ) ) )"
+            "|addfact|delfact> ) ) ) )"
         ),
         declarations=(
             '1 name=setting required=yes "chance, chanceup, chancedown, minpeak, congrats or sharedfacts"',
             '2+ name=value required=yes "the new value"',
         ),
         internal=True,
+        role="moderator",
     ),
     Derived(
         name="pyramid_exempt",
         summary="Set the rank that is never broken (moderators)",
         body=(
-            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
-            f' ( ( ifelse {{arg.role == "off"}} ( var set {_PY}[exempt_rank] {_NOBODY} )'
+            f'( ifelse {{arg.role == "off"}} ( var set {_PY}[exempt_rank] {_NOBODY} )'
             f' ( ifelse {{arg.role == "broadcaster"}} ( var set {_PY}[exempt_rank] 100 )'
             f' ( ifelse {{arg.role == "mod"}} ( var set {_PY}[exempt_rank] 80 )'
             f' ( ifelse {{arg.role == "vip"}} ( var set {_PY}[exempt_rank] 60 )'
@@ -442,34 +438,35 @@ PYRAMID: tuple[Derived, ...] = (
             " ( fail 2 usage: pyramid exempt <off|sub|vip|mod|broadcaster> ) ) ) ) ) )"
             f" && var set {_PY}[exempt] {{arg.role}}"
             ' && ifelse {arg.role == "off"} ( echo nobody is exempt from pyramid breaks )'
-            " ( echo {arg.role} and up are exempt from pyramid breaks ) )"
+            " ( echo {arg.role} and up are exempt from pyramid breaks )"
         ),
         declarations=('1 name=role required=yes "off, sub, vip, mod or broadcaster"',),
         internal=True,
+        role="moderator",
     ),
     Derived(
         name="pyramid_addfact",
         summary="Add a pyramid fact for this channel (moderators)",
         body=(
-            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
-            ' ( ifelse {arg.1+raw == "-"} ( fail 2 usage: pyramid addfact <fact> )'
+            ' ifelse {arg.1+raw == "-"} ( fail 2 usage: pyramid addfact <fact> )'
             " ( ifelse {arg.1+raw:len > 300} ( fail 2 a pyramid fact is at most 300 characters )"
-            f" ( echo {{arg.1+raw}} --> {_PF} && echo added pyramid fact #{{{_PF}:len}} ) ) )"
+            f" ( echo {{arg.1+raw}} --> {_PF} && echo added pyramid fact #{{{_PF}:len}} ) )"
         ),
         declarations=('1+ name=fact required=yes "the fact"',),
         internal=True,
+        role="moderator",
     ),
     Derived(
         name="pyramid_delfact",
         summary="Delete one of the channel's pyramid facts (moderators)",
         body=(
-            f"ifelse {{not $chatter.is_mod}} ( {_MOD_ONLY} )"
-            f" ( ifelse {{1 <= arg.number <= ({_PF}:len ?? 0)}}"
+            f"ifelse {{1 <= arg.number <= ({_PF}:len ?? 0)}}"
             f" ( var pop {_PF} {{arg.number - 1}} && echo deleted pyramid fact #{{arg.number}} )"
-            " ( fail 3 there is no pyramid fact #{arg.number} ) )"
+            " ( fail 3 there is no pyramid fact #{arg.number} )"
         ),
         declarations=('1 name=number type=int required=yes "which fact, by number"',),
         internal=True,
+        role="moderator",
     ),
 )
 
@@ -676,7 +673,9 @@ async def _install(
                 system_version=system_version,
                 replaces_module=name in RESERVED_PACK_NAMES,
             )
-    members = {c.name for c in await packs.members(pack.id)} if pack is not None else set()
+    stored = await packs.members(pack.id) if pack is not None else []
+    members = {c.name for c in stored}
+    roles = {c.name: c.pack_role or "everyone" for c in stored}
     internal = await packs.internal_names(pack.id) if pack is not None else set()
 
     for derived in derived_commands:
@@ -692,6 +691,8 @@ async def _install(
             done.append(f"put {derived.name} in {name}")
         if derived.internal != (derived.name in internal):
             done.append(f"make {derived.name} {'internal' if derived.internal else 'public'}")
+        if derived.role != roles.get(derived.name, "everyone"):
+            done.append(f"make {derived.name} need {derived.role}")
         if dry_run:
             continue
 
@@ -717,6 +718,8 @@ async def _install(
             await packs.add_member(pack, command, actor_via="script")
         if pack is not None and derived.internal != (derived.name in internal):
             await packs.set_internal(pack, command, derived.internal, actor_via="script")
+        if pack is not None and derived.role != roles.get(derived.name, "everyone"):
+            await packs.set_role(pack, command, derived.role, actor_via="script")
 
     if system_version is not None:  # it resolves everywhere unpublished; startup checks the version
         if pack is not None and (pack.system_version or 0) < system_version:

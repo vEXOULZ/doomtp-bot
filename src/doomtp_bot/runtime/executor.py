@@ -14,6 +14,7 @@ import structlog
 
 from doomtp_bot import __version__
 from doomtp_bot.core import metrics
+from doomtp_bot.core.build import BUILD, uptime_s
 from doomtp_bot.lang.ast import (
     Access,
     And,
@@ -699,7 +700,16 @@ class Executor:
                 return None
             return {"id": pub.id, "name": pub.login, "display": pub.display or pub.login}
         if root == "bot":
-            return {"name": "doomtp-bot", "id": "", "version": __version__, **ctx.bot}
+            return {
+                "name": "doomtp-bot",
+                "id": "",
+                "version": __version__,
+                # The tag (or branch) and commit the image was built from; missing when run from a checkout.
+                "release": BUILD.release or MISSING,
+                "commit": BUILD.short_commit or MISSING,
+                "uptime": uptime_s(),
+                **ctx.bot,
+            }
         if root == "now":
             return self.now_fields(ctx)
         return None

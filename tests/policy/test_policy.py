@@ -208,14 +208,22 @@ async def test_help_lists_only_runnable_commands(h: Harness) -> None:
     assert await h.reply("viewer", "!help role") == "no command named role"
 
 
-async def test_help_links_the_channel_page_when_the_site_is_set(h: Harness) -> None:
+async def test_help_links_the_site_and_commands_the_channel_page_when_the_site_is_set(h: Harness) -> None:
     report = await h.say("viewer", "!help")
-    assert report is not None and "more at" not in (report.send or "")
+    assert report is not None and "docs at" not in (report.send or "")
     assert isinstance(report.result.data, dict) and report.result.data["link"] is None
+    h.clock.now += 100
+    report = await h.say("viewer", "!commands")
+    assert report is not None and "more at" not in (report.send or "")
     h.runtime.services["site_url"] = "https://site.example/"
     h.clock.now += 100
     report = await h.say("viewer", "!help")
     assert report is not None and report.send is not None
+    assert report.send.startswith("commands: ") and report.send.endswith("; docs at https://site.example/")
+    h.clock.now += 100
+    report = await h.say("viewer", "!commands")
+    assert report is not None and report.send is not None
+    assert report.send.startswith("commands: ")
     assert report.send.endswith(f"; more at https://site.example/channels/{CHANNEL_LOGIN}")
 
 

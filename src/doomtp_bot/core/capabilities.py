@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
@@ -83,6 +84,9 @@ class CapabilityProbe:
         self.channels = channels
         self.prober = prober
         self._task: asyncio.Task[None] | None = None
+        # Told when the bot becomes, or stops being, a moderator in a channel: the `bot_modded` and
+        # `bot_unmodded` triggers (ADR-0034). Set after construction.
+        self.on_moderator: Callable[[str, bool], Awaitable[None]] | None = None
 
     def start(self) -> None:
         if self._task is None:
@@ -150,3 +154,6 @@ class CapabilityProbe:
 
         await self.policy.mutate(write)
         log.info("capabilities.changed", channel=channel_id, tier=tier, has=sorted(capabilities))
+        was_mod = settings is not None and MODERATE in settings.capabilities
+        if self.on_moderator is not None and settings is not None and was_mod != (MODERATE in capabilities):
+            await self.on_moderator(channel_id, not was_mod)

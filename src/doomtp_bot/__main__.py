@@ -18,6 +18,7 @@ from doomtp_bot.audit.log import copy_legacy_audit
 from doomtp_bot.chatlog.queries import latest_badges
 from doomtp_bot.chatlog.writer import ChatLogWriter
 from doomtp_bot.config import Settings
+from doomtp_bot.core.bot_events import BotEvents, BotRuns
 from doomtp_bot.core.capabilities import MODERATE, CapabilityProbe, granted_by
 from doomtp_bot.core.channels import ChannelManager
 from doomtp_bot.core.dispatch import Dispatcher
@@ -231,7 +232,8 @@ async def run(settings: Settings) -> None:
         links_allowed_for=links_allowed_for,
         on_banned=channels.leave_banned,  # a 403 on a send means banned there (architecture §10)
     )
-    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams)
+    runtime.services["outbox"] = outbox  # `mecho` sends its lines itself, one message each
+    trigger_runner = TriggerRunner(runtime=runtime, policy=policy, outbox=outbox, streams=streams, writer=writer)
     timers = TimerScheduler(triggers=triggers, runner=trigger_runner, policy=policy, activity=activity, streams=streams)
     dispatcher = Dispatcher(
         runtime=runtime,
@@ -249,6 +251,16 @@ async def run(settings: Settings) -> None:
         bot_badges=bot_badges,
         watchers=default_watchers(),
     )
+
+    # The bot's own events as triggers (ADR-0034): this start is recorded first, so the next one can tell how
+    # long the bot was down and what version it was.
+    bot_runs = BotRuns(dbs.chatlog)
+    last_run = await bot_runs.begin()
+    bot_runs.start()
+    bot_events = BotEvents(dispatcher.bot_event, lambda: [c.channel_id for c in channels.active_channels()])
+    probe.on_moderator = bot_events.moderator_changed
+    channels.on_join = bot_events.joined
+    down_since: int | None = None  # when the bot last heard chat before Twitch dropped it
 
     poller = (
         StreamPoller(source=twitch, channels=channels, status=streams, sink=dispatcher.handle)
@@ -270,6 +282,7 @@ async def run(settings: Settings) -> None:
                 await channels.subscribe_all()
                 await probe.probe_all()  # tier per channel, before anything checks a capability
                 await restore_broadcasters()  # full-tier events, where a broadcaster connected
+                await bot_events.online(last_run, down_since_ms=down_since)  # `bot_online` (ADR-0034)
                 probe.start()
                 if poller is not None:
                     await poller.poll()
@@ -286,8 +299,10 @@ async def run(settings: Settings) -> None:
         """The client stopped by itself: EventSub gave up, or the token went bad. Start it again, waiting
         longer each time (ADR-0001). Coming back re-runs the startup path, so subscriptions, capabilities
         and the backfill of whatever was missed while it was deaf are all done again (ADR-0008)."""
-        nonlocal retry_in
+        nonlocal retry_in, down_since
         retry_in = min(max(retry_in * 2, FIRST_RETRY_S), MAX_RETRY_S)
+        if twitch is not None:
+            down_since = twitch.heard_at
         log.warning("twitch.restarting", in_s=retry_in)
         # The log stopped when the bot last heard chat, not now: ending the sessions there leaves a gap
         # that the startup backfill fills once the client is back.
@@ -468,6 +483,7 @@ async def run(settings: Settings) -> None:
             await twitch_start
         await dispatcher.drain()
         await writer.end_all_sessions("shutdown")
+        await bot_runs.end()
         if twitch is not None:
             await twitch.stop()
         await writer.stop()

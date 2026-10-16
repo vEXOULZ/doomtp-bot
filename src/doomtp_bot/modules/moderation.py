@@ -29,6 +29,7 @@ DEFAULT_TIMEOUT_S = 600
 MAX_TIMEOUT_S = 1_209_600  # two weeks, Twitch's limit
 MAX_REASON_CHARS = 200
 MAX_ANNOUNCEMENT_CHARS = 500  # Twitch's limit
+MECHO_MAX_LINES = 10
 MAX_TITLE_CHARS = 140  # Twitch's limit, and a marker description's too
 ANNOUNCE_COLORS = ("blue", "green", "orange", "purple", "primary")
 SLOW_DEFAULT_S, SLOW_MIN_S, SLOW_MAX_S = 30, 3, 120  # Twitch's range for slow mode
@@ -234,6 +235,44 @@ async def announce_cmd(ctx: CommandContext, args: Args, stdin: Result | None) ->
     reject_filtered(ctx, text)
     await _act(ctx, lambda t: t.announce(ctx.channel.id, text, color))
     return Result.success(None, {"text": text, "color": color})
+
+
+@command(
+    CommandSpec(
+        name="mecho",
+        module=MODULE,
+        summary="Say several lines, one message each",
+        description=(
+            'mecho "<line>" "<line>"…: each quoted argument is its own message, in order, up to'
+            f" {MECHO_MAX_LINES}. Only where the bot is a moderator, since that is where Twitch lets it send"
+            " quickly, and only for moderators: a channel can raise that, not lower it. Says nothing else."
+        ),
+        params=(Param("1+", "lines", required=True, description="The messages, each in quotes"),),
+        required_role="moderator",
+        min_role="moderator",
+        requires=(MODERATE,),
+        side_effects=True,
+        default_cooldowns={"moderator": Cooldown(tier_s=30)},
+        log_level=LogLevel.INVOCATIONS,
+        examples=(
+            Example('{sign}mecho "welcome {$chatter.display}" "the rules are in {sign}rules"', "(two messages)"),
+        ),
+    )
+)
+async def mecho_cmd(ctx: CommandContext, args: Args, stdin: Result | None) -> Result:
+    lines = [line.strip() for line in args.values if line.strip()]
+    if not lines:
+        raise CommandError('give the lines in quotes: mecho "first" "second"', Code.USAGE)
+    if len(lines) > MECHO_MAX_LINES:
+        raise CommandError(f"at most {MECHO_MAX_LINES} lines", Code.USAGE)
+    reject_filtered(ctx, *lines)  # all or nothing: a filtered line would leave a gap in the others
+    outbox = ctx.exec.services.get("outbox")
+    if outbox is None:
+        raise CommandError("not connected to chat")
+    for line in lines:
+        ctx.ensure_not_cancelled()
+        await outbox.send(ctx.channel.id, line, is_invalidated=ctx.exec.is_cancelled, run_ref=ctx.exec.run_id)
+    return Result.success(None, lines)
 
 
 @command(
@@ -554,6 +593,7 @@ COMMANDS: tuple[Command, ...] = (
     warn_cmd,
     shoutout_cmd,
     announce_cmd,
+    mecho_cmd,
     chatmode_cmd,
     clear_cmd,
     shield_cmd,

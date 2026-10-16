@@ -125,9 +125,11 @@ async def test_the_channel_decides_who_may_create_there(client: httpx.AsyncClien
 async def test_packs_are_built_shared_and_published(client: httpx.AsyncClient, app: Any) -> None:
     csrf = as_user(client, app)
     await _command(client, csrf, "wave", "echo o/")
+    await _command(client, csrf, "helper", "echo shh")
     assert (await client.post("/api/v1/me/packs", json={"name": "kit"}, headers=csrf)).status_code == 201
     added = await client.put("/api/v1/me/packs/kit/commands/wave", json={}, headers=csrf)
     assert added.status_code == 200 and [c["name"] for c in added.json()["commands"]] == ["wave"]
+    await client.put("/api/v1/me/packs/kit/commands/helper", json={"internal": True}, headers=csrf)
     shared = await client.patch("/api/v1/me/packs/kit", json={"shareable": True}, headers=csrf)
     assert shared.status_code == 200
     assert [p["name"] for p in (await client.get("/api/v1/me/packs")).json()["packs"]] == ["kit"]
@@ -137,9 +139,35 @@ async def test_packs_are_built_shared_and_published(client: httpx.AsyncClient, a
     assert refused.status_code == 403
     csrf = as_mod(client, app)
     published = await client.post(f"{OWN}/packs", json={"pack": "kit", "owner": "friend"}, headers=csrf)
-    assert published.status_code == 201 and published.json()["commands"] == ["wave"]
+    assert published.status_code == 201 and published.json()["commands"] == ["helper", "wave"]
     public = (await client.get(f"{OWN}/packs")).json()["packs"]
     assert [(p["name"], p["owner"], p["scope"]) for p in public] == [("kit", "friend", "channel")]
+    # The public list marks the helper, which only the pack's own commands can call.
+    assert {c["name"]: c["internal"] for c in public[0]["commands"]} == {"wave": False, "helper": True}
+    assert (await client.delete(f"{OWN}/packs/kit?owner=friend", headers=csrf)).status_code == 200
+    assert (await client.get(f"{OWN}/packs")).json()["packs"] == []
+
+
+async def test_a_pack_sets_a_members_rank_and_the_channel_only_raises_it(client: httpx.AsyncClient, app: Any) -> None:
+    """ADR-0033: `cc pack role`, and `!perm` refusing to go under it."""
+    csrf = as_user(client, app)
+    await _command(client, csrf, "wave", "echo o/")
+    await client.post("/api/v1/me/packs", json={"name": "kit"}, headers=csrf)
+    bad = await client.put("/api/v1/me/packs/kit/commands/wave", json={"role": "regulars"}, headers=csrf)
+    assert bad.status_code == 400 and "a pack sets one of" in bad.json()["detail"]
+    ranked = await client.put("/api/v1/me/packs/kit/commands/wave", json={"role": "vip"}, headers=csrf)
+    assert ranked.status_code == 200 and ranked.json()["commands"][0]["role"] == "vip"
+    await client.patch("/api/v1/me/packs/kit", json={"shareable": True}, headers=csrf)
+    csrf = as_mod(client, app)
+    await client.post(f"{OWN}/packs", json={"pack": "kit", "owner": "friend"}, headers=csrf)
+    public = (await client.get(f"{OWN}/packs")).json()["packs"]
+    assert public[0]["commands"][0]["role"] == "vip"
+    listed = {c["name"]: c for c in (await client.get(f"{OWN}/commands")).json()["commands"]}
+    assert (listed["wave"]["required_role"], listed["wave"]["min_role"]) == ("vip", "vip")
+    lower = await client.patch(f"{OWN}/commands/wave", json={"required_role": "everyone"}, headers=csrf)
+    assert lower.status_code == 400 and "can only raise it" in lower.json()["detail"]
+    raised = await client.patch(f"{OWN}/commands/wave", json={"required_role": "moderator"}, headers=csrf)
+    assert raised.status_code == 200 and raised.json()["required_role"] == "moderator"
     assert (await client.delete(f"{OWN}/packs/kit?owner=friend", headers=csrf)).status_code == 200
     assert (await client.get(f"{OWN}/packs")).json()["packs"] == []
 

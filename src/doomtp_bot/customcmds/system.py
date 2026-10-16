@@ -42,6 +42,8 @@ class Derived:
     note: str = ""
     #: Callable only from the bodies of its own pack's commands (ADR-0019).
     internal: bool = False
+    #: The rank it needs wherever its pack is published, which no channel goes under (ADR-0033).
+    role: str = "everyone"
 
     def params(self) -> tuple[dict[str, Any], ...]:
         rows: list[dict[str, Any]] = []

@@ -66,10 +66,10 @@ async def test_only_moderators_change_quotes_and_numbers_are_never_reused(h: Har
     await _install(h)
     denied = await _run(h, "alice", "!quote add mine")
     assert denied.result is not None and denied.result.code == Code.FAIL
-    assert denied.send == "adding quotes takes moderator rank"
+    assert denied.send == "that takes moderator rank"
     await _run(h, "mod", "!quote add one")
     await _run(h, "mod", "!quote add two")
-    assert (await _run(h, "alice", "!quote del 2")).send == "deleting quotes takes moderator rank"
+    assert (await _run(h, "alice", "!quote del 2")).send == "that takes moderator rank"
     assert (await _run(h, "mod", "!quote delete 2")).send == "deleted #2"
     gone = await _run(h, "mod", "!quote del 2")
     assert gone.result is not None and gone.result.code == Code.NOT_FOUND

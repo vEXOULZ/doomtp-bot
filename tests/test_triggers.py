@@ -276,6 +276,15 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         prefix="!",
         via="chat",
     )
+    await triggers.add(
+        channel_id=CHANNEL_ID,
+        type_="bot_modded",
+        expr="echo thanks for the sword, {event.channel.login}",
+        run_as_rank=0,
+        created_by="300",
+        prefix="!",
+        via="chat",
+    )
     sender = FakeSender()
     outbox = Outbox(sender, None)
     writer = ChatLogWriter(dbs.chatlog)
@@ -329,6 +338,7 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
             sent_at=5,
         )
     )
+    await dispatcher.bot_event(CHANNEL_ID, "bot_modded", {})  # the bot's own events (ADR-0034)
     await dispatcher.drain()
     await writer.stop()
     assert sorted(sender.sent) == [
@@ -336,6 +346,7 @@ async def test_the_dispatcher_runs_listeners_and_notification_triggers(dbs: Data
         "heard hello",
         "live: bot night",
         "raid!",
+        f"thanks for the sword, {CHANNEL_LOGIN}",
     ]
 
 
@@ -688,3 +699,63 @@ async def test_a_cooldown_is_checked_like_chat_checks_it(h: Harness) -> None:
     assert await h.say("mod", f"!timer cooldown {timer.id} 2d") == "a cooldown looks like 0, 30s, 2m or 1h"
     assert await h.say("mod", f"!timer cooldown {timer.id} 25h") == "a cooldown is at most 24h"
     assert await h.say("mod", "!event cooldown 9999 1m") == "no entry 9999 here"
+
+
+# ── the run log ─────────────────────────────────────────────────────────────
+@dataclass
+class FakeRunLog:
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+    async def command_run(self, **row: Any) -> None:
+        self.rows.append(row)
+
+
+async def test_trigger_runs_go_to_the_run_log_at_their_own_level(h: Harness) -> None:
+    runs = FakeRunLog()
+    h.runner.writer = runs  # type: ignore[assignment]  # only command_run is called
+    await h.say("mod", r"!listen add hi /\bhi\b/ echo hello {$chatter.display}")
+    await h.say("mod", "!timer add 15m true")
+    listener, timer = h.triggers.in_channel(CHANNEL_ID)
+
+    await h.runner.run(listener, channel_login=CHANNEL_LOGIN, user=USERS["alice"])
+    await h.runner.run(timer, channel_login=CHANNEL_LOGIN)  # output level: a quiet success isn't logged
+    assert [(r["trigger_type"], r["trigger_id"], r["user_id"], r["code"]) for r in runs.rows] == [
+        ("listener", str(listener.id), "400", Code.OK)
+    ]
+    assert runs.rows[0]["resolved"] == [{"index": 1, "name": "echo", "personal": False}]
+
+    assert await h.say("mod", f"!timer log {timer.id}") == f"{timer.id} logs: output"
+    assert await h.say("mod", f"!timer log {timer.id} all") == f"{timer.id} logs: all"
+    timer = next(t for t in h.triggers.in_channel(CHANNEL_ID) if t.id == timer.id)
+    assert timer.log_level is LogLevel.ALL
+    await h.runner.run(timer, channel_login=CHANNEL_LOGIN)
+    assert [r["trigger_type"] for r in runs.rows] == ["listener", "timer"]
+
+    assert await h.say("mod", "!listen log hi off") == "hi logs: off"
+    await h.runner.run(h.triggers.in_channel(CHANNEL_ID)[0], channel_login=CHANNEL_LOGIN, user=USERS["alice"])
+    assert len(runs.rows) == 2
+    refused = await h.say("mod", "!listen log hi loud")
+    assert refused is not None and refused.startswith("log level must be one of")
+
+
+# ── the bot's own events (ADR-0034) ─────────────────────────────────────────
+async def test_bot_online_is_heard_at_most_every_15_minutes_whatever_its_cooldown(h: Harness) -> None:
+    clock = FakeClock()
+    h.runner.cooldowns = CooldownTracker(clock=lambda: clock.now)
+    assert await h.say("mod", "!event add bot_online echo back after {event.down_s ?? ?}s ({event.reason})") is not None
+    assert await h.say("mod", "!event add bot_updated echo now on {event.version}, was {event.previous}") is not None
+    online, updated = h.triggers.in_channel(CHANNEL_ID)
+    assert online.cooldown_s == 0
+
+    async def fire(trigger: Any, **event: Any) -> bool:
+        return await h.runner.run(trigger, channel_login=CHANNEL_LOGIN, event=event) is not None
+
+    assert await fire(updated, version="0.13.0", previous="0.12.0")
+    assert await fire(online, reason="update", down_s=42)
+    clock.now = 600
+    assert not await fire(online, reason="reconnect", down_s=5)  # held by the 15-minute floor
+    clock.now = 901
+    assert await fire(online, reason="reconnect", down_s=5)
+    assert h.sender.sent == ["now on 0.13.0, was 0.12.0", "back after 42s (update)", "back after 5s (reconnect)"]
+    refused = await h.say("mod", f"!event cooldown {online.id} 0 5m")
+    assert refused is not None and refused.startswith("usage:")  # nobody behind it, so no per-chatter one

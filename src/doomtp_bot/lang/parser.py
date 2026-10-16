@@ -59,7 +59,7 @@ BOT_FIELDS: dict[str, frozenset[str]] = {
         {"id", "name", "display", "prefix", "live", "title", "game", "viewers", "uptime", "next_stream"}
     ),
     "publisher": frozenset({"id", "name", "display"}),
-    "bot": frozenset({"name", "id", "version"}),
+    "bot": frozenset({"name", "id", "version", "release", "commit", "uptime"}),
     "now": frozenset({"iso", "unix", "date", "time", "weekday"}),
 }
 # Roots a placeholder may start with, besides variables and `_`/`_N` (spec §2.7).
