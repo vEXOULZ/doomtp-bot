@@ -240,6 +240,20 @@ class Dispatcher:
             for trigger in found:
                 await self.trigger_runner.run(trigger, channel_login=login, event=payload)
 
+    async def bot_event(self, channel_id: str, type_: str, payload: dict[str, Any]) -> None:
+        """One of the bot's own events, in one channel (ADR-0034, `core/bot_events.py`)."""
+        if self.triggers is None or self.trigger_runner is None:
+            return
+        found = self.triggers.event_triggers(channel_id, type_, payload)
+        if not found:
+            return
+        settings = self.policy.channel_settings(channel_id)
+        login = settings.login if settings else channel_id
+        event = {**payload, "channel": {"login": login}}
+        async with self._slots:
+            for trigger in found:
+                await self.trigger_runner.run(trigger, channel_login=login, event=event)
+
     async def _notification_triggers(self, event: ChatNotification) -> None:
         """Subs, resubs, gift subs, raids and announcements (architecture §7)."""
         if self.triggers is None or self.trigger_runner is None:

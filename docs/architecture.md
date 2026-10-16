@@ -492,7 +492,8 @@ Sketch only — `storage/migrations/bot/sql/0001_init.sql` and the revisions aft
 ```sql
 triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
          -- redemption | raid | sub | resub | gift_sub | cheer | follow | stream_online |
-         -- stream_offline | pyramid | timer | cron | listener
+         -- stream_offline | pyramid | timer | cron | listener |
+         -- bot_online | bot_updated | bot_joined | bot_modded | bot_unmodded (ADR-0034)
          match text,        -- JSON: {reward_id}, {min_viewers}, {regex}, {min_bits}, …
          schedule text,     -- timers: {"every_s": 900, "jitter_s": 120, "only_live": true,
                             --          "min_chat_lines": 5}
@@ -518,7 +519,7 @@ triggers(id bigint IDENTITY PRIMARY KEY, channel_id text, type text,
 
 - **Crons** are timers told *when* instead of *how often*: the five standard fields (`minute hour day month weekday`, with `*`, lists, ranges, steps and names) evaluated in the channel's `timezone`. The scheduler keeps both clocks — monotonic for intervals, so correcting the machine's clock can't skip a timer, and wall clock for crons, which is the whole point of them. A matching minute fires once, and the minute is marked handled even when `only_live` holds it back, so a cron waits for its next time instead of firing late.
 
-**Built so far** (the `automation` module, ADR-0019): `!listen add <name> </regex/> <expression>` with `!listen test <text>`, `!event add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron "<m h dom mon dow>" <expression>`, each with `list`, `rm` and `on`/`off` (a listener by name or id). `!trigger` is the old name for listeners and events, kept for one release. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
+**Built so far** (the `automation` module, ADR-0019): `!listen add <name> </regex/> <expression>` with `!listen test <text>`, `!event add <event> <expression>`, `!timer add <every> [jitter=] [only_live] [min_lines=] <expression>`, `!timer cron "<m h dom mon dow>" <expression>`, each with `list`, `rm` and `on`/`off` (a listener by name or id). `!trigger` is the old name for listeners and events, kept for one release. Listeners, the notification events the basic tier receives (raid, sub, resub, gift sub) and `stream_online`/`stream_offline` from the Helix poller run end to end. `follow` needs the moderator tier, and redemptions and cheers the full tier: those are stored with a warning naming the missing capability and start working when the probe sees it granted. Timers tick every 5s against a per-channel line counter; `only_live` reads the poller's live set. The `bot_*` events are the bot's own (ADR-0034, `core/bot_events.py`): `bot_online` at start and after a reconnect (`event.reason`, `event.down_s`, with a 15-minute floor on its cooldown), `bot_updated` before it when the version changed since the last run in `bot_runs`, `bot_joined` on joining, and `bot_modded`/`bot_unmodded` when the probe sees moderator granted or taken. Expressions are parsed and filtered before they are stored, and run at the rank of the moderator who created them — never above it.
 
 ---
 

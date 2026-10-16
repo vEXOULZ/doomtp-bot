@@ -49,11 +49,18 @@ TriggerType = Literal[
     "timer",
     "cron",
     "listener",
+    "bot_online",
+    "bot_updated",
+    "bot_joined",
+    "bot_modded",
+    "bot_unmodded",
 ]
 TRIGGER_TYPES: tuple[TriggerType, ...] = (
     "redemption", "raid", "sub", "resub", "gift_sub", "cheer", "follow",
     "stream_online", "stream_offline", "pyramid", "timer", "cron", "listener",
+    "bot_online", "bot_updated", "bot_joined", "bot_modded", "bot_unmodded",
 )  # fmt: skip
+# The `bot_*` types are the bot's own events (ADR-0034, `core/bot_events.py`).
 # `pyramid` comes from a chat watcher (ADR-0028), not from Twitch: `watchers.PyramidWatcher`.
 # Event types that only work where the channel granted the bot something (ADR-0007): `follow` needs the
 # bot to be a moderator, the other two need the broadcaster to have connected their channel. The rest —
@@ -68,7 +75,22 @@ MAX_TIMER_EVERY_S = 24 * 3600
 MIN_TIMER_EVERY_S = 60
 MAX_COOLDOWN_S = 24 * 3600
 # Triggers that fire with nobody behind them, so a per-chatter cooldown has no one to hold (ADR-0031).
-NO_CHATTER: frozenset[str] = frozenset({"timer", "cron", "stream_online", "stream_offline"})
+NO_CHATTER: frozenset[str] = frozenset(
+    {
+        "timer",
+        "cron",
+        "stream_online",
+        "stream_offline",
+        "bot_online",
+        "bot_updated",
+        "bot_joined",
+        "bot_modded",
+        "bot_unmodded",
+    }
+)
+# The least whole-channel cooldown a type runs with, whatever the trigger says (ADR-0034): a bot that keeps
+# losing Twitch would otherwise greet the channel on every reconnect.
+MIN_CHANNEL_COOLDOWN_S: dict[str, int] = {"bot_online": 15 * 60}
 # A pack's own triggers (ADR-0032) fire in every channel that has the pack, so they are held tighter than a
 # channel's: at most this many a pack, a clock no more often than every 15 minutes, and at everyone's rank.
 MAX_PACK_TRIGGERS = 10
