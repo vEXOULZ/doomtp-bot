@@ -95,12 +95,14 @@ class Harness:
     counter: int = 0
 
     async def say(
-        self, login: str, text: str, *, channel: str = CHANNEL_ID, badges: tuple[str, ...] = (), **kw: Any
-    ) -> str:
+        self, login: str, text: str, *, channel: str = CHANNEL_ID, badges: tuple[str, ...] = (),
+        channel_login: str | None = None, **kw: Any,
+    ) -> str:  # fmt: skip
         self.counter += 1
         mid = f"m{self.counter}"
+        channel_login = channel_login or ("doomtp" if channel == CHANNEL_ID else BOT_LOGIN)
         event = ChatMessage(
-            message_id=mid, channel_id=channel, channel_login="doomtp" if channel == CHANNEL_ID else BOT_LOGIN,
+            message_id=mid, channel_id=channel, channel_login=channel_login,
             user_id=USERS.get(login, BOT_ID), user_login=login, display_name=login.title(), text=text,
             sent_at=1_000_000 + self.counter, received_at=1_000_000 + self.counter,
             badges=tuple(Badge(b, "1") for b in badges), **kw,
@@ -193,6 +195,15 @@ async def test_unjoined_channels_are_ignored_entirely(h: Harness) -> None:
     await h.say("alice", "!ping", channel="777")
     await h.settle()
     assert h.twitch.sent == [] and await h.rows("SELECT 1 FROM messages") == []
+
+
+async def test_a_channel_renamed_on_twitch_is_found_by_its_new_login(h: Harness) -> None:
+    await h.say("alice", "hi", channel_login="DoomTP_New")
+    await h.settle()
+    assert h.policy.channel_by_login("doomtp") is None
+    renamed = h.policy.channel_by_login("doomtp_new")
+    assert renamed is not None and renamed.channel_id == CHANNEL_ID and h.channels.is_active(CHANNEL_ID)
+    assert len(await h.rows("SELECT 1 FROM messages")) == 1
 
 
 async def test_deleted_while_running_means_no_reply(h: Harness) -> None:
