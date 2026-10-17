@@ -1,4 +1,4 @@
-"""Settings read from the environment: the sign-in names before and after the vexouLuna rename."""
+"""Settings read from the environment: the shared sign-in's names."""
 
 from __future__ import annotations
 
@@ -23,9 +23,8 @@ def settings() -> Settings:
     return Settings(_env_file=None)  # type: ignore[call-arg]  # pydantic-settings' init-only option
 
 
-@pytest.mark.parametrize("value", ["vex", "vexoulz"])
-def test_either_provider_name_means_the_shared_sign_in(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv("SIGNIN_PROVIDER", value)
+def test_vex_means_the_shared_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SIGNIN_PROVIDER", "vex")
     assert settings().signin_provider == "vex"
 
 
@@ -33,12 +32,11 @@ def test_twitch_is_the_default() -> None:
     assert settings().signin_provider == "twitch"
 
 
-@pytest.mark.parametrize("prefix", ["VEX_AUTH_", "VEXOULZ_AUTH_"])
-def test_either_env_prefix_is_read(monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
-    monkeypatch.setenv(f"{prefix}URL", "https://auth.example.net")
-    monkeypatch.setenv(f"{prefix}INTERNAL_URL", "http://auth:8000")
-    monkeypatch.setenv(f"{prefix}CLIENT_ID", "dtp-test")
-    monkeypatch.setenv(f"{prefix}CLIENT_SECRET", "s3cret")
+def test_the_vex_auth_settings_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VEX_AUTH_URL", "https://auth.example.net")
+    monkeypatch.setenv("VEX_AUTH_INTERNAL_URL", "http://auth:8000")
+    monkeypatch.setenv("VEX_AUTH_CLIENT_ID", "dtp-test")
+    monkeypatch.setenv("VEX_AUTH_CLIENT_SECRET", "s3cret")
     s = settings()
     assert s.vex_auth_url == "https://auth.example.net"
     assert s.vex_auth_internal_url == "http://auth:8000"
@@ -46,20 +44,21 @@ def test_either_env_prefix_is_read(monkeypatch: pytest.MonkeyPatch, prefix: str)
     assert s.vex_auth_secret() == "s3cret"
 
 
-def test_the_new_name_wins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VEX_AUTH_URL", "https://new.example.net")
-    monkeypatch.setenv("VEXOULZ_AUTH_URL", "https://old.example.net")
-    assert settings().vex_auth_url == "https://new.example.net"
-
-
-def test_the_secret_file_under_either_name(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_the_secret_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     secret = tmp_path / "secret"
     secret.write_text("from-file\n", encoding="utf-8")
-    monkeypatch.setenv("VEXOULZ_AUTH_CLIENT_SECRET_FILE", str(secret))
+    monkeypatch.setenv("VEX_AUTH_CLIENT_SECRET_FILE", str(secret))
     assert settings().vex_auth_secret() == "from-file"
 
 
-def test_an_unknown_provider_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SIGNIN_PROVIDER", "github")
+def test_the_names_from_before_the_rename_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    # VEXOULZ_AUTH_* were read for a while after the vexouLuna rename; a .env still on them gets nothing.
+    monkeypatch.setenv("VEXOULZ_AUTH_URL", "https://old.example.net")
+    assert settings().vex_auth_url is None
+
+
+@pytest.mark.parametrize("value", ["vexoulz", "github"])
+def test_an_unknown_provider_is_refused(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("SIGNIN_PROVIDER", value)
     with pytest.raises(ValueError):
         settings()
