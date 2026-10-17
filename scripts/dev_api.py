@@ -2,7 +2,7 @@
 
     docker compose --profile test up -d postgres-test
     python scripts/dev_api.py            # http://127.0.0.1:8080, admin password "admin"
-    python scripts/dev_api.py --moderator alice:vexoulz --moderator pest:vexoulz,doomtp
+    python scripts/dev_api.py --moderator alice:vexouluna --moderator pest:vexouluna,doomtp
 
 It serves the same FastAPI app the bot does: the same routes, the same JSON, the same session login.
 What it leaves out is everything that talks to Twitch: no chat, no EventSub, and channel joins reach a
@@ -12,14 +12,14 @@ whatever the site does to it is gone on the next run. Never point it at a real d
 
 There is no Twitch sign-in either, so the signed-in views (ADR-0017, ADR-0026) come from
 `/dev/login-as?user=<login>` instead, a session made exactly as the sign-in makes one, for any made-up user:
-  * a channel's own login (vexoulz, doomtp) is its broadcaster;
-  * a user named with `--moderator` (alice, of vexoulz, by default) moderates those channels;
+  * a channel's own login (vexouluna, doomtp) is its broadcaster;
+  * a user named with `--moderator` (alice, of vexouluna, by default) moderates those channels;
   * anyone else is a plain user: newcomer, whose channel the bot isn't in yet, or friendlychannel, whose
     channel banned the bot.
 That route is added here, to this script's app, and exists nowhere else.
 
 The job runtime runs too, on the same database, so /api/v2/jobs has `chat_backfill` runs to show: one is
-queued for vexoulz at every start, and more come from the channel page's backfill panel. The history
+queued for vexouluna at every start, and more come from the channel page's backfill panel. The history
 service is a stand-in that makes up a few lines for any range, a second and a half per request, so a run
 can be watched, paused and cancelled.
 """
@@ -69,15 +69,15 @@ SERVER = "postgresql://postgres:postgres@127.0.0.1:55432"
 SETUP = Actor(None, "system")
 # Made-up Twitch users: the channels below, and a few people to ignore, join or explain as.
 USERS = {
-    "vexoulz": "1001",
+    "vexouluna": "1001",
     "doomtp": "1002",
     "friendlychannel": "1003",
     "newcomer": "1004",
     "alice": "2001",
     "pest": "2002",
 }
-JOINED = ("vexoulz", "doomtp")
-DEFAULT_MODERATORS = ("alice:vexoulz",)
+JOINED = ("vexouluna", "doomtp")
+DEFAULT_MODERATORS = ("alice:vexouluna",)
 
 
 class StandInTwitch:
@@ -134,12 +134,12 @@ async def seed(policy: PolicyService, customcmds: CustomCommandService, packs: P
     a filter and an ignored user."""
 
     async def channels(repo: Any) -> None:
-        for login, status in (("vexoulz", "joined"), ("doomtp", "joined"), ("friendlychannel", "banned")):
+        for login, status in (("vexouluna", "joined"), ("doomtp", "joined"), ("friendlychannel", "banned")):
             await repo.ensure_channel(USERS[login], login, SETUP)
             await repo.set_channel_field(USERS[login], "status", status, SETUP)
 
     await policy.mutate(channels)
-    vex = USERS["vexoulz"]
+    vex = USERS["vexouluna"]
     await policy.mutate(lambda repo: repo.set_channel_field(vex, "prefix", "!", SETUP))
     await policy.mutate(
         lambda repo: repo.set_ignored(vex, USERS["pest"], "pest", True, Actor(vex, "chat"), reason="spam")
@@ -162,7 +162,7 @@ async def seed(policy: PolicyService, customcmds: CustomCommandService, packs: P
         await customcmds.set_summary(command, summary)
         made[name] = command
     await customcmds.publish(channel_id=vex, name="hype", command=made["hype"], published_by=vex)
-    # vexoulz ran hype at v1, then alice edited it: the admin page says "changed since v1".
+    # vexouluna ran hype at v1, then alice edited it: the admin page says "changed since v1".
     hype, _ = next(p for p in await customcmds.publications_in(vex) if p[0].name == "hype")
     await customcmds.touch_run(hype, 1)
     await customcmds.edit(made["hype"], "echo HYPE HYPE HYPE HYPE", channel_id=vex, prefix="!")
@@ -182,7 +182,7 @@ async def seed(policy: PolicyService, customcmds: CustomCommandService, packs: P
 
 
 def parse_moderators(specs: list[str]) -> dict[str, frozenset[str]]:
-    """`alice:vexoulz,doomtp` → {"alice": {"vexoulz", "doomtp"}}, checked against the made-up data."""
+    """`alice:vexouluna,doomtp` → {"alice": {"vexouluna", "doomtp"}}, checked against the made-up data."""
     found: dict[str, frozenset[str]] = {}
     for spec in specs:
         login, _, channels = spec.partition(":")
@@ -267,14 +267,14 @@ async def main(args: argparse.Namespace) -> None:
     await jobs.start()
     hour = 3_600_000
     now = int(time.time() * 1000)
-    await backfill_queue.queue_range(USERS["vexoulz"], now - 3 * hour, now - 2 * hour, "dev_api")
+    await backfill_queue.queue_range(USERS["vexouluna"], now - 3 * hour, now - 2 * hour, "dev_api")
 
     reports = ReportStore(f"http://{args.host}:{args.port}", ttl_s=24 * 3600)
-    info = policy.channel_info(USERS["vexoulz"], "vexoulz")
+    info = policy.channel_info(USERS["vexouluna"], "vexouluna")
     report = await explain(
         runtime, "!role list", runtime.make_context(channel=info, invoker=None), context=Context.LINE
     )
-    token = reports.keep({**report.as_dict(), "channel": "vexoulz"})
+    token = reports.keep({**report.as_dict(), "channel": "vexouluna"})
 
     health = HealthRegistry()
 

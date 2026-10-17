@@ -2,7 +2,7 @@
 
 A self-hosted, multi-channel Twitch chat bot with a composable command language
 (`!random 1-100 | echo you rolled {_1}`), user-published custom commands, a complete chat log, and a JSON API
-that its web site, [doomtp-web](https://github.com/vEXOULZ/doomtp-web), is built on.
+that its web site, [doomtp-web](https://github.com/vexouLuna/doomtp-web), is built on.
 
 **Status:** feature-complete for v1 and not yet run in anger. The command language and its runtime,
 permissions, cooldowns and toggles, variables, the chat log with gap backfill, custom commands with
@@ -358,7 +358,7 @@ adds it, or `!join basic <channel>` as a bot owner.
 
 ### 8. Publish the web site
 
-The pages are [doomtp-web](https://github.com/vEXOULZ/doomtp-web), a separate site built to static
+The pages are [doomtp-web](https://github.com/vexouLuna/doomtp-web), a separate site built to static
 files; its CI publishes each build to that repository's `deploy` branch. The bot serves no pages. A
 reverse proxy puts the two on **one hostname with HTTPS**, so the browser needs no CORS and the session
 stays a plain cookie (ADR-0016):
@@ -481,7 +481,7 @@ which the script and a bare `docker compose` both read, so a rollback keeps the 
 
 ## Web site
 
-The pages, public and admin, are [doomtp-web](https://github.com/vEXOULZ/doomtp-web): a separate Vue site
+The pages, public and admin, are [doomtp-web](https://github.com/vexouLuna/doomtp-web): a separate Vue site
 over this bot's JSON API, served from the same hostname (ADR-0016; step 8 above). The bot serves the API,
 `/auth/*`, `/static/*` (the expression editor and the railroad diagrams the site loads) and Swagger at
 `/docs`, and no pages of its own. `/api/v2` (ADR-0027) holds the jobs and audit routes shared with the
@@ -493,7 +493,7 @@ data, and doomtp-web's `npm run dev` forwards to it. Its README has the details.
 
 **Admin sign-in.** Bot owners and admins sign in with Twitch, and so do broadcasters and moderators, who
 get only their own channels (ADR-0017). With `SIGNIN_PROVIDER=vex` that sign-in goes through
-vexoulz-auth, shared with the other vexoulz sites, instead of straight to Twitch (ADR-0023); the routes and
+vex-auth, shared with the other vexoul.net sites, instead of straight to Twitch (ADR-0023); the routes and
 sessions are the same. `ADMIN_PASSWORD` in `.env` is the way in that doesn't need Twitch.
 Without it the password login is off. It is taken only from `ADMIN_PASSWORD_NETWORKS` (this host and the
 private ranges by default; `*` for anywhere), so from outside the site offers Twitch alone. A request that
