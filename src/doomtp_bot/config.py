@@ -6,11 +6,16 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from doomtp_bot.api.sessions import LOCAL_NETWORKS
 from doomtp_bot.lang.parser import DEFAULT_PREFIX
+
+
+def _auth_env(name: str) -> AliasChoices:
+    """VEX_AUTH_<name>, or the VEXOULZ_AUTH_<name> it was called before the vexouLuna rename."""
+    return AliasChoices(f"VEX_AUTH_{name}", f"VEXOULZ_AUTH_{name}")
 
 
 class Settings(BaseSettings):
@@ -59,17 +64,25 @@ class Settings(BaseSettings):
     # Default: this host and the private ranges.
     admin_password_networks: str = LOCAL_NETWORKS
     # Who signs moderators in to the web admin (ADR-0023): Twitch directly, or vexoulz-auth (the sign-in
-    # shared by the vexoulz sites), which then needs its URL and this bot's client registration there.
-    signin_provider: Literal["twitch", "vexoulz"] = "twitch"
-    vexoulz_auth_url: str | None = None  # as browsers reach it
-    vexoulz_auth_internal_url: str | None = None  # as the bot reaches it; unset = vexoulz_auth_url
-    vexoulz_auth_client_id: str = "dtp"
-    vexoulz_auth_client_secret: SecretStr | None = None
-    vexoulz_auth_client_secret_file: Path | None = None
+    # shared by the vexoul.net sites), which then needs its URL and this bot's client registration there.
+    # `vexoulz` and the VEXOULZ_AUTH_* names are the ones from before the vexouLuna rename, still read
+    # until every .env has moved to `vex` and VEX_AUTH_*.
+    signin_provider: Literal["twitch", "vex"] = "twitch"
+    vex_auth_url: str | None = Field(default=None, validation_alias=_auth_env("URL"))  # as browsers reach it
+    # As the bot reaches it; unset = vex_auth_url.
+    vex_auth_internal_url: str | None = Field(default=None, validation_alias=_auth_env("INTERNAL_URL"))
+    vex_auth_client_id: str = Field(default="dtp", validation_alias=_auth_env("CLIENT_ID"))
+    vex_auth_client_secret: SecretStr | None = Field(default=None, validation_alias=_auth_env("CLIENT_SECRET"))
+    vex_auth_client_secret_file: Path | None = Field(default=None, validation_alias=_auth_env("CLIENT_SECRET_FILE"))
     ivr_logs_url: str = "https://logs.ivr.fi"  # where chat history is backfilled from (ADR-0008)
 
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "console"
+
+    @field_validator("signin_provider", mode="before")
+    @classmethod
+    def _old_provider_name(cls, value: object) -> object:
+        return "vex" if value == "vexoulz" else value
 
     @property
     def bot_owner_ids(self) -> frozenset[str]:
@@ -79,9 +92,9 @@ class Settings(BaseSettings):
         """TWITCH_CLIENT_SECRET, or the contents of TWITCH_CLIENT_SECRET_FILE."""
         return _secret(self.twitch_client_secret, self.twitch_client_secret_file)
 
-    def vexoulz_auth_secret(self) -> str | None:
-        """VEXOULZ_AUTH_CLIENT_SECRET, or the contents of VEXOULZ_AUTH_CLIENT_SECRET_FILE."""
-        return _secret(self.vexoulz_auth_client_secret, self.vexoulz_auth_client_secret_file)
+    def vex_auth_secret(self) -> str | None:
+        """VEX_AUTH_CLIENT_SECRET, or the contents of VEX_AUTH_CLIENT_SECRET_FILE."""
+        return _secret(self.vex_auth_client_secret, self.vex_auth_client_secret_file)
 
     def admin_password_value(self) -> str | None:
         """ADMIN_PASSWORD, or the contents of ADMIN_PASSWORD_FILE."""
