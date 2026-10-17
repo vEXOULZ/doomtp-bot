@@ -660,7 +660,7 @@ A request carrying `X-Forwarded-For` whose address isn't in it came through a pr
 so its address is the proxy's (on the same host, Docker's private gateway), and it never counts as local.
 
 **UI technology (ADR-0016):**
-- **The pages are a separate site,** [`doomtp-web`](https://github.com/vEXOULZ/doomtp-web): Vue and TypeScript on the design the other vexoulz sites share, built to static files. The bot serves no pages of its own. The site is served from the same origin as the bot, with a reverse proxy sending `/api/*`, `/auth/*`, `/static/*`, `/healthz`, `/readyz`, and exactly `/docs` and `/openapi.json` to the bot and everything else to the site. So there is no CORS, and the session is a plain same-origin cookie. The site keeps the URLs the bot's own pages had, so chat's explain links and older bookmarks still work.
+- **The pages are a separate site,** [`doomtp-web`](https://github.com/vexouLuna/doomtp-web): Vue and TypeScript on the design the other vexoul.net sites share, built to static files. The bot serves no pages of its own. The site is served from the same origin as the bot, with a reverse proxy sending `/api/*`, `/auth/*`, `/static/*`, `/healthz`, `/readyz`, and exactly `/docs` and `/openapi.json` to the bot and everything else to the site. So there is no CORS, and the session is a plain same-origin cookie. The site keeps the URLs the bot's own pages had, so chat's explain links and older bookmarks still work.
 - **What the site needs from the bot is JSON.** When a page needs something the API doesn't return, it is added to the API here; the site doesn't work it out on its own.
 - **The expression editor** is the one exception (ADR-0011). It's a **CodeMirror 6** component whose own lexer (`web-editor/src/tokens.js`) only colours text; diagnostics come from `/api/v1/parse`, autocomplete from `/api/v1/language` and `/api/v1/commands`, and the preview from `/api/v1/explain`.
   - It ships as a static bundle (esbuild), **committed** at `api/static/editor/editor.js`: the image has no Node in it, and the bot serves the file as it stands. Rebuild and commit together.
@@ -692,8 +692,8 @@ token stays with the session, in memory, and nothing is written to the database.
 worked out again at most every five minutes, on the next request (`current_session` in
 `api/access.py`): channels the user lost go at once, and a user Twitch no longer vouches for is signed out,
 and one who manages nothing any more becomes a user. A request to Twitch that merely failed keeps what the session
-had until the next try. With `SIGNIN_PROVIDER=vex` (ADR-0023), `VexoulzSignIn` sends the person to
-vexoulz-auth instead, gets the user and a session id for the code, and asks vexoulz-auth for the moderated
+had until the next try. With `SIGNIN_PROVIDER=vex` (ADR-0023), `VexSignIn` sends the person to
+vex-auth instead, gets the user and a session id for the code, and asks vex-auth for the moderated
 channels; the refresh also checks that session, so signing out everywhere reaches the bot too. *(Revision 5 dropped a pluggable `Authenticator` written ahead of time; the caller it
 would have guessed at is now designed, and the seam came with it.)*
 

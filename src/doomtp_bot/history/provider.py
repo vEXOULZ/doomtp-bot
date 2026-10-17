@@ -91,7 +91,7 @@ class IvrLogsProvider:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
-                headers={"User-Agent": "doomtp-bot (+https://github.com/vEXOULZ/doomtp-bot)"},
+                headers={"User-Agent": "doomtp-bot (+https://github.com/vexouLuna/doomtp-bot)"},
             )
         return self._session
 

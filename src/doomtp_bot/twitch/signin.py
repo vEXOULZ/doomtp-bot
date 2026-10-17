@@ -14,8 +14,8 @@ What a user may do follows from who they are:
 Both are worked out again at most every `REFRESH_S`, so a moderator who loses the role loses access
 within that window, not at once.
 
-With `SIGNIN_PROVIDER=vex` (ADR-0023) the same flow goes through vexoulz-auth, the sign-in shared by
-the vexoulz sites, instead of straight to Twitch: `VexoulzSignIn` below. Someone already signed in on
+With `SIGNIN_PROVIDER=vex` (ADR-0023) the same flow goes through vex-auth, the sign-in shared by
+the vexoul.net sites, instead of straight to Twitch: `VexSignIn` below. Someone already signed in on
 another of those sites isn't asked again, and signing out everywhere there ends the session here too.
 """
 
@@ -111,7 +111,7 @@ class Grant:
     login: str
     access_token: str
     refresh_token: str | None
-    sid: str | None = None  # the vexoulz-auth session behind it (VexoulzSignIn); None for Twitch's own
+    sid: str | None = None  # the vex-auth session behind it (VexSignIn); None for Twitch's own
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +241,7 @@ class TwitchSignIn:
 
     async def refresh(self, session: Any) -> bool:
         """Bring a Twitch session's role and channels up to date, at most every `refresh_s`. False when
-        the session should end: Twitch (or vexoulz-auth) took the grant back. Someone who manages no
+        the session should end: Twitch (or vex-auth) took the grant back. Someone who manages no
         channel any more stays signed in, as a user.
         A request that merely failed on the way keeps what the session had until the next try."""
         grant = session.grant
@@ -260,10 +260,10 @@ class TwitchSignIn:
         return True
 
 
-# ── through vexoulz-auth (ADR-0023) ─────────────────────────────────────────
+# ── through vex-auth (ADR-0023) ─────────────────────────────────────────
 
 
-class VexoulzHttp(Protocol):
+class VexHttp(Protocol):
     async def token(self, code: str, redirect_uri: str) -> dict[str, Any]:
         """`POST /v1/token`: `{user: {id, login, ...}, sid, expiresAt}`. OAuthError if refused."""
         ...
@@ -273,13 +273,13 @@ class VexoulzHttp(Protocol):
         ...
 
     async def moderated_channels(self, user_id: str) -> list[str]:
-        """Broadcaster ids the user moderates, asked of Twitch by vexoulz-auth with the token it keeps.
+        """Broadcaster ids the user moderates, asked of Twitch by vex-auth with the token it keeps.
         TokenRevoked when there is no usable token any more: the user must sign in again."""
         ...
 
 
-class VexoulzAuthHttp:
-    """vexoulz-auth's backend API, authenticated as a registered client (HTTP Basic)."""
+class VexAuthHttp:
+    """vex-auth's backend API, authenticated as a registered client (HTTP Basic)."""
 
     def __init__(self, base_url: str, client_id: str, client_secret: str) -> None:
         self.base_url = base_url.rstrip("/")
@@ -300,7 +300,7 @@ class VexoulzAuthHttp:
     async def token(self, code: str, redirect_uri: str) -> dict[str, Any]:
         status, body = await self._call("POST", "/v1/token", json={"code": code, "redirect_uri": redirect_uri})
         if status != 200:
-            raise OAuthError(f"vexoulz-auth refused the code ({status} {body.get('error')})")
+            raise OAuthError(f"vex-auth refused the code ({status} {body.get('error')})")
         return body
 
     async def session_active(self, sid: str) -> bool:
@@ -308,27 +308,27 @@ class VexoulzAuthHttp:
         if status == 404:
             return False
         if status != 200:
-            raise OAuthError(f"vexoulz-auth session check failed ({status})")
+            raise OAuthError(f"vex-auth session check failed ({status})")
         return bool(body.get("active"))
 
     async def moderated_channels(self, user_id: str) -> list[str]:
         status, body = await self._call("GET", f"/v1/users/{user_id}/moderated-channels")
         if status in (404, 409, 410):  # never signed in here, the scope is gone, or Twitch took it back
-            raise TokenRevoked(f"vexoulz-auth has no usable token ({status} {body.get('error')})")
+            raise TokenRevoked(f"vex-auth has no usable token ({status} {body.get('error')})")
         if status != 200:
-            raise OAuthError(f"vexoulz-auth moderated-channels failed ({status})")
+            raise OAuthError(f"vex-auth moderated-channels failed ({status})")
         return [str(c) for c in body.get("channels", [])]
 
 
-class VexoulzSignIn(TwitchSignIn):
-    """The same flow, states and outcomes as TwitchSignIn, with vexoulz-auth in Twitch's place.
+class VexSignIn(TwitchSignIn):
+    """The same flow, states and outcomes as TwitchSignIn, with vex-auth in Twitch's place.
 
-    `/authorize` answers at once for someone already signed in on another vexoulz site, and asks Twitch
-    (once) for the moderated-channels scope. Every refresh also checks the vexoulz-auth session, so
+    `/authorize` answers at once for someone already signed in on another vexoul.net site, and asks Twitch
+    (once) for the moderated-channels scope. Every refresh also checks the vex-auth session, so
     signing out everywhere ends this one within `REFRESH_S`.
     """
 
-    http: VexoulzHttp  # type: ignore[assignment]
+    http: VexHttp  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -336,7 +336,7 @@ class VexoulzSignIn(TwitchSignIn):
         auth_url: str,
         client_id: str,
         redirect_uri: str,
-        http: VexoulzHttp,
+        http: VexHttp,
         policy: Policy,
         clock: Callable[[], float] = time.monotonic,
         refresh_s: float = REFRESH_S,
@@ -373,7 +373,7 @@ class VexoulzSignIn(TwitchSignIn):
 
     async def access(self, grant: Grant) -> Access:
         if grant.sid is None or not await self.http.session_active(grant.sid):
-            raise TokenRevoked("signed out of vexoulz-auth")
+            raise TokenRevoked("signed out of vex-auth")
         if self.policy.is_bot_admin(grant.user_id):
             return Access("admin", None)
         return access_for(self.policy, grant.user_id, await self.http.moderated_channels(grant.user_id))
