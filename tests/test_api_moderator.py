@@ -451,6 +451,6 @@ async def test_the_dev_api_signs_in_a_moderator_and_the_bot_has_no_such_route(
     pest = await client.get("/dev/login-as", params={"user": "pest"})
     assert pest.text == "signed in as pest, managing no channel\n"
     assert (await client.get("/api/v1/session")).json()["role"] == "user"
-    broadcaster = await client.get("/dev/login-as", params={"user": "vexoulz"})
-    assert broadcaster.text == "signed in as vexoulz, managing vexoulz\n"
+    broadcaster = await client.get("/dev/login-as", params={"user": "vexouluna"})
+    assert broadcaster.text == "signed in as vexouluna, managing vexouluna\n"
     assert (await client.get("/dev/login-as", params={"user": "nobody"})).status_code == 404

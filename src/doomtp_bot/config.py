@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # Where the password login is taken from: comma-separated addresses or CIDRs, or `*` for anywhere.
     # Default: this host and the private ranges.
     admin_password_networks: str = LOCAL_NETWORKS
-    # Who signs moderators in to the web admin (ADR-0023): Twitch directly, or vexoulz-auth (the sign-in
+    # Who signs moderators in to the web admin (ADR-0023): Twitch directly, or vex-auth (the sign-in
     # shared by the vexoul.net sites), which then needs its URL and this bot's client registration there.
     # `vexoulz` and the VEXOULZ_AUTH_* names are the ones from before the vexouLuna rename, still read
     # until every .env has moved to `vex` and VEX_AUTH_*.
