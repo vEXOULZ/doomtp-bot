@@ -14,7 +14,7 @@ What a user may do follows from who they are:
 Both are worked out again at most every `REFRESH_S`, so a moderator who loses the role loses access
 within that window, not at once.
 
-With `SIGNIN_PROVIDER=vexoulz` (ADR-0023) the same flow goes through vexoulz-auth, the sign-in shared by
+With `SIGNIN_PROVIDER=vex` (ADR-0023) the same flow goes through vexoulz-auth, the sign-in shared by
 the vexoulz sites, instead of straight to Twitch: `VexoulzSignIn` below. Someone already signed in on
 another of those sites isn't asked again, and signing out everywhere there ends the session here too.
 """

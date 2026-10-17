@@ -378,25 +378,25 @@ async def run(settings: Settings) -> None:
         # `!join` links here: connecting is how a broadcaster adds the bot (ADR-0007).
         runtime.services["connect_url"] = settings.public_base_url.rstrip("/") + "/auth/connect"
     # People signing in to the web admin (ADR-0017). Needs only the app's credentials, not the bot's token;
-    # or, with SIGNIN_PROVIDER=vexoulz, this bot's client registration in vexoulz-auth (ADR-0023).
+    # or, with SIGNIN_PROVIDER=vex, this bot's client registration in vexoulz-auth (ADR-0023).
     signin: TwitchSignIn | None = None
     admin_callback = settings.public_base_url.rstrip("/") + "/auth/admin/callback"
-    if settings.signin_provider == "vexoulz":
-        auth_secret = settings.vexoulz_auth_secret()
-        if settings.vexoulz_auth_url and auth_secret:
+    if settings.signin_provider == "vex":
+        auth_secret = settings.vex_auth_secret()
+        if settings.vex_auth_url and auth_secret:
             signin = VexoulzSignIn(
-                auth_url=settings.vexoulz_auth_url,
-                client_id=settings.vexoulz_auth_client_id,
+                auth_url=settings.vex_auth_url,
+                client_id=settings.vex_auth_client_id,
                 redirect_uri=admin_callback,
                 http=VexoulzAuthHttp(
-                    settings.vexoulz_auth_internal_url or settings.vexoulz_auth_url,
-                    settings.vexoulz_auth_client_id,
+                    settings.vex_auth_internal_url or settings.vex_auth_url,
+                    settings.vex_auth_client_id,
                     auth_secret,
                 ),
                 policy=policy,
             )
         else:
-            log.warning("signin.not_configured", provider="vexoulz", missing="VEXOULZ_AUTH_URL or its secret")
+            log.warning("signin.not_configured", provider="vex", missing="VEX_AUTH_URL or its secret")
     elif settings.twitch_client_id and secret:
         signin = TwitchSignIn(
             client_id=settings.twitch_client_id,
