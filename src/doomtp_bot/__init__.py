@@ -1,3 +1,3 @@
 """doomtp-bot — multi-channel Twitch chat bot. See docs/architecture.md."""
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
