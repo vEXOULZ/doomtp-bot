@@ -23,6 +23,6 @@
   "devDependencies": {
     "esbuild": "^0.25.0",
     "vitest": "^3.0.0",
-    "yaml": "^2.7.0"
+    "yaml": "^2.9.1"
   }
 }
