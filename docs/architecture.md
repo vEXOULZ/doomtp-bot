@@ -256,7 +256,8 @@ deliberate: chat is multilingual and English stemming would mangle it. `chatlog_
 `IMMUTABLE` wrapper around `unaccent` with the dictionary pinned by name, because a generated column may
 only call immutable functions.
 
-All users are keyed by **`user_id`**. Logins are snapshots plus rename history.
+All users are keyed by **`user_id`**. Logins are snapshots plus rename history. A joined channel renamed on Twitch
+stays joined, and its first chat line under the new login updates the stored one, so `/channels/{login}` follows it.
 
 ### 3.3 Gaps and backfill (ADR-0008)
 

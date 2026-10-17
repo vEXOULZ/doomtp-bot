@@ -117,6 +117,15 @@ class ChannelManager:
         if not self.is_active(bot_id):
             await self._mark_joined(bot_id, bot_login, Actor(None, "system"))
 
+    async def follow_rename(self, channel_id: str, login: str) -> None:
+        """Store a joined channel's new login after a Twitch rename. The channel keeps its id, so it stays
+        joined, but `/channels/{login}` and `!part` go by the login stored here."""
+        settings = self.policy.channel_settings(channel_id)
+        if settings is None or settings.login == login:
+            return
+        await self.policy.mutate(lambda repo: repo.ensure_channel(channel_id, login, Actor(None, "system")))
+        log.info("channel.renamed", channel_id=channel_id, before=settings.login, after=login)
+
     async def subscribe_all(self) -> None:
         """Subscribe every joined channel (at startup and after re-authorization)."""
         for settings in self.active_channels():

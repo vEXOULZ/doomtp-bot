@@ -140,6 +140,8 @@ class Dispatcher:
         if not self.channels.is_active(msg.channel_id):
             return
         settings = self.policy.channel_settings(msg.channel_id)
+        if settings is not None and msg.channel_login and settings.login != msg.channel_login.lower():
+            await self.channels.follow_rename(msg.channel_id, msg.channel_login.lower())  # renamed on Twitch
         prefix = settings.prefix if settings else DEFAULT_PREFIX
         is_command = looks_like_command(msg.text, prefix, msg.reply_mentions)
         if settings is None or settings.log_enabled:
